@@ -5,7 +5,7 @@ import path from 'node:path';
 import { allowJunctionRead } from './claudesettings.mjs';
 import { createJunction, isEmptyDir, isLink, listMarkdown, readJson, readJsonSync } from './fsx.mjs';
 import {
-  classifyEncodedBinding, junctionAllowed, junctionState, memoryPathFor, mergeFootprint, resolveIdentity, writeSettingsBinding,
+  classifyEncodedBinding, junctionAllowed, junctionState, loadedMemoryIndex, memoryPathFor, mergeFootprint, resolveIdentity, writeSettingsBinding,
 } from './identity.mjs';
 import { readDirEntries } from './normalize.mjs';
 import { encodeProjectPath, memoryRootFor, samePath, toTildePath } from './paths.mjs';
@@ -104,7 +104,7 @@ async function queueSplit(ctx, encoded, roots) {
 /**
  * @param {object} ctx
  * @param {{ cwd: string, event?: string, transcriptPath?: string, sessionId?: string, now?: number }} input
- * @returns {Promise<{ text: string, binding: object|null, warnings: string[], loadedFiles?: object }>}
+ * @returns {Promise<{ text: string, binding: object|null, warnings: string[], loadedFiles?: object, memoryIndex?: string|null }>}
  */
 export async function sessionContext(ctx, { cwd, event = 'startup', transcriptPath, sessionId, now = Date.now() } = {}) {
   try {
@@ -114,6 +114,12 @@ export async function sessionContext(ctx, { cwd, event = 'startup', transcriptPa
     // 記憶資料夾一律用 repo 根目錄的編碼（R-54／F36：子資料夾啟動時 transcript 放在子資料夾的編碼，記憶不是）。
     // 只有從根目錄啟動、路徑長到官方加了 hash 時，才用 transcript 的資料夾名稱。
     const encoded = encodeProjectPath(root) ?? (transcriptPath && !fromSub ? path.basename(path.dirname(transcriptPath)) : null);
+    // Claude Code 這次實際載入的 MEMORY.md（交給 hooks 補記；載入它時不觸發 InstructionsLoaded）。
+    // 要在下面綁定改寫設定檔之前算：Claude Code 啟動時就讀過設定，新的綁定下一次對話才生效
+    let memoryIndex = null;
+    try {
+      memoryIndex = loadedMemoryIndex(ctx.homes, { root, encoded, fromSub });
+    } catch { /* 算不出來就不補記，不影響狀態文字 */ }
     const [bindings, state] = await Promise.all([readBindings(ctx.vault, ctx.mid), readState(ctx.local)]);
     const warnings = [];
     let projectPart;
@@ -236,7 +242,7 @@ export async function sessionContext(ctx, { cwd, event = 'startup', transcriptPa
 
     let loadedFiles;
     if (sessionId) loadedFiles = (await readJson(path.join(ctx.local, 'loaded', `${sessionId}.json`), null)) ?? undefined;
-    return { text, binding: b ? { encoded: b.encoded ?? encoded, pid: b.pid, method: b.method, state: bindState } : null, warnings: warnings.map((w) => w.text), loadedFiles };
+    return { text, binding: b ? { encoded: b.encoded ?? encoded, pid: b.pid, method: b.method, state: bindState } : null, warnings: warnings.map((w) => w.text), loadedFiles, memoryIndex };
   } catch (err) {
     try {
       const log = path.join(ctx.local, 'logs', 'session.log');

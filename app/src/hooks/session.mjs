@@ -4,6 +4,7 @@ import path from 'node:path';
 import { isFresh } from '../agent/heartbeat.mjs';
 import { safeName, writeJsonAtomic } from '../cli/fsutil.mjs';
 import { BIN_PATH } from '../cli/paths.mjs';
+import { recordMemoryIndex } from './loaded.mjs';
 
 export const CONTEXT_LIMIT = 1500; // additionalContext 上限（F14；ADR §06）
 export const SYNC_STALE_MS = 10 * 60_000; // 距離上次同步超過 10 分鐘才請常駐程式同步
@@ -39,20 +40,27 @@ export function contextOutput(text) {
  * 其他情況引擎記成 pending，由常駐程式在對話結束後切換（R-06）。
  */
 export async function sessionStart(input, deps) {
+  let memoryIndex = null;
+  let pid = null;
   try {
     const eg = await deps.loadEngine();
-    const { text } = await eg.sessionContext({
+    const ctx = await eg.sessionContext({
       cwd: input.cwd,
       event: input.source ?? 'startup',
       transcriptPath: input.transcript_path,
       sessionId: input.session_id,
     });
+    memoryIndex = ctx.memoryIndex ?? null;
+    pid = ctx.binding?.pid ?? null;
     const notice = deps.failures?.count >= FAILURE_NOTICE_AT ? failureNotice(deps.failures) : '';
-    return contextOutput([text, notice].filter(Boolean).join('\n'));
+    return contextOutput([ctx.text, notice].filter(Boolean).join('\n'));
   } finally {
-    // 輸出寫完之後才處理常駐程式（E16）：deps.defer 由 main() 提供；直接呼叫 runHook 時（測試）立即執行
-    const kick = () => kickAgent(deps, 'session-start');
-    if (deps.defer) deps.defer(kick); else await kick();
+    // 輸出寫完之後才補記 MEMORY.md、處理常駐程式（E16）：deps.defer 由 main() 提供；直接呼叫 runHook 時（測試）立即執行
+    const later = async () => {
+      await recordMemoryIndex(input, memoryIndex, pid, deps).catch((err) => deps.log.debug('session-start', err));
+      await kickAgent(deps, 'session-start');
+    };
+    if (deps.defer) deps.defer(later); else await later();
   }
 }
 

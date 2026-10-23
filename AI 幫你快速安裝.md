@@ -188,9 +188,10 @@ node "$HOME/.engram/app/current/bin/engram.mjs" import plan
 · 接下來：
   1. 開一個新的 Claude Code 對話，問「你有看到 Engram 的狀態嗎？」
      應該會回答類似「<電腦名稱> · 專案：… · 已綁定」
-  2. 管理介面：在終端機輸入 engram ui（建議用 Edge 開啟，從選單「應用程式 › 將此網站安裝為應用程式」）
-  3. 第二台電腦：把同一段話貼給那台的 Claude Code，取一個不同的名字即可
-  4. 請保留 <Engram 資料夾>，之後更新會用到
+  2. 記憶面板：在 Claude Code 輸入 /engram-memories（或點底部的「◆ 憶跡」），看這次對話讀了哪些記憶
+  3. 管理介面：在終端機輸入 engram ui（建議用 Edge 開啟，從選單「應用程式 › 將此網站安裝為應用程式」）
+  4. 第二台電腦：把同一段話貼給那台的 Claude Code，取一個不同的名字即可
+  5. 請保留 <Engram 資料夾>，之後更新會用到
 ```
 
 並提醒：已經開著的 Claude Code 對話，執行 `/reload-plugins` 或開新對話，才會出現 `/engram:inbox` 等指令。
@@ -227,7 +228,7 @@ node "$HOME/.engram/app/current/bin/engram.mjs" import plan
 | --- | --- |
 | `$HOME/.engram/` | 記憶庫、程式本體、本機狀態與備份 |
 | `$HOME/.claude/CLAUDE.md` | 在檔案末尾加一段兩行的 Engram 區塊，原本的內容不動；修改前先備份 |
-| Claude Code 外掛 `engram` | 對話開始與結束時的 hooks、`/engram` 指令 |
+| Claude Code 外掛 `engram` | 對話開始與結束時的 hooks、`/engram:` 指令，以及記憶面板（觀察對話載入與讀取了哪些記憶檔，在 Claude Code 底部加一顆「◆ 憶跡」按鈕與 `/engram-memories` 指令） |
 | npm 全域指令 `engram` | 讓一般終端機也能輸入 `engram`（安裝時加 `--no-cli` 可略過） |
 | Windows 工作排程器 `\Engram\Agent` | 登入時在背景啟動 Engram，每 10 分鐘同步一次 |
 | 匯入時綁定的專案資料夾 | `.claude\settings.local.json` 寫一行記憶位置；不是 git 的資料夾另寫一個 `.claude\engram.json` 標記 |

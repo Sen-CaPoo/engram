@@ -51,6 +51,10 @@ If your Claude Code account is managed by an organization that has turned on tel
 
 Yes. They're sent to Claude just like in any other conversation, and they use your Claude quota. Possible secrets that were detected are redacted on your computer before anything is sent. Claude reads your memories for tidying only when you type those commands.
 
+### Does the memory pane send my memories anywhere?
+
+No. The memory pane reads files on your computer and lists them; it makes no AI calls, uses no quota, and connects to nothing.
+
 ## Usage
 
 ### What happens if two computers are open at the same time?
@@ -77,6 +81,10 @@ Yes, for conversations opened from the project root: no mode ever triggers a pro
 
 Each time, Claude first reads only a very short index, and reads the full text only when it's needed. Engram keeps the global and machine indexes short, and memories that don't fit are still findable with `engram search`. When a project's index gets close to the 200-line limit, the inbox reminds you to tidy it.
 
+### How do I know which memories Claude read this time?
+
+Open the memory pane: select **◆ Engram** at the bottom of Claude Code, or type `/engram-memories`. The pane has two parts, **Loaded at start** and **Read during the conversation**, and every row says whether Claude saw the full text, only titles, or a search snippet. An index loaded at start only tells Claude which memories exist; a memory's content shows up under **Read during the conversation** only after Claude reads it. See [section 4 of the user guide](user-guide.md#4-the-memory-pane-which-memories-this-conversation-read).
+
 ### Why do you recommend setting Claude Code's default permission mode to auto?
 
 It works without it: opening Claude Code from the project root is completely normal. When the mode is set to auto (or bypassPermissions), Engram additionally creates a memory link so that opening Claude Code from a subfolder can read and write the same set of memories too.
@@ -100,6 +108,8 @@ Error messages are shown below as they appear on screen (in Traditional Chinese 
 | You need to sign in to GitHub again | Run `gh auth login` in a terminal to sign in again; if git's credentials aren't handed to GitHub CLI, run `git -C "$HOME/.engram/vault" fetch` in PowerShell and sign in when the browser opens |
 | Permission prompts keep appearing when memories are read or written | First make sure you're opening Claude Code from the project root. If the inbox has a **Reading memory for "…" will trigger a permission prompt** card, press **Allow reading**; if it has a **Reading and writing memory will trigger permission prompts** card, press **Use settings-file links** |
 | `/engram:inbox` and other commands don't appear | Run `/reload-plugins` in the open conversation, or start a new conversation |
+| The memory pane or **◆ Engram** at the bottom doesn't appear | Type `/engram-memories` to open it (it opens by itself only in the fullscreen layout with a terminal at least 144 columns wide). If you just updated Engram, run `/reload-plugins` in the open conversation. If it's still missing, run `claude update`: the pane needs a Claude Code version that supports plugin panes (tested on 2.1.307 through 2.1.309) |
+| Clicking **◆ Engram** does nothing | Claude Code's regular screen (with `CLAUDE_CODE_NO_FLICKER=0` set, or inside tmux) doesn't receive mouse clicks. Use `/engram-memories`, or remove that variable and run outside tmux to get the default fullscreen layout |
 | You want the detailed logs | `%USERPROFILE%\.engram\local\logs\` (you can paste it straight into File Explorer's address bar) |
 
 Still stuck? Please report it on [GitHub Issues](https://github.com/Sen-CaPoo/engram/issues) and include the results of `engram doctor` (make sure it contains no personal information before you paste it).

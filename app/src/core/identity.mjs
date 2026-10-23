@@ -325,6 +325,21 @@ function memoryPathFor(homes, encoded) {
   return path.join(homes.claudeHome, 'projects', encoded, 'memory');
 }
 
+/**
+ * Claude Code 這次對話實際載入的 MEMORY.md：從根目錄啟動、而且 settings.local.json 設了 autoMemoryDirectory 時是那裡
+ * （Engram 的設定檔綁定，R-52），否則是 Claude Code 自己的編碼資料夾（junction 綁定與未綁定）。檔案不存在時回傳 null。
+ * @param {{ root: string, encoded: string|null, fromSub: boolean }} where
+ */
+export function loadedMemoryIndex(homes, { root, encoded, fromSub }) {
+  const dir = fromSub ? null : readJsonSyncSafe(path.join(root, SETTINGS_LOCAL))?.autoMemoryDirectory;
+  let memDir = null;
+  if (typeof dir === 'string' && dir) memDir = /^~[\\/]/.test(dir) ? path.join(homes.userHome, dir.slice(2)) : path.resolve(root, dir);
+  else if (encoded) memDir = memoryPathFor(homes, encoded);
+  if (!memDir) return null;
+  const file = path.join(memDir, 'MEMORY.md');
+  return fs.existsSync(file) ? file : null;
+}
+
 /** 寫一個探針檔確認 junction 可用。 */
 function probeJunction(linkPath, targetDir) {
   const name = `.engram-probe-${randomBase32(6)}`;

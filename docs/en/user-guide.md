@@ -4,7 +4,7 @@
 
 Once installed, Engram needs almost no attention. This guide covers the features you'll use day to day, and what to do when Engram needs a decision from you. If you haven't installed it yet, start with the [Quick start](quick-start.md).
 
-**Contents**: [How it works](#1-how-it-works) · [Everyday use](#2-everyday-use) · [Tidy with AI](#3-tidy-with-ai-in-claude-code) · [The dashboard](#4-the-dashboard) · [Inbox](#5-the-inbox-and-health-cards) · [Conflicts](#6-handling-conflicts) · [Colliding folders](#7-colliding-folders) · [Core rules](#8-core-rules) · [Pause, undo, and remove](#9-pause-undo-and-remove) · [Updating](#10-updating) · [Command cheat sheet](#11-command-cheat-sheet)
+**Contents**: [How it works](#1-how-it-works) · [Everyday use](#2-everyday-use) · [Tidy with AI](#3-tidy-with-ai-in-claude-code) · [Memory pane](#4-the-memory-pane-which-memories-this-conversation-read) · [The dashboard](#5-the-dashboard) · [Inbox](#6-the-inbox-and-health-cards) · [Conflicts](#7-handling-conflicts) · [Colliding folders](#8-colliding-folders) · [Core rules](#9-core-rules) · [Pause, undo, and remove](#10-pause-undo-and-remove) · [Updating](#11-updating) · [Command cheat sheet](#12-command-cheat-sheet)
 
 ## 1. How it works
 
@@ -19,7 +19,7 @@ Once installed, Engram needs almost no attention. This guide covers the features
 | Project ID | Every project has a fixed ID. Git projects are recognized by their remote and other folders by a marker file, so moving, renaming, or switching computers is fine |
 | Binding | Connects a project folder to its place in the vault. A git project is bound automatically the first time you open Claude Code on another computer |
 
-Engram does not modify Claude Code itself. It only uses three official mechanisms: the memory folder, `CLAUDE.md` imports, and hooks.
+Engram does not modify Claude Code itself. It only uses official mechanisms: the memory folder, `CLAUDE.md` imports, hooks, and a plugin pane (the memory pane).
 
 How do you tell the three scopes apart? One rule of thumb: **would this still hold true on another computer?** If not, it goes in **Machine**. If so, ask next: **would it still hold true in a different project?** If so, it goes in **Global**; if not, it goes in **Project**.
 
@@ -43,7 +43,7 @@ When you want to tidy up on your own:
 
 - In **Library** you can search and edit, or use **Change scope** to move a memory to global, machine, or another project. Duplicate memories show up in the inbox as **Identical memories** or **Possible duplicates** cards, where you can merge them.
 - The **Projects** page shows how far each project's memory index (MEMORY.md) is from Claude Code's load limit.
-- On **Overview**, **What the last conversation loaded** lists which files Claude actually read in and how big each one is.
+- On **Overview**, **What the last conversation loaded** lists which files Claude actually read in and how big each one is. To see it while the conversation is going, use the memory pane in Claude Code (section 4).
 
 ## 3. Tidy with AI in Claude Code
 
@@ -65,7 +65,46 @@ Safety by design:
 
 > If you've just updated Engram and a conversation that's already open doesn't show these commands, run `/reload-plugins` or start a new conversation. The first time Claude Code asks whether to allow running `engram` commands, choose Allow. The instructions inside these commands are in Traditional Chinese for now; Claude normally replies in the language you write in.
 
-## 4. The dashboard
+## 4. The memory pane: which memories this conversation read
+
+A pane beside Claude Code lists, live, which memories Claude has taken in during this conversation and how much of each it saw, so you know what an answer is based on.
+
+<p align="center">
+  <img src="../assets/en/screenshots/memory-pane.png" alt="The Engram pane on the right side of Claude Code: the files loaded at start drawn as a tree, and below them the memories read during the conversation, each marked full, titles, or snippet" width="800">
+</p>
+
+**Opening and closing the pane**
+
+| How | Details |
+| --- | --- |
+| **◆ Engram · N read** at the bottom | At the bottom right of Claude Code; select it to toggle the pane. The number counts the memories this conversation has read or found by searching (with none yet, it shows just **◆ Engram**). Mouse clicks work only in the fullscreen layout (see below) |
+| `/engram-memories` | Type it in Claude Code; works in any mode |
+| Opens by itself | In the fullscreen layout with a terminal at least 144 columns wide, the pane opens in new conversations. Once you close it, it stops opening by itself until you open it again either way above |
+
+The **fullscreen layout** is Claude Code's default screen (it isn't about maximizing the terminal window): the pane docks to the right of the conversation, and you can click its buttons and rows. With the environment variable `CLAUDE_CODE_NO_FLICKER=0` set, or inside tmux, Claude Code uses the regular screen instead: the pane shows above the prompt and doesn't receive mouse clicks, so use the command and the keyboard.
+
+**Reading the pane**
+
+| Section or mark | Meaning |
+| --- | --- |
+| Loaded at start | Files put into Claude's head when the conversation starts. The `├ └ │` lines show which file `@`-imports which; the number on the right is the estimated tokens, with the total on the heading. It stays empty until you send the first message; after the conversation is compacted, the heading changes to **Reloaded after compaction (turn N)** |
+| Read during the conversation | Memories Claude read or found by searching along the way, plus instruction files loaded automatically when Claude reads related files (for example a subfolder's CLAUDE.md or a matching rules file). `#3` means turn 3, ● marks anything new in this turn, `×2` means read twice, and **subagent** means a subagent read it. After the conversation is compacted, memories read before the compaction are dimmed under a note that their text is now summarized |
+| full | The whole text is in the conversation: CLAUDE.md, CORE.md, and any memory Claude read |
+| titles | Only titles and one-line descriptions. INDEX.md and MEMORY.md loaded at start are indexes: Claude knows these memories exist but hasn't read them. **titles 18** means the index lists 18 memories |
+| snippet | The description and a short excerpt from an `engram search` result (or a search inside the memory folders), not the full text |
+| ⚠ only the first N are seen | MEMORY.md is over Claude Code's load limit (the first 200 lines or 25KB), so Claude can't see the memories after that. Tidy it from the inbox or with `/engram:tidy` |
+| Scope | core, global, machine, project, and **instr** (CLAUDE.md and `.claude/rules`) |
+
+**Using it**: select a row to read the memory and see how and when it entered the conversation; `b` goes back, `f` filters by scope, and `l` switches between English and Chinese (your choice is remembered; until you switch, it follows Claude Code's `language` setting, and English if that isn't set). With the keyboard, press Ctrl+X Tab to give the pane the keyboard first, then Tab to move, Enter to select, and Esc to return to the prompt.
+
+**Limits**
+
+- Needs a Claude Code version that supports plugin panes (mods); tested on 2.1.307 through 2.1.309, earlier versions untested.
+- It detects the Read tool, file-reading commands such as `cat` and `Get-Content`, `engram search` and `engram memory show`, and searches inside the memory folders; reads done any other way (for example `grep`, `Select-String`, or a script) aren't listed. The pane also doesn't judge which memories an answer actually relied on.
+- When another plugin skips the compaction event, the pane detects compaction from a sharp drop in estimated tokens instead, so **Reloaded after compaction** may show up a turn late, and an action that shrinks the conversation sharply, such as `/rewind`, may be taken for a compaction.
+- The pane reads files on your computer only: it makes no AI calls and sends nothing anywhere.
+
+## 5. The dashboard
 
 Type `engram ui` in a terminal (inside Claude Code, type `! engram ui`), and your browser opens `http://127.0.0.1:4777`. The dashboard runs only on your computer and makes no outside connections. It's available in English and Traditional Chinese; switch languages in the top bar or in Settings.
 
@@ -76,12 +115,12 @@ Type `engram ui` in a terminal (inside Claude Code, type `! engram ui`), and you
 | Inbox | Things that need your decision: conflicts and health cards; duplicate memories are merged here |
 | Projects | Each project's folders, how it's bound, memory count, and index load budget; rename, and merge into another project |
 | Devices & sync | Each computer's last sync time, change history, and undo |
-| Core rules | The rules loaded in every conversation (see section 8) |
+| Core rules | The rules loaded in every conversation (see section 9) |
 | Schedule & logs | Schedules and run logs for background sync, health checks, and compatibility probes |
-| Import memories | Brings Claude Code's original memories into the vault: generate a plan → review → sandbox rehearsal → apply → verify; after applying, you can optionally sync your working guidelines (see section 8) |
+| Import memories | Brings Claude Code's original memories into the vault: generate a plan → review → sandbox rehearsal → apply → verify; after applying, you can optionally sync your working guidelines (see section 9) |
 | Settings | Computer name, sync interval, automatic binding, colliding-folder handling, health check time, pause and remove |
 
-## 5. The inbox and health cards
+## 6. The inbox and health cards
 
 Engram checks the state of your memories once a day, and anything that needs your decision goes into the inbox. Most cards have one main button that fixes the problem in one click, or you can choose **Remind in 7 days** or **Dismiss**. Claude won't bring up the inbox unless you ask.
 
@@ -89,9 +128,9 @@ Engram checks the state of your memories once a day, and anything that needs you
 | --- | --- | --- | --- |
 | High | Index over the load limit | A project's memory index goes past 200 lines or 25 KB, and Claude never sees the rest | Merge or archive older memories |
 | High | `"…" may contain a secret or password` | This memory won't be synced | Press **Remove secret**, then **Redact and resume sync**: after the secret in the memory is replaced on this computer with `‹已遮蔽：…›` ("redacted"), syncing resumes. If it isn't a secret, choose **Not a secret** |
-| High | Conflict needs attention | Two computers changed the same section of the same memory | See section 6 |
+| High | Conflict needs attention | Two computers changed the same section of the same memory | See section 7 |
 | High | Mass deletion detected | Half or more of a project's memories (at least 3) were deleted at once; Engram held the change back and did not sync it | If you didn't mean to, press **Restore** |
-| High / Medium | Broken memory link / Colliding folders | A project's memory isn't connected to the vault correctly, or two folders collide | Broken link: press **Recreate link**. Colliding folders: see section 7 |
+| High / Medium | Broken memory link / Colliding folders | A project's memory isn't connected to the vault correctly, or two folders collide | Broken link: press **Recreate link**. Colliding folders: see section 8 |
 | Medium | `N memories with identical content` / `Possible duplicate: …` | Two or more memories have identical content, or very similar names and descriptions | Press **Merge**, or **Compare side by side and merge** |
 | Medium | Looks specific to this computer | The content mentions this computer's install locations or environment | Change it to a machine memory |
 | Medium | May belong to another folder | A memory that was written to the wrong place while folders were colliding | Move it to the right folder |
@@ -100,7 +139,7 @@ Engram checks the state of your memories once a day, and anything that needs you
 
 Cards that take reading the content to judge have an **Ask Claude** button, which gives you a command to paste into any Claude Code conversation.
 
-## 6. Handling conflicts
+## 7. Handling conflicts
 
 It's rare for one person to edit the same memory on two computers at the same time, so conflicts should be uncommon. When one does happen:
 
@@ -111,7 +150,7 @@ It's rare for one person to edit the same memory on two computers at the same ti
 
 Conflict markers never appear in the files Claude reads.
 
-## 7. Colliding folders
+## 8. Colliding folders
 
 Claude Code converts a folder's path into an internal name, and Chinese characters, spaces, underscores, dots, and other symbols all become hyphens. So two Chinese-named folders at the same level with the same number of characters (for example 甲方專案 and 乙方專案, "Client A project" and "Client B project"), or English folders that differ only in symbols (for example `my_proj` and `my proj`), end up sharing one internal name, and their memories and conversation history get mixed together. This is a limitation of Claude Code itself.
 
@@ -138,14 +177,14 @@ To undo a rename: find the entry in the change history under **Devices & sync** 
 
 > **Before you rename**: Claude Code stores conversation history by internal name too. After a rename, if you open Claude Code in the new folder, the `/resume` list won't include conversations from before the rename (they're still kept under `~/.claude/projects/`). Memories are not affected. Finish any old conversation you still want to continue before renaming.
 
-## 8. Core rules
+## 9. Core rules
 
 The core rules (`CORE.md`) are one document that's loaded in every conversation, shared by all projects and all computers. They contain your identity and preferences, a list of your work environments, and the "memory write protocol" that teaches Claude how to write memories into the right scope.
 
 - Edit them on the **Core rules** page of the dashboard, or press **Ask Claude to trim** to have `/engram:tidy` tidy them.
 - The working guidelines already in `~/.claude/CLAUDE.md` are not moved away. If you want your working guidelines to be the same on every computer: after you apply an import on the **Import memories** page, **Optional: share your working guidelines across all computers** appears. Press **Sync working guidelines**: you first preview what the moved content will look like, and it moves into the vault only after you approve. Afterwards you can press **Switch back to each computer's own version** to restore it bit for bit.
 
-## 9. Pause, undo, and remove
+## 10. Pause, undo, and remove
 
 | What you want to do | How |
 | --- | --- |
@@ -156,7 +195,7 @@ The core rules (`CORE.md`) are one document that's loaded in every conversation,
 | Ask me before connecting new projects | On the Settings page, change **Automatic project folder binding** to **Always ask** or **Off** |
 | Remove everything | `engram uninstall`: lists the plan first, then, after you approve, reverts each item to how it was before installation. **The vault is kept by default**, and a later reinstall picks it right up; only adding `--purge` also deletes the local vault (the repo on GitHub isn't affected) |
 
-## 10. Updating
+## 11. Updating
 
 1. Get the new version of the program:
    - Installed with git: run `git pull` in the Engram folder
@@ -166,7 +205,7 @@ The core rules (`CORE.md`) are one document that's loaded in every conversation,
 
 If the new version has problems, `engram update --rollback` switches back to the previous one. If you've moved the Engram folder elsewhere, use `engram update --from "<new location>\app"`.
 
-## 11. Command cheat sheet
+## 12. Command cheat sheet
 
 | Command | What it does |
 | --- | --- |
@@ -185,4 +224,4 @@ If the new version has problems, `engram update --rollback` switches back to the
 | `engram uninstall` | Reverts to how things were before installation, from the installation record (`--dry-run` only lists the plan, `--purge` also deletes the local vault) |
 | `engram help <command>` | Shows the full usage of a command |
 
-The `/engram:inbox`, `/engram:tidy`, `/engram:save`, and `/engram:recall` commands in Claude Code are covered in section 3.
+The `/engram:inbox`, `/engram:tidy`, `/engram:save`, and `/engram:recall` commands in Claude Code are covered in section 3, and the memory pane's `/engram-memories` in section 4.

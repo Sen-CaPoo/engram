@@ -36,6 +36,6 @@ body:
     attributes:
       label: 版本 / Version
       description: engram version 與 claude --version 的輸出 / Output of engram version and claude --version
-      placeholder: engram 1.1.0（Node v24.x）· Claude Code 2.x
+      placeholder: engram 1.2.0（Node v24.x）· Claude Code 2.x
     validations:
       required: true

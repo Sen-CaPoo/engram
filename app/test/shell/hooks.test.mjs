@@ -230,6 +230,75 @@ describe('InstructionsLoaded', () => {
     assert.equal(rec.files.length, 8);
   });
 
+  test('回歸（2026-10-23）：SessionStart 補記專案的 MEMORY.md（Claude Code 載入它時不觸發 InstructionsLoaded）', async () => {
+    const d = deps({ heartbeat: fresh() });
+    const dir = path.join(root, 'mem');
+    fs.mkdirSync(dir, { recursive: true });
+    const index = path.join(dir, 'MEMORY.md');
+    fs.writeFileSync(index, '- [a](a.md) — x\n- [b](b.md) — y\n');
+    const claudeMd = path.join(dir, 'CLAUDE.md');
+    fs.writeFileSync(claudeMd, '規則\n');
+    d.eg.sessionContext = async () => ({ text: 'ctx', binding: { pid: 'p-mem' }, warnings: [], memoryIndex: index });
+    await runHook('instructions-loaded', { session_id: 'sess-mem', cwd: startInput.cwd, file_path: claudeMd, memory_type: 'User', load_reason: 'session_start' }, d.overrides);
+    await runHook('session-start', { ...startInput, session_id: 'sess-mem' }, d.overrides);
+    const rec = JSON.parse(fs.readFileSync(path.join(paths.loaded, 'sess-mem.json'), 'utf8'));
+    assert.deepEqual(rec.files.map((f) => f.kind), ['user', 'memory-index']);
+    assert.deepEqual(rec.files[1], { path: index, kind: 'memory-index', bytes: Buffer.byteLength('- [a](a.md) — x\n- [b](b.md) — y\n'), lines: 2, loadReason: 'session_start' });
+
+    // 壓縮後重新載入：同一筆更新，不重複
+    await runHook('session-start', { ...startInput, session_id: 'sess-mem', source: 'compact' }, d.overrides);
+    const again = JSON.parse(fs.readFileSync(path.join(paths.loaded, 'sess-mem.json'), 'utf8'));
+    assert.equal(again.files.filter((f) => f.kind === 'memory-index').length, 1);
+    assert.equal(again.files.find((f) => f.kind === 'memory-index').loadReason, 'compact');
+  });
+
+  test('沒有 MEMORY.md 時 SessionStart 不建立記錄；pid 取自綁定', async () => {
+    const d = deps({ heartbeat: fresh() });
+    d.eg.sessionContext = async () => ({ text: 'ctx', binding: null, warnings: [], memoryIndex: null });
+    await runHook('session-start', { ...startInput, session_id: 'sess-none' }, d.overrides);
+    assert.equal(fs.existsSync(path.join(paths.loaded, 'sess-none.json')), false);
+
+    const index = path.join(root, 'mem2', 'MEMORY.md');
+    fs.mkdirSync(path.dirname(index), { recursive: true });
+    fs.writeFileSync(index, '- [a](a.md)\n');
+    d.eg.sessionContext = async () => ({ text: 'ctx', binding: { pid: 'p-bound' }, warnings: [], memoryIndex: index });
+    await runHook('session-start', { ...startInput, session_id: 'sess-pid' }, d.overrides);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(paths.loaded, 'sess-pid.json'), 'utf8')).pid, 'p-bound');
+  });
+
+  test('SessionStart 先建立了沒有 pid 的記錄時，之後的 InstructionsLoaded 會補上 pid', async () => {
+    const d = deps({ heartbeat: fresh() });
+    const index = path.join(root, 'mem3', 'MEMORY.md');
+    fs.mkdirSync(path.dirname(index), { recursive: true });
+    fs.writeFileSync(index, '- [a](a.md)\n');
+    d.eg.sessionContext = async () => ({ text: 'ctx', binding: null, warnings: [], memoryIndex: index });
+    await runHook('session-start', { ...startInput, session_id: 'sess-late' }, d.overrides);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(paths.loaded, 'sess-late.json'), 'utf8')).pid, null);
+    await runHook('instructions-loaded', { session_id: 'sess-late', cwd: startInput.cwd, file_path: SELF, memory_type: 'User', load_reason: 'session_start' }, d.overrides);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(paths.loaded, 'sess-late.json'), 'utf8')).pid, 'acme-gateway-3fa9k');
+  });
+
+  test('超過載入上限的 MEMORY.md 只記實際載入的部分（前 200 行或 25KB）', async () => {
+    const d = deps({ heartbeat: fresh() });
+    const index = path.join(root, 'mem4', 'MEMORY.md');
+    fs.mkdirSync(path.dirname(index), { recursive: true });
+    const lines = Array.from({ length: 300 }, (_, i) => `- [m${i}](m${i}.md) — ${i}`);
+    fs.writeFileSync(index, `${lines.join('\n')}\n`);
+    d.eg.sessionContext = async () => ({ text: 'ctx', binding: null, warnings: [], memoryIndex: index });
+    await runHook('session-start', { ...startInput, session_id: 'sess-big' }, d.overrides);
+    const entry = JSON.parse(fs.readFileSync(path.join(paths.loaded, 'sess-big.json'), 'utf8')).files[0];
+    assert.equal(entry.lines, 200);
+    assert.equal(entry.bytes, Buffer.byteLength(`${lines.slice(0, 200).join('\n')}\n`));
+
+    const wide = path.join(root, 'mem5', 'MEMORY.md');
+    fs.mkdirSync(path.dirname(wide), { recursive: true });
+    fs.writeFileSync(wide, `${Array.from({ length: 50 }, (_, i) => `- [m${i}](m${i}.md) — ${'說明'.repeat(200)}`).join('\n')}\n`);
+    d.eg.sessionContext = async () => ({ text: 'ctx', binding: null, warnings: [], memoryIndex: wide });
+    await runHook('session-start', { ...startInput, session_id: 'sess-wide' }, d.overrides);
+    const w = JSON.parse(fs.readFileSync(path.join(paths.loaded, 'sess-wide.json'), 'utf8')).files[0];
+    assert.ok(w.bytes <= 25 * 1024 && w.lines < 50, `bytes=${w.bytes} lines=${w.lines}`);
+  });
+
   test('sessionId 不能拿來穿越資料夾', async () => {
     const d = deps();
     await runHook('instructions-loaded', { session_id: '../../evil', cwd: startInput.cwd, file_path: SELF, memory_type: 'User' }, d.overrides);

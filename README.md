@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img alt="版本 1.1.0" src="https://img.shields.io/badge/version-1.1.0-0072CE">
+  <img alt="版本 1.2.0" src="https://img.shields.io/badge/version-1.2.0-0072CE">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-0072CE">
   <img alt="Claude Code 外掛" src="https://img.shields.io/badge/Claude%20Code-plugin-13202F">
   <img alt="MIT 授權" src="https://img.shields.io/badge/license-MIT-2E8B87">
@@ -31,6 +31,23 @@
 <p align="center">
   <img src="docs/assets/hero.webp" alt="Engram 管理介面總覽：待處理事項、裝置同步軌跡與記憶分布，周圍是多台裝置透過同步連在一起" width="960">
 </p>
+
+## 1.2.0 新功能：親眼看見 Claude 讀了哪些記憶
+
+Claude 的回答是根據哪些記憶？以前只能猜，現在**一眼就看得到**。全新的**記憶視覺化面板**就在 Claude Code 旁邊，即時列出這次對話 Claude 腦袋裡裝了什麼。
+
+<p align="center">
+  <img src="docs/assets/screenshots/memory-pane.png" alt="Claude Code 右側的憶跡面板：開場載入的指示檔與記憶索引排成樹狀，下方列出這次對話中讀取的記憶，每一列標出全文、標題或摘要" width="960">
+</p>
+
+| 你看得到 | 說明 |
+| --- | --- |
+| **開場載入** | 每次對話一開始就放進 Claude 腦袋的指示檔與記憶索引，用樹狀線畫出誰匯入了誰，附上估計的 token 數 |
+| **對話中讀取** | Claude 中途讀了哪一則記憶、搜尋到哪些、在第幾回合；這一回合新讀到的標上 ● |
+| **讀到多深** | 每一列標出「全文」、「標題」或「摘要」：索引只讓 Claude 看到標題，記憶內容要讀取後才會進入對話 |
+| **被截掉的記憶** | MEMORY.md 超過 Claude Code 的載入上限（前 200 行或 25KB）時，直接告訴你 Claude 只看得到前幾則 |
+
+點任何一列就能看記憶內容。輸入 `/engram-memories`（或點 Claude Code 底部的「◆ 憶跡」）開關面板，介面可以切換中英文，詳見[使用說明](docs/使用說明.md#4-記憶面板這次對話讀了哪些記憶)。面板只在你的電腦上讀取，不呼叫 AI，也不送出任何資料。
 
 ## 為什麼需要 Engram
 
@@ -52,6 +69,7 @@ Engram 把記憶變成**跟著你走、跟著專案走、隨時能復原**的資
 
 | | 功能 | 你得到什麼 |
 | :---: | --- | --- |
+| <img src="docs/assets/icons/memory-pane.webp" width="48" alt=""> | **親眼看見 Claude 讀了什麼** | Claude Code 旁的記憶面板即時列出這次對話載入與讀取的記憶，每一列標出全文、標題或摘要，一眼看出回答根據什麼。 |
 | <img src="docs/assets/icons/sync.webp" width="48" alt=""> | **多台電腦自動同步** | 背景自動同步（預設每 10 分鐘）。開 Claude Code 不用等網路，離線照常記憶，恢復連線後自動補上。 |
 | <img src="docs/assets/icons/project-id.webp" width="48" alt=""> | **專案用 ID 認，不用路徑認** | 資料夾搬家、改名，或在另一台電腦 clone 同一個 git repo，都認得是同一個專案。 |
 | <img src="docs/assets/icons/scopes.webp" width="48" alt=""> | **三種範圍各歸其位** | 個人偏好放「全域」，每個專案都看得到；安裝路徑、網路設定放「單機」，不會跑到別台電腦。 |
@@ -67,7 +85,7 @@ Engram 把記憶變成**跟著你走、跟著專案走、隨時能復原**的資
   <img src="docs/assets/illustrations/how-it-works.webp" alt="公司電腦、家裡電腦、筆電都透過背景同步，連到你的 GitHub 私人 repo engram-vault" width="880">
 </p>
 
-- Engram **不修改 Claude Code**，只使用官方提供的三種機制：記憶資料夾、`CLAUDE.md` 匯入與 hooks。
+- Engram **不修改 Claude Code**，只使用官方提供的機制：記憶資料夾、`CLAUDE.md` 匯入、hooks，以及外掛畫面（記憶面板）。
 - 記憶庫是一個 git repo，放在 `%USERPROFILE%\.engram\vault`，同步到**你自己帳號**底下的私人 repo。Engram 沒有伺服器，不蒐集任何資料。
 - 日常運作**不呼叫 AI**：健康檢查用規則判斷，金鑰遮蔽在本機完成。
 
@@ -122,6 +140,7 @@ Claude 會檢查環境、補齊工具、列出安裝計畫給你確認，再完�
 | `/engram:tidy` | 深度整理一個專案、全域、單機或核心準則：找出重複、過時、矛盾、放錯範圍的記憶 |
 | `/engram:save` | 把這次對話值得長期記住的事存成記憶 |
 | `/engram:recall` | 從其他專案、其他電腦的記憶找出相關經驗，只讀不寫 |
+| `/engram-memories` | 開關記憶面板，看這次對話載入與讀取了哪些記憶（也可以點底部的「◆ 憶跡」） |
 
 <table>
   <tr>
@@ -141,7 +160,7 @@ Claude 會檢查環境、補齊工具、列出安裝計畫給你確認，再完�
 </p>
 
 - **你的資料只在兩個地方**：你的電腦，以及你自己 GitHub 帳號底下的私人 repo。對話紀錄（transcript）不會同步。
-- **不呼叫 AI**：只有兩種情況會用到你的 Claude 額度：Claude Code 改版時的相容性探測（只用合成資料，可在介面關閉），以及你主動輸入 `/engram` 指令時。
+- **不呼叫 AI**：只有兩種情況會用到你的 Claude 額度：Claude Code 改版時的相容性探測（只用合成資料，可在介面關閉），以及你主動輸入 `/engram:` 開頭的指令時。記憶面板只在本機讀取，不會用到額度。
 - **金鑰保護**：疑似金鑰的記憶不會推送；交給 Claude 整理前，偵測到的金鑰會先在本機遮蔽。
 - **可完整移除**：安裝前列出所有會改動的位置，每一項都記錄下來；`engram uninstall` 依紀錄逐項還原，預設保留你的記憶庫。
 - **公司資料**：如果公司不允許把工作資料放在個人 GitHub，可以改用公司組織底下的私人 repo，或只在單機使用。

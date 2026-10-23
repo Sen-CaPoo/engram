@@ -189,9 +189,10 @@ Report back in this format:
   1. Open a new Claude Code conversation and ask "Can you see Engram's status?"
      It should answer with something like "<computer name> · project: … · bound"
      (the status text Engram injects is in Traditional Chinese for now, so Claude may quote it as "專案：… · 已綁定")
-  2. Dashboard: type engram ui in a terminal (Edge is recommended; from its menu choose "Apps › Install this site as an app")
-  3. Second computer: paste the same message into Claude Code on that computer and give it a different name
-  4. Please keep <Engram folder>; you'll need it for updates
+  2. Memory pane: type /engram-memories in Claude Code (or select "◆ Engram" at the bottom) to see which memories this conversation read
+  3. Dashboard: type engram ui in a terminal (Edge is recommended; from its menu choose "Apps › Install this site as an app")
+  4. Second computer: paste the same message into Claude Code on that computer and give it a different name
+  5. Please keep <Engram folder>; you'll need it for updates
 ```
 
 Also remind them: in a Claude Code conversation that is already open, run `/reload-plugins` or start a new conversation before commands such as `/engram:inbox` appear. (The instructions inside these commands are in Traditional Chinese for now; Claude normally replies in the language you write in.)
@@ -228,7 +229,7 @@ If Step 1 finds Engram already installed, first ask the user what they want to d
 | --- | --- |
 | `$HOME/.engram/` | The vault, the program itself, local state, and backups |
 | `$HOME/.claude/CLAUDE.md` | Adds a two-line Engram block at the end of the file and leaves the existing content alone; backed up before the change |
-| Claude Code plugin `engram` | Hooks at the start and end of conversations, and the `/engram` commands |
+| Claude Code plugin `engram` | Hooks at the start and end of conversations, the `/engram:` commands, and the memory pane (watches which memory files the conversation loads and reads, and adds a **◆ Engram** button at the bottom of Claude Code and the `/engram-memories` command) |
 | npm global command `engram` | Lets you type `engram` in an ordinary terminal (add `--no-cli` during installation to skip it) |
 | Windows Task Scheduler `\Engram\Agent` | Starts Engram in the background at sign-in and syncs every 10 minutes |
 | Project folders bound during import | `.claude\settings.local.json` gets one line pointing to the memory location; folders that aren't git repos also get a `.claude\engram.json` marker |

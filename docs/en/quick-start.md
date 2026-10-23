@@ -102,7 +102,7 @@ Other options: `--no-cli` (don't create the `engram` terminal command), `--no-sc
 | --- | --- |
 | `%USERPROFILE%\.engram\` | The vault, the program itself, local state, and backups |
 | `~/.claude/CLAUDE.md` | Adds a two-line Engram block at the end of the file and leaves the existing content alone; backed up before the change |
-| Claude Code plugin `engram` | Hooks at the start and end of conversations, and the `/engram` commands |
+| Claude Code plugin `engram` | Hooks at the start and end of conversations, the `/engram:` commands, and the memory pane (watches which memory files the conversation loads and reads, and adds a **◆ Engram** button at the bottom of Claude Code and the `/engram-memories` command) |
 | npm global command `engram` | Lets you type `engram` in an ordinary terminal; add `--no-cli` during installation if you don't want it |
 | Windows Task Scheduler `\Engram\Agent` | Starts Engram in the background at sign-in and syncs every 10 minutes |
 | Project folders bound during import | `.claude\settings.local.json` gets one `autoMemoryDirectory` line; folders that aren't git repos also get a `.claude\engram.json` marker |

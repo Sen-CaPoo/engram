@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.1.0" src="https://img.shields.io/badge/version-1.1.0-0072CE">
+  <img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-0072CE">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-0072CE">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-13202F">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2E8B87">
@@ -33,6 +33,23 @@
 </p>
 
 > **Language support.** The dashboard is available in English and Traditional Chinese (switch languages in the top bar or in Settings). For now, the command-line output, the setup script's prompts, the agent's Windows notifications, and the instructions inside the Claude Code plugin skills are in Traditional Chinese. Claude normally replies in the language you write in.
+
+## New in 1.2.0: see which memories Claude actually read
+
+Which memories is Claude's answer based on? You used to have to guess. Now you can **see it at a glance**. The new **memory pane** sits right beside Claude Code and shows, live, what's in Claude's head for this conversation.
+
+<p align="center">
+  <img src="docs/assets/en/screenshots/memory-pane.png" alt="The Engram pane on the right side of Claude Code: the instruction files and memory indexes loaded at start, drawn as a tree, and below them the memories read during the conversation, each marked full, titles, or snippet" width="960">
+</p>
+
+| What you see | Details |
+| --- | --- |
+| **Loaded at start** | The instruction files and memory indexes put into Claude's head at the start of every conversation, drawn as a tree of who imports whom, with the estimated tokens for each |
+| **Read during the conversation** | Which memory Claude read along the way, what a search turned up, and in which turn; anything new in this turn is marked ● |
+| **How much Claude saw** | Every row says **full**, **titles**, or **snippet**: an index shows Claude only the titles, and a memory's text enters the conversation only once Claude reads it |
+| **Memories cut off** | When MEMORY.md is over Claude Code's load limit (the first 200 lines or 25KB), the pane tells you Claude sees only the first few entries |
+
+Select any row to read the memory. Type `/engram-memories` (or select **◆ Engram** at the bottom of Claude Code) to toggle the pane; it can switch between English and Chinese. See the [user guide](docs/en/user-guide.md#4-the-memory-pane-which-memories-this-conversation-read). The pane reads files on your computer only: it makes no AI calls and sends nothing anywhere.
 
 ## Why Engram
 
@@ -54,6 +71,7 @@ Engram turns memory into an asset that **follows you, follows your project, and 
 
 | | Feature | What you get |
 | :---: | --- | --- |
+| <img src="docs/assets/icons/memory-pane.webp" width="48" alt=""> | **See what Claude read** | A memory pane beside Claude Code lists, live, the memories this conversation loaded and read, each marked full, titles, or snippet, so you can tell what an answer is based on. |
 | <img src="docs/assets/icons/sync.webp" width="48" alt=""> | **Automatic sync across computers** | Syncs in the background (every 10 minutes by default). Claude Code never waits on the network: it keeps remembering offline and catches up as soon as you're back online. |
 | <img src="docs/assets/icons/project-id.webp" width="48" alt=""> | **Projects are recognized by ID, not by path** | Move or rename a folder, or clone the same git repo on another computer, and Engram still knows it's the same project. |
 | <img src="docs/assets/icons/scopes.webp" width="48" alt=""> | **Three scopes, each memory in its place** | Personal preferences go in **Global** and show up in every project. Install paths and network settings go in **Machine** and never end up on another computer. |
@@ -69,7 +87,7 @@ Engram turns memory into an asset that **follows you, follows your project, and 
   <img src="docs/assets/en/illustrations/how-it-works.webp" alt="Work PC, Home PC, and a laptop all connect through background sync to your private GitHub repo, engram-vault" width="880">
 </p>
 
-- Engram **does not modify Claude Code**. It only uses three mechanisms Claude Code officially provides: the memory folder, `CLAUDE.md` imports, and hooks.
+- Engram **does not modify Claude Code**. It only uses mechanisms Claude Code officially provides: the memory folder, `CLAUDE.md` imports, hooks, and a plugin pane (the memory pane).
 - Your vault is a git repo at `%USERPROFILE%\.engram\vault`, synced to a private repo **under your own account**. Engram has no server and collects no data.
 - Day-to-day operation **makes no AI calls**: health checks use rules, and secret redaction happens on your computer.
 
@@ -124,6 +142,7 @@ When you want to tidy up on your own, type these in Claude Code:
 | `/engram:tidy` | A deep tidy of one project, the global scope, the machine scope, or the core rules: finds duplicate, outdated, contradictory, or misfiled memories |
 | `/engram:save` | Saves what's worth remembering long-term from this conversation as a memory |
 | `/engram:recall` | Finds relevant experience in memories from other projects and other computers; read-only |
+| `/engram-memories` | Toggles the memory pane, showing which memories this conversation loaded and read (or select **◆ Engram** at the bottom) |
 
 <table>
   <tr>
@@ -143,7 +162,7 @@ When you want to tidy up on your own, type these in Claude Code:
 </p>
 
 - **Your data lives in only two places**: your computer, and a private repo under your own GitHub account. Conversation transcripts are never synced.
-- **No AI calls**: your Claude quota is used in only two cases: the compatibility probe when Claude Code is updated (synthetic data only, and you can turn it off in the dashboard), and when you type an `/engram` command yourself.
+- **No AI calls**: your Claude quota is used in only two cases: the compatibility probe when Claude Code is updated (synthetic data only, and you can turn it off in the dashboard), and when you type an `/engram:` command yourself. The memory pane reads files on your computer only and uses no quota.
 - **Secret protection**: memories that look like they contain secrets are never pushed, and any detected secrets are redacted on your computer before anything is handed to Claude for tidying.
 - **Fully removable**: before installing, Engram lists every location it will change and records each one; `engram uninstall` reverts them one by one from that record, and keeps your vault by default.
 - **Company data**: if your company doesn't allow work data on a personal GitHub account, use a private repo under your company's organization instead, or use Engram on a single computer only.

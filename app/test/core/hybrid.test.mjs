@@ -148,7 +148,15 @@ describe('R-52 混合綁定', () => {
     const clone = makeRepo(path.join(root, 'work2', 'epsilon-clone'), { remote });
     const t = addTranscript(m.claudeHome, clone, { ageMs: 0 });
     const ex = excludeOf(clone);
+    // 回歸（2026-10-24 審查）：這次 Claude Code 啟動時還沒有綁定，載入的是它自己資料夾的 MEMORY.md，
+    // 不是 SessionStart 剛寫進設定檔的記憶庫那一份
+    fs.writeFileSync(path.join(vaultMem(bindingOf(orig).pid), 'MEMORY.md'), '- [v](v.md) — 記憶庫\n');
+    const claudeIndex = path.join(memDirOf(clone), 'MEMORY.md');
+    fs.mkdirSync(path.dirname(claudeIndex), { recursive: true });
+    fs.writeFileSync(claudeIndex, '- [c](c.md) — 原本的\n');
     const ctx = await eg.sessionContext({ cwd: clone, transcriptPath: t.file, sessionId: t.sessionId });
+    assert.equal(ctx.memoryIndex, claudeIndex);
+    fs.rmSync(path.dirname(claudeIndex), { recursive: true, force: true });
     assert.match(ctx.text, /專案：epsilon.*下次對話生效/);
     assert.doesNotMatch(ctx.text, /設定檔備援/);
     assert.equal(isLink(path.join(t.dir, 'memory')), false);

@@ -1,6 +1,6 @@
 {
   "name": "engram",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Engram 憶跡：讓 Claude Code 在每一台電腦都記得你。記憶的跨裝置同步、整理與復原",
   "license": "MIT",
   "author": "Sen-CaPoo",
@@ -19,6 +19,7 @@
   },
   "scripts": {
     "test": "node --test \"test/**/*.test.mjs\"",
-    "test:shell": "node --test \"test/shell/**/*.test.mjs\""
+    "test:shell": "node --test \"test/shell/**/*.test.mjs\"",
+    "test:lens": "claude plugin validate plugin && claude plugin test plugin"
   }
 }
