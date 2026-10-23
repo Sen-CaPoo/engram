@@ -2,16 +2,16 @@
 import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api } from '../api.js';
-import { useData, Skeleton, Meter, ErrorBanner, Banner, useAction, Section, Markdown, useDirty, useSaveShortcut, drafts, ConfirmDialog } from '../components.jsx';
+import { useApp, useData, Skeleton, Meter, ErrorBanner, Banner, useAction, Section, Markdown, useDirty, useSaveShortcut, drafts, ConfirmDialog } from '../components.jsx';
 import { Editor } from '../lazy-editor.jsx';
 import { fmtBytes, relTime } from '../util.js';
-import { IconEye, IconEdit } from '../icons.jsx';
-import { AskClaudeButton } from '../askclaude.jsx';
+import { IconEye, IconEdit, IconSparkle } from '../icons.jsx';
 import { t, N_, local } from '../i18n.js';
 
 const KIND = { user: N_('使用者層'), import: N_('引用'), project: N_('專案'), rule: N_('kind::規則') };
 
 export function Core() {
+  const { go } = useApp();
   const core = useData(() => api.core(), []);
   const act = useAction();
   const [text, setText] = useState(null);
@@ -70,8 +70,7 @@ export function Core() {
             <div class="panel-body" style={{ display: 'grid', gap: 14 }}>
               <Meter label={t('核心準則＋兩份索引')} value={chainLines} max={200} unit={t(' 行')} />
               <p class="muted" style={{ fontSize: 13 }}>{t('官方建議 CLAUDE.md 與它匯入的檔案合計不超過 200 行。內容越精簡，Claude 越能確實遵守。細節規則可以移到 {rules}，用 {paths} 限定只在相關檔案時載入。', { rules: <code>core/rules/</code>, paths: <code>paths:</code> })}</p>
-              <div><AskClaudeButton label={t('請 Claude 精簡')} title={t('請 Claude 精簡每次都會載入的內容')} command="/engram:tidy core"
-                intro={t('Claude 會讀核心準則、全域與這台電腦的單機記憶，找出重複、已被其他記憶涵蓋或說明太長的部分，列出刪改前後的差異讓你確認。Engram 維護的區塊會原樣保留。')} /></div>
+              <div><button class="btn sm" onClick={() => go('tidy', { scope: 'core' })} title={t('到「記憶整理」產生給 Claude 的指令')}><IconSparkle />{t('請 Claude 精簡')}</button></div>
             </div>
           </Section>
 

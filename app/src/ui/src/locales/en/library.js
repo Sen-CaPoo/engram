@@ -45,8 +45,6 @@ export default {
   '釘選': 'Pin',
   '歷史': 'History',
   '請 Claude 檢查': 'Ask Claude to check',
-  '請 Claude 檢查「{name}」': 'Ask Claude to check "{name}"',
-  'Claude 會檢查這筆記憶：說明是否具體、是不是一筆講好幾件事、有沒有過時或與其他記憶重複矛盾、範圍放得對不對，再提出改寫或整理的建議。': 'Claude will check this memory: whether the description is specific, whether it covers several things at once, whether it is outdated or duplicates or contradicts other memories, and whether it is in the right scope. Then it suggests a rewrite or cleanup.',
   '刪除': 'Delete',
   '改用原始碼模式': 'Switch to raw mode',
   'Ctrl+S 儲存 · 儲存後會在 30 秒內同步到其他電腦': 'Ctrl+S to save · Saved changes sync to your other computers within 30 seconds',

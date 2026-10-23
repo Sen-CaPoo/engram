@@ -2,6 +2,42 @@
 
 版本號遵循[語意化版本](https://semver.org/lang/zh-TW/)。
 
+## 1.3.0（2026-10-24）
+
+記憶整理：Claude 提出建議，你在管理介面逐項決定，再交回 Claude 執行。
+
+### 記憶整理（管理介面＋Claude Code 外掛）
+
+<img src="docs/assets/screenshots/tidy.png" alt="記憶整理頁" width="720">
+
+- 管理介面新增「記憶整理」頁：選範圍（全域、單機、專案、核心準則或全部記憶）、寫補充說明，產生要貼給 Claude Code 的指令，並列出所有整理記錄。導覽列顯示等你決定的記錄數量。
+- `/engram:tidy` 改為只分析：Claude 讀過記憶，把每一項的建議、理由與修改後的完整內容存成整理記錄，給你回到管理介面的網址。這個技能只預先允許讀取指令與建立記錄，分析時不會改動任何記憶。
+- 整理記錄頁：
+  - 上方是 Claude 的整體結論、你的補充說明與四個步驟的進度。
+  - 每一項列出 Claude 的建議與理由、採用後會做的事（改寫與合併附差異比對，新增附內容預覽）、建議當時的內容。
+  - 每一項選「採用建議／維持原狀／封存／依備註調整」並可寫備註，自動儲存；「未決定的照建議」一次處理剩下的；可依待決定、建議變更、建議保留篩選。
+  - 建議之後記憶被改過（例如另一台電腦同步過來）的項目會先提醒；執行時那一項不寫入（標成失敗），不會覆蓋。
+- 按「產生執行指令」得到 `/engram:tidy-apply <id>`（新技能）：
+  - 採用建議的項目由 Engram 照你看過的內容執行，不重新生成；動手前把會動到的檔案備份到 `~/.engram/local/backups/<時間>-tidy-<id>/`（附 SHA-256 清單），每一項動手前先確認整項的前提都還成立（版本相符、要新增或搬入的位置沒有同名檔），不成立就整項不動；一項失敗不影響其他項；每做完一步就存進度，中斷後再執行一次會從下一步接著做。
+  - 依備註調整的項目由 Claude 依你的備註處理，問題不明確時先問你。
+  - 結果回到同一頁：每一項的結果、復原指令與「復原這一項」按鈕。
+- 記憶庫的「請 Claude 檢查」、專案頁的「請 Claude 整理」、核心準則頁的「請 Claude 精簡」改為帶著範圍開啟記憶整理頁。
+- 新指令 `engram tidy`（`create`、`list`、`show`、`apply`、`done`），給兩個技能使用。整理記錄存在這台電腦的 `~/.engram/local/tidy/`，不會同步，90 天後由常駐程式清除。
+
+<details>
+<summary>English</summary>
+
+**Tidy-up: Claude suggests, you decide each item in the dashboard, and Claude carries out your decisions.**
+
+- **Tidy-up page (dashboard):** pick a scope (global, machine, a project, core rules, or all memories), add notes for Claude, and copy the command to paste into Claude Code. The page also lists every tidy-up record, and the navigation shows how many are waiting for your decisions.
+- **`/engram:tidy` now only analyzes:** Claude reads the memories and saves each suggestion, its reasoning, and the complete revised content as a tidy-up record, then gives you a link back to the dashboard. The skill pre-allows only read commands and creating the record, so analysis never changes a memory.
+- **Record page:** Claude's overall conclusion, your notes, and four-step progress at the top. Each item shows the suggestion and reasoning, what accepting it will do (rewrites and merges with a before-and-after view, new memories with a preview), and the content as of the suggestion. Choose **Accept suggestion**, **Keep as is**, **Archive**, or **Adjust per note** and add a note; decisions save automatically, **Accept suggestions for undecided items** handles the rest at once, and you can filter by undecided, suggested changes, or suggested to keep. Items whose memory changed after the suggestion (for example, synced from another computer) are flagged up front; when the tidy-up runs, that item isn't written (it's marked failed), so nothing is overwritten.
+- **`/engram:tidy-apply <id>` (new skill):** **Generate run command** gives you this command. Accepted items are carried out by Engram exactly as you saw them, never regenerated; before anything changes, the files involved are backed up to `~/.engram/local/backups/<time>-tidy-<id>/` with a SHA-256 list, each item first confirms that all its preconditions still hold (matching versions, no same-named memory where one is added or moved) and is left untouched otherwise, one failed item doesn't affect the others, and progress is saved after every step so running it again after an interruption resumes from the next step. "Adjust per note" items are handled by Claude following your notes, asking you first when a note is unclear. Results come back to the same page, with each item's outcome, undo command, and an **Undo this item** button.
+- **Ask Claude to check** in Library, **Ask Claude to tidy up** on Projects, and **Ask Claude to trim** on Core rules now open the Tidy-up page with the scope filled in.
+- **New command `engram tidy`** (`create`, `list`, `show`, `apply`, `done`) for the two skills. Tidy-up records live on this computer in `~/.engram/local/tidy/`, are not synced, and are cleared by the agent after 90 days.
+
+</details>
+
 ## 1.2.0（2026-10-24）
 
 全新記憶視覺化面板：親眼看見 Claude 每次對話讀了哪些記憶。

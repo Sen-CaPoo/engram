@@ -175,3 +175,40 @@ export function since(iso, now = Date.now()) {
   if (m < 48 * 60) return t('{n} 小時', { n: Math.round(m / 60) });
   return t('{n} 天', { n: Math.round(m / 1440) });
 }
+
+/**
+ * 逐行比對（記憶整理的差異顯示）：先去掉相同的開頭與結尾，中間用最長共同子序列。
+ * 回傳 [{ t: ' ' | '-' | '+', s: 那一行 }]。記憶都很小，超過上限時退回「整段刪除＋整段新增」。
+ */
+export function lineDiff(a, b) {
+  const split = (x) => {
+    const s = String(x ?? '').replace(/\r\n/g, '\n').replace(/\n$/, '');
+    return s === '' ? [] : s.split('\n');
+  };
+  const x = split(a);
+  const y = split(b);
+  let s = 0;
+  while (s < x.length && s < y.length && x[s] === y[s]) s++;
+  let e = 0;
+  while (e < x.length - s && e < y.length - s && x[x.length - 1 - e] === y[y.length - 1 - e]) e++;
+  const xa = x.slice(s, x.length - e);
+  const ya = y.slice(s, y.length - e);
+  const mid = [];
+  if (xa.length * ya.length > 2_000_000) {
+    xa.forEach((l) => mid.push({ t: '-', s: l }));
+    ya.forEach((l) => mid.push({ t: '+', s: l }));
+  } else {
+    const dp = Array.from({ length: xa.length + 1 }, () => new Uint32Array(ya.length + 1));
+    for (let i = xa.length - 1; i >= 0; i--) {
+      for (let j = ya.length - 1; j >= 0; j--) dp[i][j] = xa[i] === ya[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+    let i = 0;
+    let j = 0;
+    while (i < xa.length && j < ya.length) {
+      if (xa[i] === ya[j]) { mid.push({ t: ' ', s: xa[i] }); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) { mid.push({ t: '-', s: xa[i] }); i++; } else { mid.push({ t: '+', s: ya[j] }); j++; }
+    }
+    while (i < xa.length) mid.push({ t: '-', s: xa[i++] });
+    while (j < ya.length) mid.push({ t: '+', s: ya[j++] });
+  }
+  return [...x.slice(0, s).map((l) => ({ t: ' ', s: l })), ...mid, ...x.slice(x.length - e).map((l) => ({ t: ' ', s: l }))];
+}

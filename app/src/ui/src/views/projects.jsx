@@ -4,8 +4,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { api } from '../api.js';
 import { useApp, useData, Empty, Skeleton, Meter, Dialog, ErrorBanner, useAction, When } from '../components.jsx';
 import { relTime, fmtBytes } from '../util.js';
-import { IconFolder, IconChevronDown, IconChevronRight, IconCheck, IconAlert, IconEdit, IconLibrary, IconLink, IconArchive } from '../icons.jsx';
-import { AskClaudeButton } from '../askclaude.jsx';
+import { IconFolder, IconChevronDown, IconChevronRight, IconCheck, IconAlert, IconEdit, IconLibrary, IconLink, IconArchive, IconSparkle } from '../icons.jsx';
 import { t, N_ } from '../i18n.js';
 
 export function Projects({ go, params = {} }) {
@@ -154,8 +153,7 @@ function ProjectDetail({ p, devices, go, onRename, onLink }) {
         <button class="btn sm" onClick={() => go('library', { scope: `project:${p.pid}` })}><IconLibrary />{t('查看 {n} 筆記憶', { n: p.counts.memories })}</button>
         <button class="btn sm" onClick={onRename}><IconEdit />{t('改名')}</button>
         <button class="btn sm" onClick={onLink}><IconLink />{t('併入另一個專案')}</button>
-        {p.counts.memories > 0 && <AskClaudeButton label={t('請 Claude 整理')} title={t('請 Claude 整理「{name}」的記憶', { name: p.name })} command={`/engram:tidy ${p.pid}`}
-          intro={t('Claude 會讀這個專案的 {n} 筆記憶，找出重複、過時、互相矛盾、放錯範圍或說明不清楚的，提出整理計畫{extra}。在這個專案的資料夾開啟 Claude Code，Claude 還能對照程式碼確認記憶是否過時。', { n: p.counts.memories, extra: p.index?.lines >= 150 ? t('；索引目前 {lines} 行，接近 Claude Code 只載入前 200 行的上限', { lines: p.index.lines }) : '' })} />}
+        {p.counts.memories > 0 && <button class="btn sm" onClick={() => go('tidy', { scope: `project:${p.pid}` })} title={t('到「記憶整理」產生給 Claude 的指令')}><IconSparkle />{t('請 Claude 整理')}</button>}
       </div>
       <dl class="kv">
         {devices.map((d) => (

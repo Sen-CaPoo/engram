@@ -87,8 +87,9 @@ describe('HTTP 回應與引擎輸出完全一致', () => {
   test('GET /api/status ＝ status() ＋ agent', async () => {
     const r = await get('/api/status');
     assert.equal(r.status, 200);
-    const { agent, ...rest } = r.json;
+    const { agent, tidy, ...rest } = r.json;
     assert.deepEqual(rest, strip(await A.status()));
+    assert.deepEqual(tidy, { pending: 0, ready: 0, finishing: 0, total: 0 });
     assert.deepEqual(Object.keys(agent).sort(), ['paused', 'pausedAutomations', 'probe']);
     assert.equal(rest.devices.length, 2);
   });

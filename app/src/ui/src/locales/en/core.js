@@ -23,8 +23,6 @@ export default {
   '核心準則＋兩份索引': 'Core rules + the two indexes',
   '官方建議 CLAUDE.md 與它匯入的檔案合計不超過 200 行。內容越精簡，Claude 越能確實遵守。細節規則可以移到 {rules}，用 {paths} 限定只在相關檔案時載入。': 'The official guidance is to keep CLAUDE.md and the files it imports under 200 lines combined. The more concise the content, the more reliably Claude follows it. Detailed rules can move to {rules}, where {paths} limits them to loading only when related files are involved.',
   '請 Claude 精簡': 'Ask Claude to trim',
-  '請 Claude 精簡每次都會載入的內容': 'Ask Claude to trim what loads in every conversation',
-  'Claude 會讀核心準則、全域與這台電腦的單機記憶，找出重複、已被其他記憶涵蓋或說明太長的部分，列出刪改前後的差異讓你確認。Engram 維護的區塊會原樣保留。': 'Claude reads your core rules plus the global and machine memories of this computer, finds parts that are duplicated, already covered by other memories, or too wordy, and lists before-and-after diffs for you to confirm. The block maintained by Engram is kept as it is.',
   '載入順序': 'Load order',
   '只在這台載入': 'loaded on this computer only',
   '你在 {file} 寫的內容維持原樣；Engram 只在檔案末尾加一段用標記包住的引用區塊。': 'What you wrote in {file} is left as it is. Engram only adds a marked block of imports at the end of the file.',

@@ -191,8 +191,9 @@ Report back in this format:
      (the status text Engram injects is in Traditional Chinese for now, so Claude may quote it as "專案：… · 已綁定")
   2. Memory pane: type /engram-memories in Claude Code (or select "◆ Engram" at the bottom) to see which memories this conversation read
   3. Dashboard: type engram ui in a terminal (Edge is recommended; from its menu choose "Apps › Install this site as an app")
-  4. Second computer: paste the same message into Claude Code on that computer and give it a different name
-  5. Please keep <Engram folder>; you'll need it for updates
+  4. Tidy-up: under Tidy-up in the dashboard, pick a scope and paste the copied command into Claude Code; after Claude makes suggestions, you decide each item on the page
+  5. Second computer: paste the same message into Claude Code on that computer and give it a different name
+  6. Please keep <Engram folder>; you'll need it for updates
 ```
 
 Also remind them: in a Claude Code conversation that is already open, run `/reload-plugins` or start a new conversation before commands such as `/engram:inbox` appear. (The instructions inside these commands are in Traditional Chinese for now; Claude normally replies in the language you write in.)

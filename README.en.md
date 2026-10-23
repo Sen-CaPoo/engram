@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-0072CE">
+  <img alt="Version 1.3.0" src="https://img.shields.io/badge/version-1.3.0-0072CE">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-0072CE">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-13202F">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2E8B87">
@@ -34,22 +34,43 @@
 
 > **Language support.** The dashboard is available in English and Traditional Chinese (switch languages in the top bar or in Settings). For now, the command-line output, the setup script's prompts, the agent's Windows notifications, and the instructions inside the Claude Code plugin skills are in Traditional Chinese. Claude normally replies in the language you write in.
 
-## New in 1.2.0: see which memories Claude actually read
+## What's new
 
-Which memories is Claude's answer based on? You used to have to guess. Now you can **see it at a glance**. The new **memory pane** sits right beside Claude Code and shows, live, what's in Claude's head for this conversation.
+<!-- How to maintain: keep only the three most recent versions here. Write the new version in the large block at the top; shrink the previous large block into the first cell of the two-column table below, and drop the table's old second cell (its full notes stay in CHANGELOG.md). -->
+
+### 1.3.0 · Tidy-up: Claude suggests, you decide each item
+
+The more you use memories, the more duplicated, outdated, and misplaced content piles up. Now you pick a scope in the dashboard and paste one command into Claude Code: Claude reads the memories in that scope and suggests how to tidy them up, revised content included. **You review the changes item by item on a web page and decide**, and only then does Claude act on your decisions.
 
 <p align="center">
-  <img src="docs/assets/en/screenshots/memory-pane.png" alt="The Engram pane on the right side of Claude Code: the instruction files and memory indexes loaded at start, drawn as a tree, and below them the memories read during the conversation, each marked full, titles, or snippet" width="960">
+  <img src="docs/assets/en/screenshots/tidy.png" alt="The Tidy-up page: Claude's overall conclusion and four-step progress at the top; below, each item with its suggestion, reasoning, a before-and-after view, and four decisions: Accept suggestion, Keep as is, Archive, Adjust per note" width="960">
 </p>
 
-| What you see | Details |
-| --- | --- |
-| **Loaded at start** | The instruction files and memory indexes put into Claude's head at the start of every conversation, drawn as a tree of who imports whom, with the estimated tokens for each |
-| **Read during the conversation** | Which memory Claude read along the way, what a search turned up, and in which turn; anything new in this turn is marked ● |
-| **How much Claude saw** | Every row says **full**, **titles**, or **snippet**: an index shows Claude only the titles, and a memory's text enters the conversation only once Claude reads it |
-| **Memories cut off** | When MEMORY.md is over Claude Code's load limit (the first 200 lines or 25KB), the pane tells you Claude sees only the first few entries |
+| | Where | What happens |
+| :---: | --- | --- |
+| **1** | **Tidy-up** in the dashboard | Pick a scope (global, machine, a project, core rules, or everything), add notes for Claude, and copy the command |
+| **2** | Claude Code | Paste `/engram:tidy …`: Claude reads the memories, makes suggestions, and gives you a link back to the dashboard. Nothing is changed at this step |
+| **3** | The dashboard | For each item, see the suggestion, the reasoning, and the before-and-after changes; choose Accept suggestion, Keep as is, Archive, or Adjust per note. Decisions save automatically |
+| **4** | Claude Code | Paste `/engram:tidy-apply …`: a backup is made first, accepted items are carried out exactly as you saw them, and "Adjust per note" items go to Claude. Results come back to the same page, and every item can be undone on its own |
 
-Select any row to read the memory. Type `/engram-memories` (or select **◆ Engram** at the bottom of Claude Code) to toggle the pane; it can switch between English and Chinese. See the [user guide](docs/en/user-guide.md#4-the-memory-pane-which-memories-this-conversation-read). The pane reads files on your computer only: it makes no AI calls and sends nothing anywhere.
+See the [user guide](docs/en/user-guide.md#3-tidy-with-ai-in-claude-code) for details.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <b>1.2.0 · See which memories Claude actually read</b><br><br>
+      <img src="docs/assets/en/screenshots/memory-pane.png" alt="The memory pane beside Claude Code: files loaded at start drawn as a tree, and memories read during the conversation below"><br>
+      The memory pane beside Claude Code lists, live, the memories this conversation loaded and read, and whether Claude saw the full text, only titles, or a snippet. Toggle it with <code>/engram-memories</code>. <a href="docs/en/user-guide.md#4-the-memory-pane-which-memories-this-conversation-read">User guide</a>
+    </td>
+    <td width="50%" valign="top">
+      <b>1.1.0 · English dashboard and docs</b><br><br>
+      <img src="docs/assets/en/screenshots/overview.png" alt="The dashboard overview in English"><br>
+      Switch the dashboard to English; text from the agent, such as inbox cards and error messages, comes in English too. Plus an English README, AI install guide, and user guide.
+    </td>
+  </tr>
+</table>
+
+Older versions are in the [changelog](CHANGELOG.md).
 
 ## Why Engram
 
@@ -78,7 +99,7 @@ Engram turns memory into an asset that **follows you, follows your project, and 
 | <img src="docs/assets/icons/restore.webp" width="48" alt=""> | **Everything can be undone** | Every change has a history. Before an import, Engram rehearses the whole thing on a copy; after you apply it, you can restore with one click. Your original memory files are always kept. |
 | <img src="docs/assets/icons/merge.webp" width="48" alt=""> | **Conflicts without the fuss** | If two computers edit different sections, Engram merges them automatically. Only when the same section is edited does it ask you to compare the two versions side by side. Claude never sees conflict markers. |
 | <img src="docs/assets/icons/secrets.webp" width="48" alt=""> | **Secrets don't leak** | Memories that look like they contain passwords, tokens, or connection strings stay on your computer and are never pushed. The inbox reminds you to redact them. |
-| <img src="docs/assets/icons/ai-tidy.webp" width="48" alt=""> | **Let Claude tidy up** | In Claude Code, type `/engram:inbox` or `/engram:tidy`. Claude reads the content and lays out a plan first; it acts only after you approve. |
+| <img src="docs/assets/icons/ai-tidy.webp" width="48" alt=""> | **Let Claude tidy up** | Pick a scope in the dashboard; Claude analyzes it and suggests changes with the revised content. You review the changes item by item on a web page and decide, and only then does Claude act; every item can be undone. The inbox can be handed to `/engram:inbox` too. |
 | <img src="docs/assets/icons/dashboard.webp" width="48" alt=""> | **A dashboard that shows it all** | Overview, Library, Inbox, Projects, and Devices & sync in one interface. Supports dark mode and can be installed as a desktop app. |
 
 ## How it works in 30 seconds
@@ -139,7 +160,8 @@ When you want to tidy up on your own, type these in Claude Code:
 | Command | What it's for |
 | --- | --- |
 | `/engram:inbox` | Has Claude read through the inbox card by card, explaining its reasoning and recommendations; it acts only after you approve. Add `auto` to have it handle the items it's confident about directly |
-| `/engram:tidy` | A deep tidy of one project, the global scope, the machine scope, or the core rules: finds duplicate, outdated, contradictory, or misfiled memories |
+| `/engram:tidy` | A deep tidy of the global scope, the machine scope, one project, the core rules, or everything: Claude makes suggestions, and you decide each item under **Tidy-up** in the dashboard (which can also generate the command) |
+| `/engram:tidy-apply` | Carries out the decisions you made on the Tidy-up page; the results come back to the same page |
 | `/engram:save` | Saves what's worth remembering long-term from this conversation as a memory |
 | `/engram:recall` | Finds relevant experience in memories from other projects and other computers; read-only |
 | `/engram-memories` | Toggles the memory pane, showing which memories this conversation loaded and read (or select **◆ Engram** at the bottom) |

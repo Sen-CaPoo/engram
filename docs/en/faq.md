@@ -51,6 +51,10 @@ If your Claude Code account is managed by an organization that has turned on tel
 
 Yes. They're sent to Claude just like in any other conversation, and they use your Claude quota. Possible secrets that were detected are redacted on your computer before anything is sent. Claude reads your memories for tidying only when you type those commands.
 
+### Could a tidy-up mess up my memories?
+
+No. `/engram:tidy` only reads memories and creates a tidy-up record (the skill pre-allows only those commands): Claude saves its suggestions and the revised content as a tidy-up record, and the memories themselves stay as they are. Nothing runs until you decide on each item under **Tidy-up** in the dashboard and paste `/engram:tidy-apply` back into Claude Code. Accepted items are written exactly as you saw them on the page, never regenerated. A backup is made first, memories that changed after the suggestion are never overwritten, and every item can be undone from the results page.
+
 ### Does the memory pane send my memories anywhere?
 
 No. The memory pane reads files on your computer and lists them; it makes no AI calls, uses no quota, and connects to nothing.

@@ -19,6 +19,7 @@ const skills = skillDirs.map((dir) => ({ dir, file: path.join(SKILLS, dir, 'SKIL
 const SUBCOMMANDS = {
   inbox: ['show', 'apply', 'dismiss', 'resolve'],
   memory: ['list', 'show', 'write', 'move', 'remove', 'merge'],
+  tidy: ['create', 'list', 'show', 'apply', 'done'],
   core: ['write'],
   collisions: ['apply', 'undo'],
   import: ['plan', 'apply', 'undo'],
@@ -39,8 +40,14 @@ function engramCalls(text) {
 }
 
 describe('外掛技能', () => {
-  test('至少有 engram、inbox、tidy、save、recall 五個技能', () => {
-    for (const name of ['engram', 'inbox', 'tidy', 'save', 'recall']) assert.ok(skillDirs.includes(name), `缺少技能 ${name}`);
+  test('至少有 engram、inbox、tidy、tidy-apply、save、recall 六個技能', () => {
+    for (const name of ['engram', 'inbox', 'tidy', 'tidy-apply', 'save', 'recall']) assert.ok(skillDirs.includes(name), `缺少技能 ${name}`);
+  });
+
+  test('tidy 只分析：不預先允許任何會改記憶的指令（寫入只在使用者於介面決定後由 tidy-apply 執行）', () => {
+    const tools = String(parseMemoryFile(skills.find((s) => s.dir === 'tidy').text).data['allowed-tools']);
+    for (const bad of [/engram memory \*/, /engram memory (write|move|remove|merge)/, /engram remember/, /engram undo/, /engram core \*/, /engram sync/, /engram tidy \*/, /engram tidy (apply|done)/]) assert.doesNotMatch(tools, bad);
+    for (const ok of [/Bash\(engram tidy create \*\)/, /Bash\(engram tidy list\)/, /Bash\(engram tidy show \*\)/]) assert.match(tools, ok);
   });
 
   for (const s of skills) {
@@ -55,7 +62,7 @@ describe('外掛技能', () => {
         assert.ok(tools, `${s.dir} 要用 allowed-tools 預先允許 engram 指令，否則預設權限模式下每一步都會詢問`);
         const rules = tools.split(/\s+(?=[A-Z])/);
         // 只開放技能用得到的 engram 子指令（不可以是涵蓋 uninstall、update、import、collisions 的 engram *），以及沒有 Bash 時寫草稿用的 ~/.engram/local/drafts
-        const SAFE = /^(Bash|PowerShell)\(engram (inbox|memory|memory show|memory list|core|search|remember|undo|status|projects|sync)( \*)?\)$/;
+        const SAFE = /^(Bash|PowerShell)\(engram (inbox|memory|memory show|memory list|core|search|remember|undo|status|projects|sync|tidy|tidy create|tidy list|tidy show)( \*)?\)$/;
         for (const rule of rules) assert.ok(SAFE.test(rule) || rule === 'Edit(~/.engram/local/drafts/**)', `${s.dir} 只能預先允許技能需要的 engram 子指令與草稿資料夾：${rule}`);
         // Windows 上 Claude 可能改用 PowerShell 工具執行；兩種工具的規則要成對
         const norm = (t) => rules.filter((r) => r.startsWith(t)).map((r) => r.slice(t.length)).sort();
@@ -97,7 +104,7 @@ describe('外掛技能', () => {
   });
 
   test('寫入類技能都要求先取得使用者同意', () => {
-    for (const s of skills.filter((x) => ['inbox', 'tidy', 'save'].includes(x.dir))) {
+    for (const s of skills.filter((x) => ['inbox', 'tidy', 'tidy-apply', 'save'].includes(x.dir))) {
       assert.match(s.text, /同意/, `${s.dir} 要寫明「使用者同意後才寫入」`);
       assert.match(s.text, /停下來等使用者回覆/, `${s.dir} 要在提出計畫後停下來`);
       assert.match(s.text, /用 \*\*Bash\*\* 工具執行/, `${s.dir} 要指定用 Bash 執行（heredoc 與中文編碼）`);

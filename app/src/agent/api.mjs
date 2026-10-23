@@ -7,6 +7,9 @@ import { readLogs } from '../cli/log.mjs';
 import { claudeHome as defaultClaudeHome } from '../cli/paths.mjs';
 import { buildCoreChain } from './corechain.mjs';
 import { claudePluginStatus } from './plugin.mjs';
+import { undoItem } from '../tidy/apply.mjs';
+import { deleteRecord, listRecords, markReady, setDecisions } from '../tidy/store.mjs';
+import { recordView, tidySummary } from '../tidy/view.mjs';
 import { HttpError } from './server.mjs';
 
 /** 'global'、'project:<pid>'、'machine:<mid>'、'project'（只限種類）或 Scope 物件 → Scope 物件 */
@@ -69,8 +72,10 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     if (typeof fn !== 'function') throw new HttpError(501, 'E_NOT_IMPLEMENTED', `這個版本的引擎還不支援${what}`, '更新 Engram 後再試。').withEn(`This version of the engine does not support ${whatEn} yet`, 'Update Engram and try again.');
     return fn;
   };
+  // 整理記錄存在這台電腦的 local/tidy（引擎的 local 與外殼的 local 是同一個資料夾）
+  const tidyLocal = () => eg.paths?.local ?? paths.local;
   const routes = {
-    'GET /api/status': async () => ({ ...(await eg.status()), agent: info.statusSummary() }),
+    'GET /api/status': async () => ({ ...(await eg.status()), agent: info.statusSummary(), tidy: await tidySummary(tidyLocal()).catch(() => null) }),
     'GET /api/activity': ({ q }) => eg.activity({ days: toInt(q('days'), 30) }),
 
     'GET /api/memories': ({ q }) => eg.memories.list(clean({ scope: parseScope(q('scope')), pid: q('pid'), type: q('type'), q: q('q'), sort: q('sort') })),
@@ -162,6 +167,17 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       return { started: true };
     },
     'GET /api/loaded': ({ q }) => readLoaded(paths.loaded, q('session') ?? 'latest'),
+
+    // 記憶整理（1.3.0）：Claude 用 engram tidy create 建立記錄；使用者在這裡決定；engram tidy apply 執行
+    'GET /api/tidy': () => listRecords(tidyLocal()),
+    'GET /api/tidy/record': ({ q }) => recordView(eg, need(q('id'), 'id')),
+    'PUT /api/tidy/decisions': async ({ body }) => {
+      await setDecisions(tidyLocal(), need(body.id, 'id'), need(body.changes, 'changes'));
+      return { ok: true };
+    },
+    'POST /api/tidy/ready': ({ body }) => markReady(tidyLocal(), need(body.id, 'id')),
+    'POST /api/tidy/undo': ({ body }) => undoItem(eg, need(body.id, 'id'), need(body.item, 'item')),
+    'POST /api/tidy/delete': ({ body }) => deleteRecord(tidyLocal(), need(body.id, 'id')),
 
     // 「交給 Claude」的引導：外掛是否已安裝並啟用、有哪些 /engram 技能（唯讀）
     'GET /api/claude-plugin': () => claudePluginStatus({ claudeHome, installFile: paths.installFile }),

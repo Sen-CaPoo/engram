@@ -11,7 +11,8 @@ import importView from './import.js';
 import settings from './settings.js';
 import askclaude from './askclaude.js';
 import editor from './editor.js';
+import tidy from './tidy.js';
 
-export const PARTS = { common, overview, library, inbox, projects, devices, core, schedule, import: importView, settings, askclaude, editor };
+export const PARTS = { common, overview, library, inbox, projects, devices, core, schedule, import: importView, settings, askclaude, editor, tidy };
 
 export default Object.assign({}, ...Object.values(PARTS));

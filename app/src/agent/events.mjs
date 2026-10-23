@@ -1,5 +1,5 @@
-// SSE 事件中心：GET /api/events?t=<token>。事件名稱見 api.js：status | sync | change | finding | job | probe。
-export const EVENT_NAMES = Object.freeze(['status', 'sync', 'change', 'finding', 'job', 'probe']);
+// SSE 事件中心：GET /api/events?t=<token>。事件名稱見 api.js：status | sync | change | finding | job | probe | tidy。
+export const EVENT_NAMES = Object.freeze(['status', 'sync', 'change', 'finding', 'job', 'probe', 'tidy']);
 export const KEEPALIVE_MS = 25_000;
 
 export function createEventHub({ keepAliveMs = KEEPALIVE_MS } = {}) {

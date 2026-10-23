@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img alt="版本 1.2.0" src="https://img.shields.io/badge/version-1.2.0-0072CE">
+  <img alt="版本 1.3.0" src="https://img.shields.io/badge/version-1.3.0-0072CE">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-0072CE">
   <img alt="Claude Code 外掛" src="https://img.shields.io/badge/Claude%20Code-plugin-13202F">
   <img alt="MIT 授權" src="https://img.shields.io/badge/license-MIT-2E8B87">
@@ -32,22 +32,43 @@
   <img src="docs/assets/hero.webp" alt="Engram 管理介面總覽：待處理事項、裝置同步軌跡與記憶分布，周圍是多台裝置透過同步連在一起" width="960">
 </p>
 
-## 1.2.0 新功能：親眼看見 Claude 讀了哪些記憶
+## 最新功能
 
-Claude 的回答是根據哪些記憶？以前只能猜，現在**一眼就看得到**。全新的**記憶視覺化面板**就在 Claude Code 旁邊，即時列出這次對話 Claude 腦袋裡裝了什麼。
+<!-- 維護方式：這一節只放最近三個版本。新版本寫在最上面的大區塊；原本的大區塊縮成下面兩欄表格的第一格，表格原本的第二格移除（完整內容仍在 CHANGELOG.md）。 -->
+
+### 1.3.0　記憶整理：Claude 提建議，你逐項決定
+
+記憶越用越多，重複、過時、放錯專案的內容也越積越多。現在在管理介面選好範圍，把一行指令貼給 Claude Code：Claude 讀過範圍內的記憶，提出整理建議和修改後的內容，**你在網頁上逐項看差異、做決定**，Claude 才照你的決定動手。
 
 <p align="center">
-  <img src="docs/assets/screenshots/memory-pane.png" alt="Claude Code 右側的憶跡面板：開場載入的指示檔與記憶索引排成樹狀，下方列出這次對話中讀取的記憶，每一列標出全文、標題或摘要" width="960">
+  <img src="docs/assets/screenshots/tidy.png" alt="記憶整理頁：上方是 Claude 的整體結論與四個步驟的進度，下方每一項有建議、理由、差異比對，以及採用建議、維持原狀、封存、依備註調整四種決定" width="960">
 </p>
 
-| 你看得到 | 說明 |
-| --- | --- |
-| **開場載入** | 每次對話一開始就放進 Claude 腦袋的指示檔與記憶索引，用樹狀線畫出誰匯入了誰，附上估計的 token 數 |
-| **對話中讀取** | Claude 中途讀了哪一則記憶、搜尋到哪些、在第幾回合；這一回合新讀到的標上 ● |
-| **讀到多深** | 每一列標出「全文」、「標題」或「摘要」：索引只讓 Claude 看到標題，記憶內容要讀取後才會進入對話 |
-| **被截掉的記憶** | MEMORY.md 超過 Claude Code 的載入上限（前 200 行或 25KB）時，直接告訴你 Claude 只看得到前幾則 |
+| | 在哪裡 | 做什麼 |
+| :---: | --- | --- |
+| **1** | 管理介面「記憶整理」 | 選範圍（全域、單機、專案、核心準則或全部），寫下補充說明，複製指令 |
+| **2** | Claude Code | 貼上 `/engram:tidy …`：Claude 讀過記憶、提出建議，給你一個回到管理介面的網址。這一步不改任何記憶 |
+| **3** | 管理介面 | 每一項看建議、理由與修改前後的差異，選「採用建議／維持原狀／封存／依備註調整」，自動儲存 |
+| **4** | Claude Code | 貼上 `/engram:tidy-apply …`：先備份，採用的項目照你看過的內容執行，選了「依備註調整」的交給 Claude 處理；結果回到同一頁，每一項都能單獨復原 |
 
-點任何一列就能看記憶內容。輸入 `/engram-memories`（或點 Claude Code 底部的「◆ 憶跡」）開關面板，介面可以切換中英文，詳見[使用說明](docs/使用說明.md#4-記憶面板這次對話讀了哪些記憶)。面板只在你的電腦上讀取，不呼叫 AI，也不送出任何資料。
+詳見[使用說明](docs/使用說明.md#3-在-claude-code-裡用-ai-整理)。
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <b>1.2.0　親眼看見 Claude 讀了哪些記憶</b><br><br>
+      <img src="docs/assets/screenshots/memory-pane.png" alt="Claude Code 右側的記憶面板：開場載入的檔案排成樹狀，下方列出對話中讀取的記憶"><br>
+      Claude Code 旁的記憶面板即時列出這次對話載入與讀取的記憶，標出 Claude 看到的是全文、標題還是摘要。輸入 <code>/engram-memories</code> 開關，<a href="docs/使用說明.md#4-記憶面板這次對話讀了哪些記憶">使用說明</a>
+    </td>
+    <td width="50%" valign="top">
+      <b>1.1.0　英文介面與英文文件</b><br><br>
+      <img src="docs/assets/en/screenshots/overview.png" alt="英文版的管理介面總覽頁"><br>
+      管理介面可以切換 English，收件匣卡片、錯誤訊息等常駐程式傳來的文字也有英文；另有英文版 README、AI 安裝手冊與使用說明，<a href="README.en.md">English README</a>
+    </td>
+  </tr>
+</table>
+
+更早的版本見[更新紀錄](CHANGELOG.md)。
 
 ## 為什麼需要 Engram
 
@@ -76,7 +97,7 @@ Engram 把記憶變成**跟著你走、跟著專案走、隨時能復原**的資
 | <img src="docs/assets/icons/restore.webp" width="48" alt=""> | **什麼都能復原** | 每個變更都有歷史。匯入前先在複本上完整演練，套用後隨時一鍵還原；原始記憶檔一律保留。 |
 | <img src="docs/assets/icons/merge.webp" width="48" alt=""> | **衝突不吵你** | 兩台改了不同段落就自動合併；改到同一段才請你並排比對，Claude 永遠不會讀到衝突標記。 |
 | <img src="docs/assets/icons/secrets.webp" width="48" alt=""> | **金鑰不外流** | 偵測到疑似密碼、權杖、連線字串的記憶，只留在本機、不會推送，並在收件匣提醒你遮蔽。 |
-| <img src="docs/assets/icons/ai-tidy.webp" width="48" alt=""> | **交給 Claude 整理** | 在 Claude Code 輸入 `/engram:inbox`、`/engram:tidy`，Claude 讀過內容、先列計畫，你同意才動手。 |
+| <img src="docs/assets/icons/ai-tidy.webp" width="48" alt=""> | **交給 Claude 整理** | 在管理介面選範圍，Claude 分析後提出建議與修改後的內容；你在網頁逐項看差異、做決定，Claude 才動手，每一項都能復原。收件匣也能交給 `/engram:inbox` 處理。 |
 | <img src="docs/assets/icons/dashboard.webp" width="48" alt=""> | **看得見的管理介面** | 總覽、記憶庫、收件匣、專案、裝置與同步，一個介面全部看清楚；支援深色模式，可安裝成桌面應用程式。 |
 
 ## 30 秒看懂運作方式
@@ -137,7 +158,8 @@ Claude 會檢查環境、補齊工具、列出安裝計畫給你確認，再完�
 | 指令 | 用途 |
 | --- | --- |
 | `/engram:inbox` | 讓 Claude 逐張讀過收件匣，說明判斷依據與建議；你同意後才執行。加上「自動」直接處理有把握的項目 |
-| `/engram:tidy` | 深度整理一個專案、全域、單機或核心準則：找出重複、過時、矛盾、放錯範圍的記憶 |
+| `/engram:tidy` | 深度整理全域、單機、一個專案、核心準則或全部記憶：Claude 提出建議，你在管理介面「記憶整理」逐項決定（指令可以在那一頁產生） |
+| `/engram:tidy-apply` | 照你在記憶整理頁的決定執行，結果回到同一頁 |
 | `/engram:save` | 把這次對話值得長期記住的事存成記憶 |
 | `/engram:recall` | 從其他專案、其他電腦的記憶找出相關經驗，只讀不寫 |
 | `/engram-memories` | 開關記憶面板，看這次對話載入與讀取了哪些記憶（也可以點底部的「◆ 憶跡」） |

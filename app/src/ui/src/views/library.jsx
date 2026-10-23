@@ -8,8 +8,7 @@ import {
 } from '../components.jsx';
 import { Editor } from '../lazy-editor.jsx';
 import { TYPE_LABEL, scopeKey, relTime, debounce, humanizeCommit } from '../util.js';
-import { IconGlobe, IconFolder, IconMonitor, IconLibrary, IconEdit, IconMove, IconPin, IconHistory, IconTrash, IconSearch, IconArchive, IconUndo, IconBack, IconEye } from '../icons.jsx';
-import { AskClaudeButton } from '../askclaude.jsx';
+import { IconGlobe, IconFolder, IconMonitor, IconLibrary, IconEdit, IconMove, IconPin, IconHistory, IconTrash, IconSearch, IconArchive, IconUndo, IconBack, IconEye, IconSparkle } from '../icons.jsx';
 import { t, local } from '../i18n.js';
 
 function useMedia(query) {
@@ -277,8 +276,7 @@ function Detail({ ref_, go, params }) {
             <button class="btn sm" onClick={() => setDialog('move')}><IconMove />{t('改變範圍')}</button>
             <button class="btn sm" onClick={() => act(() => api.pinMemory(m.ref, !m.pinned), m.pinned ? t('已取消釘選') : t('已釘選，會排在索引最前面'))}><IconPin />{m.pinned ? t('取消釘選') : t('釘選')}</button>
             <button class="btn sm" onClick={() => setDialog('history')}><IconHistory />{t('歷史')}</button>
-            <AskClaudeButton label={t('請 Claude 檢查')} title={t('請 Claude 檢查「{name}」', { name: m.name })} command={`/engram:tidy ${m.ref}`}
-              intro={t('Claude 會檢查這筆記憶：說明是否具體、是不是一筆講好幾件事、有沒有過時或與其他記憶重複矛盾、範圍放得對不對，再提出改寫或整理的建議。')} />
+            <button class="btn sm" onClick={() => go('tidy', { scope: m.ref })} title={t('到「記憶整理」產生給 Claude 的指令')}><IconSparkle />{t('請 Claude 檢查')}</button>
             <button class="btn sm danger" style={{ marginLeft: 'auto' }} onClick={() => setDialog('delete')}><IconTrash />{t('刪除')}</button>
           </>
         ) : (

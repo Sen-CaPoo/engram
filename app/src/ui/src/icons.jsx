@@ -49,6 +49,7 @@ export const IconSun = make(<><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2
 export const IconMoon = make(<><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z" /></>);
 export const IconSettings = make(<><circle cx="12" cy="12" r="3" /><path d="M12 2.8v2.4M12 18.8v2.4M4.2 7.5l2.1 1.2M17.7 15.3l2.1 1.2M4.2 16.5l2.1-1.2M17.7 8.7l2.1-1.2" /><circle cx="12" cy="12" r="6.6" /></>);
 export const IconBack = make(<><path d="M15 5 8 12l7 7" /></>);
+export const IconTidy = make(<><rect x="5" y="4.5" width="14" height="16" rx="1.5" /><path d="M9 4.5V3.5h6v1" /><path d="m8.5 12.5 2.2 2.2 4.8-4.8" /></>);
 export const IconArchive = make(<><rect x="3.5" y="4.5" width="17" height="4" rx="1" /><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5" /><path d="M10 12.5h4" /></>);
 
 // Engram 標誌：一筆畫的 e 跟隨 currentColor，紅點固定使用 --dot

@@ -16,8 +16,8 @@
 
 | 版本 | 安全性更新 |
 | --- | --- |
-| 1.2.x | 支援 |
-| < 1.2 | 不支援（請更新到最新版） |
+| 1.3.x | 支援 |
+| < 1.3 | 不支援（請更新到最新版） |
 
 ## Engram 如何處理你的資料
 
@@ -27,6 +27,7 @@
 | 同步內容 | 記憶檔、索引、核心準則與 Engram 的設定。對話紀錄（transcript）不會同步 |
 | 疑似金鑰 | 每次存檔與同步前掃描。含疑似金鑰的檔案只留在本機、不會推送，並在收件匣提醒你遮蔽；寫入 API 也拒絕帶進新的疑似金鑰 |
 | AI 呼叫 | 日常運作不呼叫 AI。只有 Claude Code 改版時的相容性探測（只用合成資料、可關閉），以及你主動輸入 `/engram:` 開頭的指令時，才會使用你的 Claude 額度（記憶面板只在本機讀取，不用額度）；交給 Claude 前，偵測到的金鑰會先在本機遮蔽 |
+| 記憶整理的記錄 | Claude 的建議（含修改後的內容）與你的決定只存在這台電腦的 `~/.engram/local/tidy/`，不會同步，90 天後自動清除；執行前的備份放在 `~/.engram/local/backups/` |
 | 管理介面 | 只監聽本機 `127.0.0.1:4777`，以隨機權杖保護 API，不對外開放 |
 | 改動範圍 | 安裝前列出所有會改動的位置並取得同意；每一項都記錄在安裝紀錄，`engram uninstall` 依紀錄逐項還原 |
 
@@ -52,8 +53,8 @@ We'll confirm and reply as soon as we can, and note the fix in the [changelog](C
 
 | Version | Security updates |
 | --- | --- |
-| 1.2.x | Supported |
-| < 1.2 | Not supported (please update to the latest version) |
+| 1.3.x | Supported |
+| < 1.3 | Not supported (please update to the latest version) |
 
 ## How Engram handles your data
 
@@ -63,6 +64,7 @@ We'll confirm and reply as soon as we can, and note the fix in the [changelog](C
 | What gets synced | Memory files, indexes, the core rules, and Engram's settings. Conversation transcripts are never synced |
 | Possible secrets | Scanned before every save and sync. A file containing a possible secret stays on your computer and is never pushed, and the inbox reminds you to redact it; the write API also refuses to take in new possible secrets |
 | AI calls | None in day-to-day operation. Your Claude quota is used only for the compatibility probe when Claude Code is updated (synthetic data only, and it can be turned off) and when you type an `/engram:` command yourself (the memory pane reads files locally and uses no quota); before anything is handed to Claude, detected secrets are redacted on your computer |
+| Tidy-up records | Claude's suggestions (including revised content) and your decisions are stored only on this computer in `~/.engram/local/tidy/`, are not synced, and are cleared after 90 days; the backup made before a tidy-up runs goes to `~/.engram/local/backups/` |
 | Dashboard | Listens only on `127.0.0.1:4777` on your computer, protects its API with a random token, and is not exposed externally |
 | Scope of changes | Before installing, Engram lists every location it will change and gets your approval; each one is recorded in the installation record, and `engram uninstall` reverts them one by one from that record |
 

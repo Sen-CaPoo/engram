@@ -124,4 +124,9 @@ export default {
   '{n} 分鐘': ({ n }) => plural(n, '1 minute', '{n} minutes'),
   '{n} 小時': ({ n }) => plural(n, '1 hour', '{n} hours'),
   '{n} 天': ({ n }) => plural(n, '1 day', '{n} days'),
+  // 記憶整理（導覽列與各頁的入口）
+  '記憶整理': 'Tidy-up',
+  '整理': 'Tidy',
+  '{n} 份整理記錄等你決定': ({ n }) => plural(n, '1 tidy-up record waiting for your decisions', '{n} tidy-up records waiting for your decisions'),
+  '到「記憶整理」產生給 Claude 的指令': 'Go to Tidy-up to generate the command for Claude',
 };

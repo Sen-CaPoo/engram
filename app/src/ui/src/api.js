@@ -7,10 +7,10 @@
 // - 每個請求帶 X-Engram-Token（常駐程式啟動時產生，注入在 index.html 的 <meta name="engram-token">）。
 // - 錯誤回應：HTTP 4xx/5xx，本文 { error: { code, message, hint, en?: { message, hint } } }，code 沿用 EngramError（E_LOCKED、E_AUTH…）。
 // - 多語系：給人看的文字是正體中文；有英文版時附在同一個物件的 en 欄位（例如 finding.en.title），介面依語言挑選。
-// - SSE：GET /api/events?t=<token>，事件名稱 status | sync | change | finding | job | probe，data 為 JSON。
+// - SSE：GET /api/events?t=<token>，事件名稱 status | sync | change | finding | job | probe | tidy，data 為 JSON。
 //
 // 端點一覽（方法 路徑 → 回傳）
-//   GET  /api/status                         → StatusReport ＋ { agent: { paused, probe: { ok, failed[] } } }
+//   GET  /api/status                         → StatusReport ＋ { agent: { paused, probe: { ok, failed[] } }, tidy: { pending, ready, finishing, total } }
 //                                              devices[].lastSyncAt、sync.held[{ ref, reason }]（UI-B1：判斷「真的都同步了」）
 //   GET  /api/activity?days=30               → [{ date, added, changed, removed }]
 //   GET  /api/memories?scope=&pid=&type=&q=&sort= → MemorySummary[]
@@ -52,6 +52,12 @@
 //   GET  /api/loaded?session=latest          → { sessionId, at, cwd, pid, files: [{ path, kind, bytes, lines, loadReason, parent? }] } | null
 //   GET  /api/claude-plugin                  → { state: 'ready'|'disabled'|'missing', plugin, commands[], skills: [{ name, command, description, argumentHint }] }
 //                                              （「交給 Claude」引導用：外掛是否已啟用、修好的指令、可用的 /engram 技能）
+//   GET  /api/tidy                           → [{ id, createdAt, updatedAt, appliedAt, scope, request, summary, status, counts }]（記憶整理的記錄，新的在前）
+//   GET  /api/tidy/record?id=                → TidyRecord ＋ { counts, command, items[].changed[] }（changed：建議之後被改過的記憶；格式見 app/src/tidy/plan.mjs）
+//   PUT  /api/tidy/decisions   { id, changes: { <項目 id>: { decision?, note? } } } → { ok }   （decision：accept | keep | archive | custom | null）
+//   POST /api/tidy/ready       { id }                  → { ok, command, counts }   （產生執行指令；沒有決定的項目當成維持原狀）
+//   POST /api/tidy/undo        { id, item }            → { ok, reverted[] }   （整項復原：依相反順序 engram undo）
+//   POST /api/tidy/delete      { id }                  → { ok }
 //   GET  /api/agent                          → AgentInfo（見下）
 //   POST /api/jobs/run         { id }                  → { started: true }
 //   POST /api/jobs/toggle      { id, enabled }         → AgentInfo
@@ -87,13 +93,14 @@ class ApiError extends Error {
   }
 }
 
-async function request(method, path, body) {
+async function request(method, path, body, { keepalive = false } = {}) {
   let res;
   try {
     res = await fetch(path, {
       method,
       headers: { 'Content-Type': 'application/json', 'X-Engram-Token': token() },
       body: body === undefined ? undefined : JSON.stringify(body),
+      keepalive,
     });
   } catch {
     throw new ApiError(0, { error: {
@@ -155,6 +162,12 @@ const httpApi = {
   sync: () => request('POST', '/api/sync'),
   loaded: () => request('GET', '/api/loaded?session=latest'),
   claudePlugin: () => request('GET', '/api/claude-plugin'),
+  tidyList: () => request('GET', '/api/tidy'),
+  tidyRecord: (id) => request('GET', `/api/tidy/record${qs({ id })}`),
+  tidyDecide: (id, changes, opts) => request('PUT', '/api/tidy/decisions', { id, changes }, opts),
+  tidyReady: (id) => request('POST', '/api/tidy/ready', { id }),
+  tidyUndo: (id, item) => request('POST', '/api/tidy/undo', { id, item }),
+  tidyDelete: (id) => request('POST', '/api/tidy/delete', { id }),
   agent: () => request('GET', '/api/agent'),
   runJob: (id) => request('POST', '/api/jobs/run', { id }),
   toggleJob: (id, enabled) => request('POST', '/api/jobs/toggle', { id, enabled }),
@@ -165,7 +178,7 @@ const httpApi = {
   importUndo: (tag) => request('POST', '/api/import/undo', { tag }),
   subscribe(onEvent) {
     const es = new EventSource(`/api/events?t=${encodeURIComponent(token())}`);
-    const names = ['status', 'sync', 'change', 'finding', 'job', 'probe'];
+    const names = ['status', 'sync', 'change', 'finding', 'job', 'probe', 'tidy'];
     for (const n of names) es.addEventListener(n, (e) => onEvent(n, JSON.parse(e.data || 'null')));
     return () => es.close();
   },

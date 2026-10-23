@@ -78,7 +78,8 @@ describe('狀態與記憶', () => {
   test('GET /api/status → StatusReport ＋ agent { paused, probe: { ok, failed[] } }', async () => {
     const r = await call('GET', '/api/status');
     assert.equal(r.status, 200);
-    assert.deepEqual(keys(r.json), ['agent', 'counts', 'devices', 'inbox', 'machine', 'sync', 'vault']);
+    assert.deepEqual(keys(r.json), ['agent', 'counts', 'devices', 'inbox', 'machine', 'sync', 'tidy', 'vault']);
+    assert.deepEqual(r.json.tidy, { pending: 0, ready: 0, finishing: 0, total: 0 });
     assert.equal(r.json.agent.paused, false);
     assert.deepEqual(r.json.agent.probe, { ok: null, failed: [] });
   });
@@ -398,5 +399,43 @@ describe('審查修正後新增的端點', () => {
     assert.deepEqual(pausedFile, { user: true, junction: true, normalize: true });
     await assert.rejects(() => api2.handle('PUT', '/api/settings', new URLSearchParams(), { syncIntervalMin: 7 }), /5、10、15 或 30/);
     await assert.rejects(() => api2.handle('PUT', '/api/settings', new URLSearchParams(), { syncIntervalMin: 7 }), (err) => err.status === 400 && err.en.message === 'The sync interval must be 5, 10, 15 or 30 minutes');
+  });
+});
+
+describe('記憶整理', () => {
+  test('列表、讀取（附建議之後被改過的記憶）、存決定、產生執行指令、刪除', async () => {
+    const { writeRecord } = await import('../../src/tidy/store.mjs');
+    const { revOf } = await import('../../src/cli/commands/safe.mjs');
+    const ref = 'global/powershell-bom.md';
+    const raw = (await eg.memories.read(ref)).raw;
+    const id = '20261024-101500-abcd';
+    const item = (n, r, base) => ({ id: `i${n}`, ref: r, name: r.split('/').pop().replace('.md', ''), scope: 'global', type: 'feedback', description: '', group: null, action: 'update', title: '補充', reason: '理由', base, ops: [{ op: 'write', ref: r, base, content: '---\nname: x\n---\n' }], decision: null, note: '', result: null });
+    await writeRecord(paths.local, {
+      v: 1, id, createdAt: '2026-10-24T02:15:00.000Z', machine: 'office-7k2q', scope: 'global', request: '', summary: '兩筆要改寫', highlights: [], status: 'pending', kept: [], texts: { [ref]: raw },
+      items: [item(1, ref, revOf(raw)), item(2, 'global/none.md', '0000000000')],
+    });
+    const list = await call('GET', '/api/tidy');
+    assert.equal(list.status, 200);
+    assert.equal(list.json[0].id, id);
+    assert.equal(list.json[0].counts.items, 2);
+    assert.equal((await call('GET', '/api/status')).json.tidy.pending, 1);
+    const got = await call('GET', `/api/tidy/record?id=${id}`);
+    assert.equal(got.status, 200);
+    assert.deepEqual(got.json.items[0].changed, []);
+    assert.deepEqual(got.json.items[1].changed, ['global/none.md'], '記憶已不存在也算被改過');
+    assert.equal(got.json.command, null);
+    assert.equal((await call('PUT', '/api/tidy/decisions', { id, changes: { i1: { decision: 'fly' } } })).status, 400);
+    const put = await call('PUT', '/api/tidy/decisions', { id, changes: { i1: { decision: 'accept' }, i2: { decision: 'custom', note: '改短' } } });
+    assert.deepEqual(put.json, { ok: true });
+    const ready = await call('POST', '/api/tidy/ready', { id });
+    assert.equal(ready.json.command, `/engram:tidy-apply ${id}`);
+    const after = await call('GET', `/api/tidy/record?id=${id}`);
+    assert.equal(after.json.status, 'ready');
+    assert.equal(after.json.command, `/engram:tidy-apply ${id}`);
+    assert.equal(after.json.items[1].note, '改短');
+    assert.equal((await call('GET', '/api/tidy/record?id=../x')).status, 400);
+    assert.equal((await call('GET', '/api/tidy/record?id=20991231-000000-zzzz')).status, 404);
+    assert.deepEqual((await call('POST', '/api/tidy/delete', { id })).json, { ok: true });
+    assert.deepEqual((await call('GET', '/api/tidy')).json, []);
   });
 });

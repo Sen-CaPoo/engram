@@ -4,6 +4,7 @@ import { parseCommandArgs } from './args.mjs';
 import { cmdInbox } from './commands/inbox.mjs';
 import { cmdCore, cmdMemory, cmdNotSecret, cmdRemember, cmdSearch, cmdUndo } from './commands/memory.mjs';
 import { cmdAgent, cmdDoctor, cmdHook, cmdInstall, cmdMergeDriver, cmdSchedule, cmdUi, cmdUninstall, cmdUpdate, cmdVersion } from './commands/system.mjs';
+import { cmdTidy } from './commands/tidy.mjs';
 import { cmdBind, cmdCollisions, cmdImport, cmdProjects, cmdStatus, cmdSync, cmdUnbind } from './commands/vault.mjs';
 import { loadEngine } from './engine.mjs';
 import { CliError } from './errors.mjs';
@@ -38,6 +39,12 @@ export const COMMANDS = {
     usage: 'memory list [--project <pid> | --scope global|machine|project] [--type <類型>] | show <ref>... | write <ref> [--base <版本>] [--file <檔案>] | move <ref> --to global|machine[:<mid>]|project:<pid> | remove <ref> | merge <ref> <ref>... [--into <ref>] [--base <版本,...>] [--file <檔案>]',
     summary: '列出、讀取（遮蔽金鑰）、改寫、移動、封存、合併記憶；write 與 merge 的內容從標準輸入或 --file 傳入（~/.engram/local/drafts/ 底下的草稿用完即刪）',
   },
+  tidy: {
+    run: cmdTidy,
+    options: { file: str, undo: str, skip: bool, message: str },
+    usage: 'tidy create --file <計畫.json> | list | show <id> | apply <id> | done <id> <項目> [--undo <版本,...>] [--skip] [--message <說明>]',
+    summary: '記憶整理：把 Claude 的整理計畫存成整理記錄，使用者在管理介面逐項決定後照決定執行（/engram:tidy、/engram:tidy-apply 技能使用）',
+  },
   core: { run: cmdCore, options: { base: str, file: str }, usage: 'core | core write [--base <版本>] [--file <檔案>]', summary: '讀取核心準則 CORE.md；write 從標準輸入或 --file 寫入' },
   undo: { run: cmdUndo, usage: 'undo <版本>', summary: '復原一次寫入、移動、封存、合併或衝突處理' },
   'not-secret': {
@@ -68,7 +75,7 @@ export const COMMANDS = {
 
 const GROUPS = [
   ['記憶', ['search', 'remember']],
-  ['整理（給 Claude Code 的 /engram 技能使用，也可以自己執行）', ['inbox', 'memory', 'core', 'undo', 'not-secret']],
+  ['整理（給 Claude Code 的 /engram 技能使用，也可以自己執行）', ['inbox', 'tidy', 'memory', 'core', 'undo', 'not-secret']],
   ['專案與同步', ['status', 'sync', 'bind', 'unbind', 'projects', 'import', 'collisions']],
   ['管理', ['ui', 'agent', 'doctor', 'schedule', 'install', 'update', 'uninstall']],
   ['其他', ['hook', 'merge-driver', 'version', 'help']],

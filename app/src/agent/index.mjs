@@ -1,6 +1,7 @@
 // engram agent：每位使用者一個背景程序，提供管理介面（127.0.0.1:4777）並在程序內執行所有排程工作（ADR §04、§07）。
 // 由工作排程器的登入工作 \Engram\Agent 啟動；SessionStart hook 發現心跳過期時也會在背景啟動它。
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { loadEngine } from '../cli/engine.mjs';
@@ -18,6 +19,7 @@ import { createAgentInfo } from './info.mjs';
 import { createJobs } from './jobs.mjs';
 import { createSettings } from './settings.mjs';
 import { createAgentServer } from './server.mjs';
+import { pruneRecords, tidyDir } from '../tidy/store.mjs';
 
 const DAY = 864e5;
 const LOADED_RETAIN_DAYS = 30;
@@ -39,14 +41,35 @@ async function otherAgent(paths) {
   return null;
 }
 
-/** 每日維護：日誌保留 14 天、local/loaded/ 保留 30 天 */
+/** 每日維護：日誌保留 14 天、local/loaded/ 保留 30 天、整理記錄保留 90 天 */
 async function maintenance(paths, log) {
   await pruneLogs(paths.logs).catch((err) => log.warn('maintenance', err));
+  await pruneRecords(paths.local).catch((err) => log.warn('maintenance', err));
   const cutoff = Date.now() - LOADED_RETAIN_DAYS * DAY;
   for (const n of await fsp.readdir(paths.loaded).catch(() => [])) {
     const file = path.join(paths.loaded, n);
     const st = await fsp.stat(file).catch(() => null);
     if (st && st.mtimeMs < cutoff) await fsp.rm(file, { force: true }).catch(() => {});
+  }
+}
+
+/** 整理記錄有變化（Claude 建立或執行、另一個分頁存了決定）：通知介面重新讀取。暫存檔與鎖檔不算。 */
+function watchTidy(localDir, events, log) {
+  const dir = tidyDir(localDir);
+  let timer = null;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const w = fs.watch(dir, (_evt, name) => {
+      if (name && !String(name).endsWith('.json')) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => events.emit('tidy', { at: new Date().toISOString() }), 300);
+      timer.unref?.();
+    });
+    w.on('error', (err) => { log.warn('tidy-watch', err); w.close(); });
+    return { close: () => { clearTimeout(timer); w.close(); } };
+  } catch (err) {
+    log.warn('tidy-watch', `無法監看整理記錄（${dir}）：${err.message}`);
+    return { close() {} };
   }
 }
 
@@ -115,6 +138,7 @@ export async function startAgent({
   dailyTimer.unref();
   maintenance(paths, log);
   jobs.start();
+  const tidyWatcher = watchTidy(paths.local, events, log);
   log.info('agent', `已啟動：http://127.0.0.1:${agent.port}/（pid ${agent.pid}，Engram ${agent.version}）`);
 
   let stopping = null;
@@ -122,6 +146,7 @@ export async function startAgent({
     stopping ??= (async () => {
       clearInterval(beatTimer);
       clearInterval(dailyTimer);
+      tidyWatcher.close();
       await jobs.stop();
       events.close();
       await new Promise((r) => server.close(() => r()));

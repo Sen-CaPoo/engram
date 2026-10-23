@@ -3,6 +3,7 @@
 // 英文展示版（build.mjs --demo-en）改用 demo-sample-en.mjs 的合成資料，介面預設英文。
 // 與常駐程式相同，給人看的文字附 en 欄位（finding.en.title 等），介面依語言挑選。
 import { setLang } from './i18n.js';
+import { buildTidySample, tidyCounts } from './demo-tidy.js';
 
 /* global __DEMO_DATA__ */
 const RAW = typeof __DEMO_DATA__ !== 'undefined' && __DEMO_DATA__ ? __DEMO_DATA__ : fallbackData();
@@ -21,6 +22,21 @@ const self = RAW.self;
 const other = RAW.other;
 const projects = clone(RAW.projects);
 const memories = clone(RAW.memories);
+// 記憶整理的展示：合成的整理記錄，搬移目標是一個合成的專案
+const TIDY_PID = 'order-system-x1y2z';
+if (!projects.some((p) => p.pid === TIDY_PID)) {
+  projects.push({ pid: TIDY_PID, name: EN_DATA ? 'Order system' : '訂單系統', aliases: [], remotes: ['github.com/example/order-system'], paths: {}, counts: { memories: 3, findings: 0 }, lastActivityAt: new Date(NOW - 26 * 3600000).toISOString(), archived: false, index: { lines: 4, bytes: 320 } });
+}
+let tidyRecords = buildTidySample({ en: EN_DATA, pid: TIDY_PID, now: NOW });
+const tidyById = (id) => {
+  const r = tidyRecords.find((x) => x.id === id);
+  if (!r) throw Object.assign(new Error('找不到整理記錄'), { code: 'E_NOT_FOUND', en: { message: 'Tidy-up record not found' } });
+  return r;
+};
+const tidySummary = () => {
+  const n = (st) => tidyRecords.filter((r) => r.status === st).length;
+  return { pending: n('pending'), ready: n('ready'), finishing: n('finishing'), total: tidyRecords.length };
+};
 const trash = [];
 const undoers = new Map();
 const listeners = new Set();
@@ -240,6 +256,7 @@ function statusReport() {
         : { id: other.id, label: other.label, lastSeenAt: minutesAgo(52), lastSyncAt: minutesAgo(52), engramVersion: '1.1.0', isSelf: false },
     ],
     agent: { paused: VARIANT.probe === 'fail', probe: { ok: probe.ok, failed: probe.checks.filter((c) => !c.ok).map((c) => c.id) } },
+    tidy: tidySummary(),
   };
 }
 
@@ -463,7 +480,8 @@ export const demoApi = {
     const commands = state === 'ready' ? [] : state === 'disabled' ? ['claude plugin enable engram@engram-local'] : ['claude plugin marketplace add "C:\\Users\\demo\\.engram\\app\\current"', 'claude plugin install engram@engram-local --scope user'];
     const skills = [
       { name: 'inbox', command: '/engram:inbox', argumentHint: '[卡片 id | 代碼，例如 H09]', description: '用 AI 整理 Engram 收件匣' },
-      { name: 'tidy', command: '/engram:tidy', argumentHint: '[專案 pid | global | machine | core | 記憶 ref]', description: '用 AI 深度整理 Engram 記憶' },
+      { name: 'tidy', command: '/engram:tidy', argumentHint: '<global | machine | project:<pid> | core | all | 記憶 ref> [補充說明]', description: '請 Claude 分析記憶並提出整理建議' },
+      { name: 'tidy-apply', command: '/engram:tidy-apply', argumentHint: '<整理記錄 id>', description: '照你在記憶整理頁的決定執行' },
       { name: 'save', command: '/engram:save', argumentHint: '[要記住的事；省略時回顧整段對話]', description: '把這次對話裡值得長期記住的事存進 Engram' },
       { name: 'recall', command: '/engram:recall', argumentHint: '<主題或問題>', description: '從所有範圍找出相關的經驗' },
     ];
@@ -526,6 +544,55 @@ export const demoApi = {
   async settings() { await wait(80); return clone(settings); },
   async saveSettings(patch) { await wait(150); Object.assign(settings, patch); if (patch.machineLabel) self.label = patch.machineLabel; emit('status', null); return clone(settings); },
   async importUndo() { await wait(600); importState = { applied: false, tag: null }; return { ok: true }; },
+  // 記憶整理：與 app/src/tidy 的規則相同（決定只能在待決定或已產生指令時修改；依備註調整一定要有備註）
+  async tidyList() {
+    await wait(70);
+    return tidyRecords.map((r) => ({ id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, appliedAt: r.appliedAt ?? null, scope: r.scope, request: r.request, summary: r.summary, status: r.status, counts: tidyCounts(r) }));
+  },
+  async tidyRecord(id) {
+    await wait(90);
+    const r = tidyById(id);
+    return clone({ ...r, counts: tidyCounts(r), command: ['ready', 'applying', 'finishing'].includes(r.status) ? `/engram:tidy-apply ${r.id}` : null });
+  },
+  async tidyDecide(id, changes) {
+    await wait(120);
+    const r = tidyById(id);
+    if (!['pending', 'ready'].includes(r.status)) throw Object.assign(new Error('這份整理記錄已經執行過，不能再修改決定'), { code: 'E_INVALID', en: { message: 'This tidy-up record has already been carried out, so its decisions can no longer change' } });
+    for (const [itemId, ch] of Object.entries(changes || {})) {
+      const it = r.items.find((x) => x.id === itemId);
+      if (!it) continue;
+      if (ch.decision !== undefined) it.decision = ch.decision;
+      if (ch.note !== undefined) it.note = ch.note;
+    }
+    r.updatedAt = new Date().toISOString();
+    emit('tidy', null);
+    return { ok: true };
+  },
+  async tidyReady(id) {
+    await wait(150);
+    const r = tidyById(id);
+    const missing = r.items.filter((it) => it.decision === 'custom' && !String(it.note || '').trim());
+    if (missing.length) throw Object.assign(new Error(`「依備註調整」的項目要寫備註：${missing.map((it) => it.name).join('、')}`), { code: 'E_INVALID', en: { message: `Items set to "Adjust per note" need a note: ${missing.map((it) => it.name).join(', ')}` } });
+    for (const it of r.items) if (!it.decision) it.decision = 'keep';
+    r.status = 'ready';
+    emit('tidy', null);
+    emit('status', null);
+    return { ok: true, command: `/engram:tidy-apply ${r.id}`, counts: tidyCounts(r) };
+  },
+  async tidyUndo(id, itemId) {
+    await wait(300);
+    const it = tidyById(id).items.find((x) => x.id === itemId);
+    it.result = { ...it.result, status: 'undone', undoneAt: new Date().toISOString() };
+    emit('tidy', null);
+    return { ok: true, reverted: [sha()] };
+  },
+  async tidyDelete(id) {
+    await wait(100);
+    tidyRecords = tidyRecords.filter((r) => r.id !== id);
+    emit('tidy', null);
+    emit('status', null);
+    return { ok: true };
+  },
   subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 };
 

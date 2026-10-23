@@ -114,5 +114,5 @@ Every item is recorded in the installation record. `engram uninstall` first list
 
 ## Next steps
 
-- [User guide](user-guide.md): inbox, conflicts, colliding folders, tidying with AI, pausing and removing
+- [User guide](user-guide.md): Tidy-up (Claude suggests, you decide each item), inbox, conflicts, colliding folders, pausing and removing
 - [FAQ](faq.md): common questions about installing and using Engram, and troubleshooting

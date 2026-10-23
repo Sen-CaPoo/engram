@@ -12,7 +12,7 @@ import { makeMid, makeVaultId } from './ids.mjs';
 import { normalizeFsPath, toTildePath } from './paths.mjs';
 
 export const SCHEMA_VERSION = 1;
-export const ENGINE_VERSION = '1.2.0';
+export const ENGINE_VERSION = '1.3.0';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const TEMPLATES_DIR = path.join(HERE, 'templates');

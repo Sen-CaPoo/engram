@@ -15,7 +15,7 @@ function skillInfo(s) {
   return { description: s.description.split(/[：。]/)[0], argumentHint: s.argumentHint }; // i18n-ignore
 }
 
-function CopyBox({ text, label = t('複製') }) {
+export function CopyBox({ text, label = t('複製') }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { setCopied(false); }
@@ -28,7 +28,7 @@ function CopyBox({ text, label = t('複製') }) {
   );
 }
 
-function PluginState({ status }) {
+export function PluginState({ status }) {
   if (status.error) return <p class="faint" style={{ fontSize: 12.5 }}>{t('無法確認 Claude Code 外掛的狀態（{message}）。如果 Claude Code 說找不到指令，請執行 {cmd}。', { message: local(status.error, 'message'), cmd: <code>engram doctor</code> })}</p>;
   const s = status.data;
   if (!s) return <Skeleton rows={1} />;

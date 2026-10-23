@@ -26,7 +26,8 @@ export default {
 // 外掛技能的英文說明（鍵是技能名稱）：技能的中文說明來自 app/plugin/skills/*/SKILL.md，英文模式改用這張表；沒有列在這裡的技能用伺服器附的文字
 export const SKILLS = {
   inbox: { description: 'Triage the Engram inbox with AI', argumentHint: '[card id | code, e.g. H09 | auto]' },
-  tidy: { description: 'Deep-tidy Engram memories with AI', argumentHint: '[project pid | global | machine | core | memory ref]' },
+  tidy: { description: 'Have Claude analyze memories and suggest a tidy-up you decide on in the dashboard', argumentHint: '<global | machine | project:<pid> | core | all | memory ref> [notes]' },
+  'tidy-apply': { description: 'Carry out the decisions you made on the Tidy-up page', argumentHint: '<tidy-up record id>' },
   save: { description: 'Save what is worth remembering from this conversation into Engram', argumentHint: '[what to remember; omit to review the whole conversation]' },
   recall: { description: 'Find relevant experience, decisions, and pitfalls across all Engram scopes and summarize them with sources', argumentHint: '<topic or question>' },
   engram: { description: 'Use Engram to manage memories synced across computers', argumentHint: '' },

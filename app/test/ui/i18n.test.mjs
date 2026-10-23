@@ -12,7 +12,7 @@ const SRC = fileURLToPath(new URL('../../src/ui/src/', import.meta.url));
 const HAN = /\p{Script=Han}/u;
 const HAN_RUN = /\p{Script=Han}[\p{Script=Han}\w\-.]*/gu;
 // 展示資料是另一套（demo.js 依語言挑選），不在這裡檢查
-const SKIP = new Set(['demo.js']);
+const SKIP = new Set(['demo.js', 'demo-tidy.js']);
 
 function sourceFiles(dir = SRC) {
   const out = [];

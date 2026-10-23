@@ -52,13 +52,40 @@ Health checks use rules only, so they can only find candidates such as "same nam
 | Command | What it does | Where it appears in the dashboard |
 | --- | --- | --- |
 | `/engram:inbox` | Reads through the inbox cards one by one, explains its reasoning and recommendations, and acts only after you approve. Add a card id to handle just that one; add `auto` to have it handle the items it's confident about directly. Sync conflicts, possible secrets, folder binding and renaming, mass deletions, archiving, and anything it isn't sure about are still left for you to decide | **Ask Claude to tidy up** at the top of the inbox, **Ask Claude** on a card, **Ask Claude to merge** on a conflict card |
-| `/engram:tidy` | A deep tidy of one project, the global scope, the machine scope, the core rules, or a single memory: finds memories that are semantically duplicate, outdated, contradictory, misfiled, or unclear, and proposes a tidy-up plan | **Ask Claude to tidy up** on the Projects page, **Ask Claude to check** in Library, **Ask Claude to trim** on the Core rules page |
+| `/engram:tidy` | A deep tidy of the global scope, the machine scope, one project, the core rules, every scope, or a single memory: finds memories that are semantically duplicate, outdated, contradictory, misfiled, or unclear, saves its suggestions (with the complete revised content) as a tidy-up record, and gives you a link to decide on each item in the dashboard. Analysis never changes a memory (see **Tidy-up** below) | The **Tidy-up** page generates the command; **Ask Claude to tidy up** on the Projects page, **Ask Claude to check** in Library, and **Ask Claude to trim** on the Core rules page open that page with the scope filled in |
+| `/engram:tidy-apply` | Carries out the decisions you made on the Tidy-up page: accepted items are written exactly as you saw them, "Adjust per note" items are handled by Claude following your notes, and it reports the results and how to undo them | **Generate run command** on the Tidy-up page |
 | `/engram:save` | Reviews this conversation and saves what's worth remembering long-term as memories: decides the scope, checks first whether a similar memory exists, and updates that one if so | Use it in a conversation |
 | `/engram:recall` | Finds relevant experience in the memories of other projects, the global scope, and each computer, distills it into conclusions you can apply right away with sources attached; read-only | Use it in a conversation |
 
+### Tidy-up: Claude suggests, you decide each item
+
+<p align="center">
+  <img src="../assets/en/screenshots/tidy.png" alt="The Tidy-up record page: Claude's overall conclusion and progress at the top; below, each item with its suggestion, reasoning, a view of the changes, and Accept suggestion / Keep as is / Archive / Adjust per note" width="900">
+</p>
+
+1. **Pick a scope**: open **Tidy-up** in the dashboard and choose Global, Machine (this computer), Project, Core rules, or All memories. Add notes for Claude if you like (for example "focus on duplicates" or "leave anything about clients alone for now"), then press **Copy command**.
+2. **Let Claude analyze**: paste `/engram:tidy …` into Claude Code. Claude reads the memories, saves each suggestion with its reasoning and the complete revised content as a tidy-up record, and finally gives you a link back to the dashboard. Nothing is changed at this step.
+3. **Decide each item**: each item shows Claude's suggestion and reasoning, **View changes** to compare before and after, and **Content (as of the suggestion)**. Then choose:
+
+   | Decision | What happens |
+   | --- | --- |
+   | Accept suggestion | Carried out exactly as shown (rewrite, move, merge, add, archive) |
+   | Keep as is | Left alone |
+   | Archive | Moved to history; you can restore it later |
+   | Adjust per note | Write how to change it in the note, and Claude handles it accordingly |
+
+   Decisions save automatically, so you can finish in several sittings. **Accept suggestions for undecided items** applies Claude's suggestions to whatever is left. Items whose memory changed after the suggestion (for example, synced from another computer) are flagged; when the tidy-up runs, that item isn't written (it's marked failed), so nothing is overwritten.
+4. **Run it**: press **Generate run command** and paste `/engram:tidy-apply <id>` back into Claude Code. Engram first backs up the files it will touch to `~/.engram/local/backups/`, carries out the accepted items exactly as shown, and hands the "Adjust per note" items to Claude; one failed item doesn't affect the others. The results come back to the same page, and every item has **Undo this item**.
+
+<p align="center">
+  <img src="../assets/en/screenshots/tidy-start.png" alt="The Tidy-up home page: pick a scope, add notes, and copy the command on the left; the list of tidy-up records on the right" width="900">
+</p>
+
+Tidy-up records stay on this computer only (`~/.engram/local/tidy/`), are not synced, and are cleared after 90 days; you can delete one yourself on its page.
+
 Safety by design:
 
-- **Plan first, act only after you approve.** Every write comes with an `engram undo <version>` so you can undo each item individually.
+- **Suggestions first, act only after you decide.** `/engram:tidy` only reads memories and creates a tidy-up record (the skill pre-allows only those commands); writes happen only after you decide on the Tidy-up page and paste `/engram:tidy-apply`. The inbox's `/engram:inbox` proposes a plan first and acts only after you approve. Every write comes with an `engram undo <version>` so you can undo each item individually.
 - **Detected secrets are not handed to Claude.** When Claude reads memories, possible secrets have already been replaced on this computer with a marker such as `‹已遮蔽：…›` ("redacted"). Engram also refuses writes that contain possible secrets, so Claude records only where the secret is stored instead.
 - **"Not a secret" is confirmed by you personally.** For a value that was flagged by mistake, run `engram not-secret` in your own terminal (it is refused if run inside Claude Code). Confirmed values are stored only as hashes and synced to all computers; if you marked one by mistake, view the list with `engram not-secret --list` and revoke it with `--remove`.
 - **Nothing is overwritten if it changed after Claude read it.** If another computer has just synced a change, or you edited the memory in the dashboard, the write is refused, and Claude re-reads it and reconsiders.
@@ -113,6 +140,7 @@ Type `engram ui` in a terminal (inside Claude Code, type `! engram ui`), and you
 | Overview | Items awaiting action, the sync trail across devices, the memory breakdown, and recently remembered things |
 | Library | Browse by scope and project, search, edit, change scope, pin, and view history |
 | Inbox | Things that need your decision: conflicts and health cards; duplicate memories are merged here |
+| Tidy-up | Ask Claude to analyze memories and suggest changes, decide each item, then hand it back to Claude to carry out; tidy-up records and results (see section 3) |
 | Projects | Each project's folders, how it's bound, memory count, and index load budget; rename, and merge into another project |
 | Devices & sync | Each computer's last sync time, change history, and undo |
 | Core rules | The rules loaded in every conversation (see section 9) |
@@ -189,7 +217,7 @@ The core rules (`CORE.md`) are one document that's loaded in every conversation,
 | What you want to do | How |
 | --- | --- |
 | Pause temporarily | **Pause Engram** on the Settings page. While paused, nothing syncs and new projects aren't connected automatically; Claude keeps remembering as usual, and everything is handled together when you resume |
-| Undo a tidy-up action | Press **Undo** on the notification when the action finishes; later, find the entry in the change history under **Devices & sync** |
+| Undo a tidy-up action | Press **Undo** on the notification when the action finishes; for Tidy-up items, press **Undo this item** on the record page; later, you can also find the entry in the change history under **Devices & sync** |
 | Restore an import | **Restore to before the import** on the import page, or `engram import undo <restore point>`. Memories changed or added after the import keep their latest version, and the older versions they replaced are saved as `.pre-rollback` |
 | Stop using Engram for one project | Run `engram unbind` in that folder. The memories are copied back to Claude Code's original folder |
 | Ask me before connecting new projects | On the Settings page, change **Automatic project folder binding** to **Always ask** or **Off** |
@@ -219,9 +247,10 @@ If the new version has problems, `engram update --rollback` switches back to the
 | `engram import plan` | Generates an import plan (`apply --yes` applies it, `undo <restore point>` restores) |
 | `engram collisions` | Lists colliding folders and their suggested new names (`apply` renames, `undo <id>` reverts the whole batch) |
 | `engram undo <version>` | Undoes one write, move, archive, merge, or conflict resolution |
+| `engram tidy list` | Lists tidy-up records (`show <id>` shows one; `create`, `apply`, and `done` are used by `/engram:tidy` and `/engram:tidy-apply`) |
 | `engram not-secret` | Records a value that was wrongly flagged as a secret in the "Not a secret" list (can only be run in your own terminal) |
 | `engram update` | Deploys a new version (`--rollback` switches back to the previous one) |
 | `engram uninstall` | Reverts to how things were before installation, from the installation record (`--dry-run` only lists the plan, `--purge` also deletes the local vault) |
 | `engram help <command>` | Shows the full usage of a command |
 
-The `/engram:inbox`, `/engram:tidy`, `/engram:save`, and `/engram:recall` commands in Claude Code are covered in section 3, and the memory pane's `/engram-memories` in section 4.
+The `/engram:inbox`, `/engram:tidy`, `/engram:tidy-apply`, `/engram:save`, and `/engram:recall` commands in Claude Code are covered in section 3, and the memory pane's `/engram-memories` in section 4.

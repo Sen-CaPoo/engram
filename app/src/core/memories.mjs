@@ -176,8 +176,11 @@ async function headText(ctx, ref) {
   return r.code === 0 ? r.stdout : null;
 }
 
-/** 新增一筆記憶（engram remember 的實作，R-05）。 */
-export async function createMemory(ctx, { scope, name, type, description, body = '', project, allowSecrets = false }) {
+/**
+ * 新增一筆記憶（engram remember 的實作，R-05）。
+ * text：整份內容（含 frontmatter）原樣寫入，例如使用者在記憶整理頁核可過的內容；省略時由 name、description、type、body 組成。
+ */
+export async function createMemory(ctx, { scope, name, type, description, body = '', project, allowSecrets = false, text: rawText }) {
   invariant(scope && ['global', 'project', 'machine'].includes(scope.kind), '請指定範圍：global、project 或 machine', undefined, { message: 'Specify a scope: global, project, or machine' });
   invariant(name && String(name).trim(), '請提供 name', undefined, { message: 'Provide a name' });
   invariant(MEMORY_TYPES.includes(type), `type 必須是 ${MEMORY_TYPES.join('、')} 之一`, undefined, { message: `type must be one of ${MEMORY_TYPES.join(', ')}` });
@@ -187,11 +190,16 @@ export async function createMemory(ctx, { scope, name, type, description, body =
   return ctx.locked('memories.create', async () => {
     await ensureScopeExists(ctx, sc);
     const dir = scopeDir(ctx.vault, sc);
-    const file = uniqueFileName(memoryFileName(name), (f) => exists(path.join(dir, f)));
+    const wanted = memoryFileName(name);
+    const file = uniqueFileName(wanted, (f) => exists(path.join(dir, f)));
+    if (typeof rawText === 'string' && file !== wanted) {
+      throw new EngramError(E.CONFLICT, `已經有同名的記憶：${wanted}，沒有寫入`, '重新讀取後再決定要合併還是改名').withEn(`A memory named ${wanted} already exists, so nothing was written`, 'Reload, then decide whether to merge or rename.');
+    }
     const metadata = { type };
     if (project && sc.kind !== 'project') metadata.engram = { project };
-    const fm = stringifyFrontmatter({ name: file.replace(/\.md$/i, ''), description: String(description).trim(), metadata });
-    const text = `${fm}\n${String(body).replace(/\r\n/g, '\n').trim()}\n`;
+    const text = typeof rawText === 'string'
+      ? `${rawText.replace(/\r\n/g, '\n').replace(/\n*$/, '')}\n`
+      : `${stringifyFrontmatter({ name: file.replace(/\.md$/i, ''), description: String(description).trim(), metadata })}\n${String(body).replace(/\r\n/g, '\n').trim()}\n`;
     const abs = path.join(dir, file);
     const ref = toRef(ctx.vault, abs);
     const allowed = await assertNoNewSecrets(ctx.local, ref, text, { allowSecrets });
