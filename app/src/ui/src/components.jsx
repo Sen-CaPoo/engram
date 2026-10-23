@@ -3,6 +3,7 @@ import { h, createContext, Fragment } from 'preact';
 import { useState, useEffect, useCallback, useContext, useRef } from 'preact/hooks';
 import { api } from './api.js';
 import { TYPE_LABEL, relTime, markdownToHtml, fmtBytes, composing, undoText } from './util.js';
+import { t, N_, local, locale } from './i18n.js';
 import { IconGlobe, IconFolder, IconMonitor, IconAlert, IconInfo, IconOctagon, IconX } from './icons.jsx';
 
 // ── 全域情境：狀態、專案對照、提示、重新整理、錯誤橫幅、未儲存保護 ──
@@ -27,7 +28,7 @@ export function useData(loader, deps = []) {
 }
 
 // 登記「這個畫面有未儲存的內容」。切換頁面、關閉分頁、關閉對話框前都會先確認。
-export function useDirty(isDirty, label = '未儲存的內容') {
+export function useDirty(isDirty, label = t('未儲存的內容')) {
   const { dirty } = useApp();
   const id = useRef(Math.random().toString(36).slice(2));
   useEffect(() => {
@@ -60,29 +61,29 @@ export const drafts = {
 
 // ── 標籤 ─────────────────────────────────────────────
 export function TypeLabel({ type }) {
-  return <span class={`type ${type}`}>{TYPE_LABEL[type] || type}</span>;
+  return <span class={`type ${type}`}>{TYPE_LABEL[type] ? t(TYPE_LABEL[type]) : type}</span>;
 }
 
 export function ScopeLabel({ scope, short }) {
   const { projectsById, status } = useApp();
   if (!scope) return null;
-  if (scope.kind === 'global') return <span class="scope global"><IconGlobe /><span>全域</span></span>;
+  if (scope.kind === 'global') return <span class="scope global"><IconGlobe /><span>{t('全域')}</span></span>;
   if (scope.kind === 'machine') {
     const dev = status?.devices?.find((d) => d.id === scope.mid);
     const self = dev?.isSelf;
-    return <span class={`scope machine${self ? ' self' : ''}`}><IconMonitor /><span>{short ? '單機' : `單機 · ${dev?.label || scope.mid}`}</span></span>;
+    return <span class={`scope machine${self ? ' self' : ''}`}><IconMonitor /><span>{short ? t('單機') : t('單機 · {label}', { label: dev?.label || scope.mid })}</span></span>;
   }
   const p = projectsById?.[scope.pid];
   return <span class="scope project" title={scope.pid}><IconFolder /><span>{p?.name || scope.pid}</span></span>;
 }
 
-const SEV_TEXT = { high: '高', medium: '中', low: '建議', conflict: '衝突' };
+const SEV_TEXT = { high: N_('高'), medium: N_('中'), low: N_('建議'), conflict: N_('衝突') };
 export function SevChip({ sev }) {
-  return <span class={`sev-chip ${sev}`}>{SEV_TEXT[sev] || sev}</span>;
+  return <span class={`sev-chip ${sev}`}>{SEV_TEXT[sev] ? t(SEV_TEXT[sev]) : sev}</span>;
 }
 
 export function When({ at }) {
-  return <time class="when" dateTime={at} title={at ? new Date(at).toLocaleString('zh-TW') : ''}>{relTime(at)}</time>;
+  return <time class="when" dateTime={at} title={at ? new Date(at).toLocaleString(locale()) : ''}>{relTime(at)}</time>;
 }
 
 export function Meter({ value, max, label, unit = '', warnAt = 0.75 }) {
@@ -110,11 +111,11 @@ export function Banner({ tone = 'info', title, children, actions }) {
 export function ErrorBanner({ error, onRetry, onDismiss }) {
   if (!error) return null;
   return (
-    <Banner tone="bad" title={error.message} actions={<>
-      {onRetry && <button class="btn sm" onClick={onRetry}>重試</button>}
-      {onDismiss && <button class="btn sm ghost" onClick={onDismiss}>關閉</button>}
+    <Banner tone="bad" title={local(error, 'message')} actions={<>
+      {onRetry && <button class="btn sm" onClick={onRetry}>{t('重試')}</button>}
+      {onDismiss && <button class="btn sm ghost" onClick={onDismiss}>{t('關閉')}</button>}
     </>}>
-      {error.hint}
+      {local(error, 'hint')}
     </Banner>
   );
 }
@@ -132,7 +133,7 @@ export function Empty({ icon: Icon = IconInfo, title, children, action }) {
 
 export function Skeleton({ rows = 4 }) {
   return (
-    <div class="rows" aria-busy="true" aria-label="載入中">
+    <div class="rows" aria-busy="true" aria-label={t('載入中')}>
       {Array.from({ length: rows }, (_, i) => (
         <div class="row" key={i} style={{ cursor: 'default' }}>
           <div style={{ height: 12, width: `${40 + ((i * 17) % 40)}%`, background: 'var(--border)', borderRadius: 4 }} />
@@ -177,16 +178,16 @@ export function Dialog({ title, desc, wide, onClose, children, footer, dirty = f
       <header>
         <div style={{ display: 'flex', alignItems: 'start', gap: 8 }}>
           <h2 style={{ flex: 1 }}>{title}</h2>
-          <button class="btn ghost icon sm" aria-label="關閉" onClick={tryClose}><IconX /></button>
+          <button class="btn ghost icon sm" aria-label={t('關閉')} onClick={tryClose}><IconX /></button>
         </div>
         {desc && <p>{desc}</p>}
       </header>
       <div class="body">{children}</div>
       {asking ? (
-        <div class="leave-confirm" role="alertdialog" aria-label="放棄未儲存的內容？">
-          <span>這裡有尚未儲存的內容，關閉後會遺失。</span>
-          <button class="btn sm" onClick={() => setAsking(false)}>繼續編輯</button>
-          <button class="btn sm danger" onClick={() => { setAsking(false); onClose?.(); }}>放棄並關閉</button>
+        <div class="leave-confirm" role="alertdialog" aria-label={t('放棄未儲存的內容？')}>
+          <span>{t('這裡有尚未儲存的內容，關閉後會遺失。')}</span>
+          <button class="btn sm" onClick={() => setAsking(false)}>{t('繼續編輯')}</button>
+          <button class="btn sm danger" onClick={() => { setAsking(false); onClose?.(); }}>{t('放棄並關閉')}</button>
         </div>
       ) : footer && <footer>{footer}</footer>}
     </dialog>
@@ -194,12 +195,12 @@ export function Dialog({ title, desc, wide, onClose, children, footer, dirty = f
 }
 
 // 確認對話框：動作前先說清楚會發生什麼
-export function ConfirmDialog({ title, desc, confirmLabel = '確定', danger, onConfirm, onClose, children }) {
+export function ConfirmDialog({ title, desc, confirmLabel = t('確定'), danger, onConfirm, onClose, children }) {
   const [busy, setBusy] = useState(false);
   return (
     <Dialog title={title} desc={desc} onClose={onClose} footer={<>
-      <button class="btn" onClick={onClose}>取消</button>
-      <button class={`btn ${danger ? 'danger' : 'primary'}`} disabled={busy} onClick={async () => { setBusy(true); try { await onConfirm(); } finally { setBusy(false); } }}>{busy ? '處理中…' : confirmLabel}</button>
+      <button class="btn" onClick={onClose}>{t('取消')}</button>
+      <button class={`btn ${danger ? 'danger' : 'primary'}`} disabled={busy} onClick={async () => { setBusy(true); try { await onConfirm(); } finally { setBusy(false); } }}>{busy ? t('處理中…') : confirmLabel}</button>
     </>}>
       {children}
     </Dialog>
@@ -210,11 +211,11 @@ export function ConfirmDialog({ title, desc, confirmLabel = '確定', danger, on
 export function ToastHost({ toasts, dismiss }) {
   return (
     <div class="toast-host" aria-live="polite">
-      {toasts.map((t) => (
-        <div class="toast" key={t.id}>
-          <span style={{ flex: 1 }}>{t.text}</span>
-          {t.undo && <button class="btn sm" onClick={() => { t.undo(); dismiss(t.id); }}>復原</button>}
-          <button class="btn sm ghost icon" aria-label="關閉" style={{ color: 'inherit' }} onClick={() => dismiss(t.id)}><IconX /></button>
+      {toasts.map((x) => (
+        <div class="toast" key={x.id}>
+          <span style={{ flex: 1 }}>{x.text}</span>
+          {x.undo && <button class="btn sm" onClick={() => { x.undo(); dismiss(x.id); }}>{t('復原')}</button>}
+          <button class="btn sm ghost icon" aria-label={t('關閉')} style={{ color: 'inherit' }} onClick={() => dismiss(x.id)}><IconX /></button>
         </div>
       ))}
     </div>
@@ -233,7 +234,7 @@ export function useAction() {
       if (text) {
         const undoSha = res?.undo?.sha;
         toast(text, undoSha ? async () => {
-          try { const r = await api.undo(undoSha); refresh(); toast(undoText(r, '已復原')); } catch (e) { reportError(e); }
+          try { const r = await api.undo(undoSha); refresh(); toast(undoText(r, t('已復原'))); } catch (e) { reportError(e); }
         } : null);
       }
       return res;

@@ -139,6 +139,23 @@ export const BLOCKED_LABEL = {
   'no-name': '找不到不撞名的新名稱',
 };
 
+/** BLOCKED_LABEL 的英文版（鍵相同；管理介面切到英文時用） */
+export const BLOCKED_LABEL_EN = {
+  'outside-home': 'not under your user folder',
+  'top-level': 'a first-level folder of your user folder (for example Desktop)',
+  'engram-or-claude': "Engram's or Claude Code's own folder",
+  'contains-projects': 'contains other projects, and renaming would move them too',
+  'git-worktree': 'a git worktree, a submodule, or a main repo that has worktrees (worktrees record absolute paths)',
+  onedrive: 'under OneDrive (renaming on each computer would create conflicting copies)',
+  'system-folder': 'a system folder (Desktop, Documents, etc.)',
+  'python-venv': 'contains a Python virtual environment (it hard-codes absolute paths and would break after renaming)',
+  'claude-project-settings': 'Claude Code has MCP servers or allowed tools recorded for this folder (they would be lost after renaming)',
+  'active-session': 'a conversation used it within the last 30 minutes',
+  'recent-activity': 'a file was modified within the last 30 minutes (an editor may be open)',
+  busy: 'the folder is open in another program',
+  'no-name': 'could not find a new name that does not collide',
+};
+
 /**
  * 盤點撞名：用過 Claude Code 的資料夾（對話紀錄的根目錄、這台電腦的綁定）中，和任何現存資料夾編碼相同的。
  * @returns {Promise<{ path, encoded, others: string[], binding: {key,pid,method}|null, to: string|null, blocked: string|null }[]>}
@@ -267,7 +284,7 @@ export async function rewritePaths(ctx, fromPath, toPath) {
   const written = [];
   try {
     for (const c of changes) {
-      if (!(await safeWrite(c.abs, c.next, { expectHash: sha1(c.cur) }))) throw new EngramError(E.CONFLICT, `記憶剛被修改，已停止改名：${c.ref}`, '稍後再試一次');
+      if (!(await safeWrite(c.abs, c.next, { expectHash: sha1(c.cur) }))) throw new EngramError(E.CONFLICT, `記憶剛被修改，已停止改名：${c.ref}`, '稍後再試一次').withEn(`A memory was just modified, so renaming stopped: ${c.ref}`, 'Try again in a moment');
       written.push(c);
     }
   } catch (err) {
@@ -360,23 +377,28 @@ async function rebind(ctx, it) {
 /**
  * 撤銷一筆改名（也用於改名中途失敗）：新綁定拆掉、資料夾改回原名、原綁定放回、記憶裡的路徑改回。
  * 記憶的部分用同一套規則把新路徑換回舊路徑，改名之後才寫、提到新路徑的記憶也一起改回。
+ * notesEn 是 notes 的英文版（同樣的順序）。
  */
 async function undoOne(ctx, rec) {
   const notes = [];
+  const notesEn = [];
   const toOurs = exists(rec.to) && sameFolder(rec.to, rec.fid);
   const fromOurs = exists(rec.from) && sameFolder(rec.from, rec.fid);
   // 先把資料夾改回原名：被其他程式開著或原位置又有資料夾時直接拋出，什麼都不動（綁定、記憶保持改名後的狀態，之後可以再試）
   if (toOurs && !exists(rec.from)) {
     try { fs.renameSync(rec.to, rec.from); } catch (err) {
-      throw new EngramError(BUSY.has(err.code) ? E.LOCKED : E.INVALID, `${rec.to} 無法改回原名（${err.code ?? err.message}）`, '關閉使用這個資料夾的程式後再還原一次');
+      throw new EngramError(BUSY.has(err.code) ? E.LOCKED : E.INVALID, `${rec.to} 無法改回原名（${err.code ?? err.message}）`, '關閉使用這個資料夾的程式後再還原一次')
+        .withEn(`${rec.to} could not be renamed back (${err.code ?? err.message})`, 'Close any program using this folder, then undo again');
     }
   } else if (toOurs) {
-    throw new EngramError(E.CONFLICT, `原位置又出現了同名資料夾 ${rec.from}，${rec.to} 沒有改回`, '把其中一個資料夾移開後再還原一次');
+    throw new EngramError(E.CONFLICT, `原位置又出現了同名資料夾 ${rec.from}，${rec.to} 沒有改回`, '把其中一個資料夾移開後再還原一次')
+      .withEn(`A folder with the same name appeared again at ${rec.from}, so ${rec.to} was not renamed back`, 'Move one of the folders away, then undo again');
   } else if (!fromOurs) {
     // 改名後的資料夾被刪除或搬走（原位置若有資料夾，也不是同一個）：只拆掉新綁定，不綁回原路徑，免得綁到無關的資料夾
     await dropNewBinding(ctx, rec);
     notes.push(`找不到改名後的資料夾 ${rec.to}（可能已刪除或搬走），只移除了它的綁定${exists(rec.from) ? `；原位置的 ${rec.from} 是另一個資料夾，沒有綁定` : ''}`);
-    return { touched: [], notes, gone: true };
+    notesEn.push(`Could not find the renamed folder ${rec.to} (it may have been deleted or moved); only its binding was removed${exists(rec.from) ? `; ${rec.from} at the original location is a different folder and is not bound` : ''}`);
+    return { touched: [], notes, notesEn, gone: true };
   } // 只剩原名、而且是同一個資料夾：上一次還原已經改回，接著補做綁定與記憶
   await dropNewBinding(ctx, rec);
   if (rec.binding) {
@@ -387,7 +409,7 @@ async function undoOne(ctx, rec) {
     if (j && !exists(j.path)) { createJunction(j.target, j.path); await allowJunctionRead(ctx.homes, j.path).catch(() => {}); }
   }
   const rw = exists(rec.from) ? await rewritePaths(ctx, rec.to, rec.from) : { touched: [] };
-  return { touched: rw.touched, notes };
+  return { touched: rw.touched, notes, notesEn };
 }
 
 /** 拆掉改名時建立的新綁定（junction 一併移除；新編碼的記憶資料夾原本不存在，是改名時才建立的） */
@@ -517,10 +539,11 @@ export async function undoCollisionRenames(ctx, id) {
   return ctx.locked('collisions.rename', async () => {
     const log = await readRenames(ctx);
     const batch = log.batches.find((b) => b.id === id);
-    if (!batch) throw new EngramError(E.NOT_FOUND, `找不到改名紀錄：${id}`);
+    if (!batch) throw new EngramError(E.NOT_FOUND, `找不到改名紀錄：${id}`).withEn(`Rename record not found: ${id}`);
     if (batch.undoneAt) return { ok: true, already: true };
     const touched = new Set();
     const notes = [];
+    const notesEn = []; // notes 的英文版，順序相同
     const restored = [];
     // 逐筆記錄是否已還原；失敗的（例如資料夾被其他程式開著）維持改名後的完整狀態，之後再按還原可以重試
     for (const rec of [...batch.items].reverse()) {
@@ -529,20 +552,23 @@ export async function undoCollisionRenames(ctx, id) {
         const u = await undoOne(ctx, rec);
         u.touched.forEach((r) => touched.add(r));
         notes.push(...u.notes);
+        notesEn.push(...u.notesEn);
         rec.undoneAt = new Date().toISOString();
         delete rec.undoFailed;
         if (u.gone) rec.gone = true; // 資料夾已不在：視為完成，讓整批可以結束
         else restored.push({ from: rec.to, to: rec.from });
       } catch (err) {
         notes.push(`${rec.to}：${err?.message ?? err}${err?.hint ? `（${err.hint}）` : ''}`);
+        const hintEn = err?.en ? err.en.hint : err?.hint;
+        notesEn.push(`${rec.to}: ${err?.en?.message ?? err?.message ?? err}${hintEn ? ` (${hintEn})` : ''}`);
       }
     }
     const done = batch.items.every((r) => r.undoneAt);
     if (done) {
       // 全部改回原名之後，共用的舊記憶資料夾才從備份放回（還有資料夾停在新名稱時，放回會讓它讀到舊的共用記憶）
       for (const r of batch.retired ?? []) {
-        if (!exists(r.backup)) { notes.push(`找不到共用舊記憶資料夾的備份：${r.backup}`); continue; }
-        if (exists(r.from)) { notes.push(`${r.from} 已經有新的內容，舊記憶仍保存在 ${r.backup}`); continue; }
+        if (!exists(r.backup)) { notes.push(`找不到共用舊記憶資料夾的備份：${r.backup}`); notesEn.push(`Could not find the backup of the shared old memory folder: ${r.backup}`); continue; }
+        if (exists(r.from)) { notes.push(`${r.from} 已經有新的內容，舊記憶仍保存在 ${r.backup}`); notesEn.push(`${r.from} already has new content; the old memories are still kept in ${r.backup}`); continue; }
         await fsp.mkdir(path.dirname(r.from), { recursive: true });
         fs.renameSync(r.backup, r.from);
       }
@@ -550,6 +576,6 @@ export async function undoCollisionRenames(ctx, id) {
     }
     batch.undoNotes = notes.length ? notes : undefined;
     const commit = await commitLog(ctx, log, touched, done ? `undo rename ${id}` : `undo rename ${id} (partial: ${batch.items.filter((r) => !r.undoneAt).length} left)`, id, 'undo');
-    return { ok: done && notes.length === 0, done, id, restored, notes, commit: commit ?? undefined };
+    return { ok: done && notes.length === 0, done, id, restored, notes, ...(notes.length ? { en: { notes: notesEn } } : {}), commit: commit ?? undefined };
   });
 }

@@ -21,6 +21,13 @@ describe('相容性探測', () => {
     for (const c of CONTRACTS) assert.match(c.label, /[一-鿿]/);
   });
 
+  test('每個契約都有英文名稱（管理介面切到英文時顯示）', () => {
+    for (const c of CONTRACTS) {
+      assert.ok(c.en?.label, c.id);
+      assert.doesNotMatch(c.en.label, /[一-鿿]/, c.id);
+    }
+  });
+
   test('清掉父 session 的環境變數，並讓探測用的 session 跳過 Engram hooks', () => {
     const env = childEnv({
       PATH: 'x', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 's', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_PID: '1',
@@ -41,7 +48,18 @@ describe('相容性探測', () => {
     assert.deepEqual(Object.keys(r), ['at', 'claudeVersion', 'ok', 'checks']);
     assert.equal(r.claudeVersion, '2.1.306');
     assert.equal(r.ok, false);
-    for (const c of r.checks) assert.deepEqual(Object.keys(c), ['id', 'label', 'ok', 'detail']);
+    for (const c of r.checks) {
+      assert.deepEqual(Object.keys(c), ['id', 'label', 'ok', 'detail', 'en']);
+      assert.deepEqual(Object.keys(c.en), ['label', 'detail']);
+      assert.equal(c.en.label, CONTRACTS.find((x) => x.id === c.id).en.label);
+      assert.doesNotMatch(c.en.detail, /[一-鿿]/, `${c.id} 的英文說明不能有中文`);
+    }
+    // 固定的中文說明有對應的英文；原始輸出原樣保留
+    const byId = Object.fromEntries(r.checks.map((c) => [c.id, c]));
+    assert.match(byId.C5.detail, /仍在頂層/);
+    assert.equal(byId.C5.en.detail, 'Still at the top level (behavior changed, for reference only)');
+    assert.match(byId.C2.en.detail, /^Expected .* · Actual NONE$/);
+    assert.equal(byId.C1.en.detail, 'NONE');
     const ok = Object.fromEntries(r.checks.map((c) => [c.id, c.ok]));
     // 假執行器什麼都不做：只有不依賴 claude 回覆的 C5（欄位仍在頂層）與 C7（Node 判定 junction）通過
     assert.deepEqual(ok, { C1: false, C2: false, C3: false, C4: false, C5: true, C6: false, C7: true });

@@ -43,7 +43,7 @@ function canonical(v) {
 
 async function update(homes, mutate) {
   const cur = await readSettings(homes);
-  if (!cur) throw new EngramError(E.INVALID, '~/.claude/settings.json 不是有效的 JSON，Engram 不會修改它', '修正該檔案的格式後執行 engram doctor');
+  if (!cur) throw new EngramError(E.INVALID, '~/.claude/settings.json 不是有效的 JSON，Engram 不會修改它', '修正該檔案的格式後執行 engram doctor').withEn('~/.claude/settings.json is not valid JSON, so Engram will not modify it', 'Fix the format of that file, then run engram doctor');
   const manifest = await readManifest(homes);
   if (!manifest.original) manifest.original = cur.text === null ? { missing: true } : { text: cur.text };
   const data = structuredClone(cur.data);
@@ -64,7 +64,7 @@ async function update(homes, mutate) {
     return true;
   }
   const r = await safeWriteResult(settingsPath(homes), out, { expectHash: cur.text === null ? null : sha1(cur.text) });
-  if (!r.ok) throw new EngramError(E.LOCKED, 'Claude Code 設定檔剛好被修改，稍後再試', '', { reason: r.reason });
+  if (!r.ok) throw new EngramError(E.LOCKED, 'Claude Code 設定檔剛好被修改，稍後再試', '', { reason: r.reason }).withEn('The Claude Code settings file was modified just now. Try again in a moment');
   await fsp.mkdir(homes.local, { recursive: true });
   await writeJson(manifestPath(homes), manifest);
   return true;

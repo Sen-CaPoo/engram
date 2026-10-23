@@ -280,6 +280,36 @@ describe('engram inbox', () => {
   });
 });
 
+describe('其他會交給 Claude 的輸出', () => {
+  test('engram doctor（文字與 --json）：卡片說明、英文版與遠端網址裡的權杖都遮蔽', async () => {
+    plant('global/doctor-token.md', memoryText({ name: 'doctor-token', description: '測試用', type: 'reference', body: `權杖：${SECRET}` }));
+    plant('global/doctor-broken.md', `---\nname: doctor-broken\ndescription: "說明" ${SECRET}\nmetadata:\n  type: reference\n---\n\n內文\n`);
+    const { execFileSync } = await import('node:child_process');
+    execFileSync('git', ['remote', 'add', 'origin', `https://sen:${SECRET}@github.com/example/engram-vault.git`], { cwd: eg.paths.vault });
+    try {
+      for (const argv of [['doctor'], ['doctor', '--json']]) {
+        const r = await engram(argv);
+        assert.ok(!r.all.includes('ghp_'), `${argv.join(' ')} 不可以輸出金鑰`);
+      }
+      const d = await json(['doctor']);
+      assert.ok(d.data.findings.some((f) => f.code === 'H13'), '仍然列出 H13 卡片');
+    } finally {
+      execFileSync('git', ['remote', 'remove', 'origin'], { cwd: eg.paths.vault });
+    }
+  });
+
+  test('engram import plan --json：舊記憶的說明含金鑰時遮蔽', async () => {
+    const legacy = path.join(m.claudeHome, 'projects', 'C--Users-Demo-legacy-app', 'memory');
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, 'old-token.md'), memoryText({ name: 'old-token', description: `舊權杖 ${SECRET}`, type: 'reference', body: '內文' }));
+    fs.writeFileSync(path.join(legacy, 'MEMORY.md'), '- [old-token](old-token.md) — 舊權杖\n');
+    const r = await engram(['import', 'plan', '--json']);
+    assert.equal(r.code, 0, r.all);
+    assert.ok(r.out.includes('old-token'), '計畫列出這筆舊記憶');
+    assert.ok(!r.all.includes('ghp_'), 'import plan --json 不可以輸出金鑰');
+  });
+});
+
 describe('engram memory', () => {
   test('list 與 show：列出 ref、類型、大小；show 附版本，一次可以多筆', async () => {
     const a = await eg.memories.create({ scope: { kind: 'project', pid }, name: 'build-cmd', type: 'project', description: '建置指令', body: 'npm run build' });

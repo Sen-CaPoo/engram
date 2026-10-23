@@ -58,7 +58,7 @@ export async function open(opts = {}) {
   const homes = resolveHomes(opts);
   const local = readLocalMachine(homes.local);
   if (!local?.mid || !exists(path.join(homes.vault, '.git'))) {
-    throw new EngramError(E.NOT_FOUND, '這台電腦還沒有設定 Engram', '執行 engram install 完成首次設定', { home: homes.home });
+    throw new EngramError(E.NOT_FOUND, '這台電腦還沒有設定 Engram', '執行 engram install 完成首次設定', { home: homes.home }).withEn('Engram has not been set up on this computer yet', 'Run engram install to finish the first-time setup');
   }
   fs.mkdirSync(path.join(homes.local, 'tmp'), { recursive: true });
   setTempDir(path.join(homes.local, 'tmp'));
@@ -144,9 +144,9 @@ export async function open(opts = {}) {
   /** 遮蔽與「不是金鑰」的對象：記憶檔或核心準則 */
   async function secretTargetText(ref) {
     if (scopeOfRef(ref)) return (await readMemory(ctx, ref)).raw;
-    invariant(ref === 'core/CORE.md' || CORE_RULE_REF.test(String(ref)), `不是記憶或核心準則：${String(ref).slice(0, 80)}`);
+    invariant(ref === 'core/CORE.md' || CORE_RULE_REF.test(String(ref)), `不是記憶或核心準則：${String(ref).slice(0, 80)}`, undefined, { message: `Not a memory or the core rules: ${String(ref).slice(0, 80)}` });
     const raw = await readText(path.join(homes.vault, ...ref.split('/')));
-    if (raw === null) throw new EngramError(E.NOT_FOUND, `找不到：${ref}`);
+    if (raw === null) throw new EngramError(E.NOT_FOUND, `找不到：${ref}`).withEn(`Not found: ${ref}`);
     return raw;
   }
 
@@ -171,7 +171,7 @@ export async function open(opts = {}) {
   Object.defineProperty(machineInfo, 'rename', {
     enumerable: false,
     value: async (label) => {
-      invariant(label && String(label).trim(), '請提供名稱');
+      invariant(label && String(label).trim(), '請提供名稱', undefined, { message: 'Provide a name' });
       const name = String(label).trim();
       await ctx.locked('machine.rename', async () => {
         const lp = path.join(homes.local, 'machine.json');
@@ -207,8 +207,8 @@ export async function open(opts = {}) {
         };
       },
       async set(patch = {}) {
-        if (patch.bindAuto !== undefined) invariant(['confident', 'ask', 'off'].includes(patch.bindAuto), "bindAuto 必須是 'confident'、'ask' 或 'off'");
-        if (patch.collisionRename !== undefined) invariant(['auto', 'ask', 'off'].includes(patch.collisionRename), "collisionRename 必須是 'auto'、'ask' 或 'off'");
+        if (patch.bindAuto !== undefined) invariant(['confident', 'ask', 'off'].includes(patch.bindAuto), "bindAuto 必須是 'confident'、'ask' 或 'off'", undefined, { message: "bindAuto must be 'confident', 'ask' or 'off'" });
+        if (patch.collisionRename !== undefined) invariant(['auto', 'ask', 'off'].includes(patch.collisionRename), "collisionRename 必須是 'auto'、'ask' 或 'off'", undefined, { message: "collisionRename must be 'auto', 'ask' or 'off'" });
         const p = path.join(homes.local, 'settings.json');
         const next = { ...((await readJson(p, null)) ?? {}), ...patch };
         await writeJson(p, next);
@@ -279,14 +279,14 @@ export async function open(opts = {}) {
       },
       async get(pid) {
         const p = await projectObject(pid, { bindingsByMid: await allBindings(), cache: await healthCache() });
-        if (!p) throw new EngramError(E.NOT_FOUND, `找不到專案：${pid}`);
+        if (!p) throw new EngramError(E.NOT_FOUND, `找不到專案：${pid}`).withEn(`Project not found: ${pid}`);
         return p;
       },
       async rename(pid, name) {
-        invariant(name && String(name).trim(), '請提供名稱');
+        invariant(name && String(name).trim(), '請提供名稱', undefined, { message: 'Provide a name' });
         return ctx.locked('projects.rename', async () => {
           const p = await readProject(homes.vault, pid);
-          if (!p) throw new EngramError(E.NOT_FOUND, `找不到專案：${pid}`);
+          if (!p) throw new EngramError(E.NOT_FOUND, `找不到專案：${pid}`).withEn(`Project not found: ${pid}`);
           p.name = String(name).trim();
           await writeProject(homes.vault, p);
           const commit = await commitPaths(homes.vault, [`projects/${pid}/project.json`], `rename ${pid} → ${p.name}`, { action: 'edit', mid: ctx.mid });
@@ -294,11 +294,11 @@ export async function open(opts = {}) {
         });
       },
       async link(fromPid, toPid) {
-        invariant(fromPid !== toPid, '不能連結到自己');
+        invariant(fromPid !== toPid, '不能連結到自己', undefined, { message: 'A project cannot be linked to itself' });
         return ctx.locked('projects.link', async () => {
           const from = await readProject(homes.vault, fromPid);
           const to = await readProject(homes.vault, toPid);
-          if (!from || !to) throw new EngramError(E.NOT_FOUND, '找不到專案');
+          if (!from || !to) throw new EngramError(E.NOT_FOUND, '找不到專案').withEn('Project not found');
           const src = projectMemoryDir(homes.vault, fromPid);
           const dest = projectMemoryDir(homes.vault, toPid);
           const { copyMemoriesInto } = await import('./identity.mjs');
@@ -422,7 +422,7 @@ export async function open(opts = {}) {
     /** 健康卡片的「忽略」與「稍後」（M6）：記在 local/dismissed.json；doctor 照常列出。 */
     findings: {
       async dismiss(id, { until } = {}) {
-        invariant(id, '缺少 finding id');
+        invariant(id, '缺少 finding id', undefined, { message: 'Missing finding id' });
         const d = await readDismissed();
         d[id] = { at: new Date().toISOString(), until: until ? new Date(until).toISOString() : null };
         await writeJson(path.join(homes.local, 'dismissed.json'), d);
@@ -460,7 +460,7 @@ export async function open(opts = {}) {
       async allow(ref, line) {
         const raw = await secretTargetText(ref);
         const hits = scanWithAllow(raw, ref, await loadAllow(homes.local)).filter((h) => h.line === Number(line));
-        invariant(hits.length, `第 ${line} 行沒有疑似金鑰`);
+        invariant(hits.length, `第 ${line} 行沒有疑似金鑰`, undefined, { message: `No possible secret on line ${line}` });
         return ctx.locked('secrets.allow', async () => {
           const added = [];
           for (const h of hits) added.push(await addAllow(homes.local, ref, { preview: h.preview, hash: secretHash(raw.slice(h.offset, h.offset + h.length)) }));
@@ -472,10 +472,10 @@ export async function open(opts = {}) {
       /** 「不是金鑰」清單：列出與移除（標錯時撤銷；移除後這個值會重新被當成金鑰） */
       listAllowed: () => listAllowed(homes.local),
       async removeAllowed(hash) {
-        invariant(/^[0-9a-f]{32}$/.test(String(hash)), '雜湊格式不正確');
+        invariant(/^[0-9a-f]{32}$/.test(String(hash)), '雜湊格式不正確', undefined, { message: 'The hash format is invalid' });
         return ctx.locked('secrets.allow', async () => {
           const rel = `not-secrets/${hash}`;
-          if (!exists(path.join(homes.vault, ...rel.split('/')))) throw new EngramError(E.NOT_FOUND, `清單裡沒有 ${hash}`);
+          if (!exists(path.join(homes.vault, ...rel.split('/')))) throw new EngramError(E.NOT_FOUND, `清單裡沒有 ${hash}`).withEn(`${hash} is not in the list`);
           await fsp.rm(path.join(homes.vault, ...rel.split('/')), { force: true });
           const commit = await commitPaths(homes.vault, [rel], 'remove not-secret', { action: 'allow', mid: ctx.mid });
           return { ok: true, commit: commit ?? undefined };
@@ -483,11 +483,11 @@ export async function open(opts = {}) {
       },
       /** 使用者確認某個值不是金鑰（engram not-secret --value）：之後任何檔案裡的這個值都不再當成金鑰 */
       async allowValue(value) {
-        invariant(typeof value === 'string' && value.length >= 6 && value.length <= 4096 && !/[\r\n]/.test(value), '值必須是 6 個字元以上、只有一行的文字');
+        invariant(typeof value === 'string' && value.length >= 6 && value.length <= 4096 && !/[\r\n]/.test(value), '值必須是 6 個字元以上、只有一行的文字', undefined, { message: 'The value must be single-line text of at least 6 characters' });
         // 只收真的會被判定為疑似金鑰的值（寫在 token: 後面、或本身就是），一般單字不需要也不該進清單
         const { scanSecrets } = await import('./secrets.mjs');
         const flagged = [value, `token: ${value}`].some((t) => scanSecrets(t).some((h) => t.slice(h.offset, h.offset + h.length) === value));
-        invariant(flagged, '這個值不會被判定為疑似金鑰，不需要加入清單', '只有被 Engram 判定為疑似金鑰、而你確定不是的值才需要加入');
+        invariant(flagged, '這個值不會被判定為疑似金鑰，不需要加入清單', '只有被 Engram 判定為疑似金鑰、而你確定不是的值才需要加入', { message: 'This value would not be flagged as a possible secret, so it does not need to be added to the list', hint: 'Only values that Engram flags as possible secrets and that you are sure are not secrets need to be added' });
         return ctx.locked('secrets.allow', async () => {
           const rel = await addAllow(homes.local, null, { preview: `${value.slice(0, 4)}…(${value.length})`, hash: secretHash(value) });
           const commit = await commitPaths(homes.vault, [rel], 'not-secret value', { action: 'allow', mid: ctx.mid });
@@ -497,7 +497,7 @@ export async function open(opts = {}) {
     },
 
     async apply(fix) {
-      invariant(fix && fix.action, '缺少 fix.action');
+      invariant(fix && fix.action, '缺少 fix.action', undefined, { message: 'Missing fix.action' });
       const a = fix.args ?? {};
       // R-45：args 可能來自介面的請求，路徑類參數一律對照引擎自己的紀錄，不接受任意路徑
       const bindingsNow = async () => allBindingViews(await readBindings(homes.vault, ctx.mid));
@@ -509,23 +509,23 @@ export async function open(opts = {}) {
         case 'remove': return eg.memories.remove(a.ref);
         case 'rebind': {
           const b = (await bindingsNow()).find((v) => v.path && a.dir && v.path.toLowerCase() === String(a.dir).toLowerCase());
-          invariant(b, '這個資料夾沒有綁定紀錄');
+          invariant(b, '這個資料夾沒有綁定紀錄', undefined, { message: 'This folder has no binding record' });
           return eg.identity.bind(b.path, { pid: b.pid }, { mode: 'safe', force: !!a.force });
         }
         case 'sweep': {
-          invariant(encodedOk(a.encoded) && exists(path.join(homes.claudeHome, 'projects', a.encoded)), '不合法的來源');
+          invariant(encodedOk(a.encoded) && exists(path.join(homes.claudeHome, 'projects', a.encoded)), '不合法的來源', undefined, { message: 'Invalid source' });
           return eg.sweepLegacy({ dryRun: false, encoded: a.encoded });
         }
         case 'allow-read': {
           // 只允許「確實存在的 junction 綁定」的記憶資料夾；可傳 encoded（建議）或舊的 path
           const views = (await bindingsNow()).filter((v) => v.method === 'junction');
           const enc = a.encoded ?? views.find((v) => a.path && memoryPathFor(homes, v.encoded).toLowerCase() === String(a.path).toLowerCase())?.encoded;
-          invariant(encodedOk(enc) && views.some((v) => v.encoded.toLowerCase() === enc.toLowerCase()), '只能允許已綁定專案的記憶資料夾');
+          invariant(encodedOk(enc) && views.some((v) => v.encoded.toLowerCase() === enc.toLowerCase()), '只能允許已綁定專案的記憶資料夾', undefined, { message: 'Only the memory folders of bound projects can be allowed' });
           await allowJunctionRead(homes, memoryPathFor(homes, enc));
           return { ok: true };
         }
         case 'split': {
-          invariant(encodedOk(a.encoded) && (await bindingsNow()).some((v) => v.encoded.toLowerCase() === a.encoded.toLowerCase()), '找不到這個綁定');
+          invariant(encodedOk(a.encoded) && (await bindingsNow()).some((v) => v.encoded.toLowerCase() === a.encoded.toLowerCase()), '找不到這個綁定', undefined, { message: 'Binding not found' });
           return splitCollision(ctx, a.encoded, { force: !!a.force });
         }
         case 'reassign': {
@@ -533,7 +533,7 @@ export async function open(opts = {}) {
           // root 必須是 Claude Code 真的開過的資料夾（transcript 的 cwd），不接受任意路徑
           const { scanAll, sessionIndex } = await import('./transcripts.mjs');
           const roots = [...new Set([...sessionIndex(await scanAll(homes.claudeHome)).values()].map((c) => memoryRootFor(c).root.toLowerCase()))];
-          invariant(a.root && roots.includes(memoryRootFor(String(a.root)).root.toLowerCase()), '這個資料夾沒有 Claude Code 的對話紀錄');
+          invariant(a.root && roots.includes(memoryRootFor(String(a.root)).root.toLowerCase()), '這個資料夾沒有 Claude Code 的對話紀錄', undefined, { message: 'This folder has no Claude Code conversations' });
           const res = await resolveIdentity(ctx, a.root);
           const target = res.pid ?? null;
           const b = await bind(ctx, a.root, target ? { pid: target } : { create: { name: path.basename(a.root) } }, { mode: 'safe' });
@@ -544,14 +544,14 @@ export async function open(opts = {}) {
           // 只接受引擎自己盤點出來、可以改名的資料夾（R-45：不接受任意路徑）
           const plan = await planCollisionRenames(ctx);
           const paths = (Array.isArray(a.paths) ? a.paths : []).filter((p) => plan.some((it) => it.to && !it.blocked && it.path.toLowerCase() === String(p).toLowerCase()));
-          invariant(paths.length, '這些資料夾目前不需要或不能改名，請重新整理收件匣');
+          invariant(paths.length, '這些資料夾目前不需要或不能改名，請重新整理收件匣', undefined, { message: 'These folders do not need renaming or cannot be renamed right now. Refresh the inbox' });
           return renameCollisions(ctx, { paths });
         }
         case 'restore-deletions': return restoreDeletions(ctx, a.pid);
         case 'confirm-deletions': return confirmDeletions(ctx, a.pid);
         case 'forget-binding': return ctx.locked('forget-binding', async () => {
           const b = await readBindings(homes.vault, ctx.mid);
-          invariant(typeof a.encoded === 'string' && Object.hasOwn(b, a.encoded), '找不到這個綁定');
+          invariant(typeof a.encoded === 'string' && Object.hasOwn(b, a.encoded), '找不到這個綁定', undefined, { message: 'Binding not found' });
           delete b[a.encoded];
           await writeBindings(homes.vault, ctx.mid, b);
           const commit = await commitPaths(homes.vault, [`machines/${ctx.mid}/bindings.json`], `forget binding ${a.encoded}`, { action: 'unbind', mid: ctx.mid });
@@ -587,7 +587,7 @@ export async function open(opts = {}) {
         return { path: p, text: (await readText(p)) ?? '', stats: await indexStats(p) };
       },
       async write(markdown, { allowSecrets = false } = {}) {
-        invariant(typeof markdown === 'string', '內容必須是文字');
+        invariant(typeof markdown === 'string', '內容必須是文字', undefined, { message: 'The content must be text' });
         return ctx.locked('core.write', async () => {
           const { assertNoNewSecrets } = await import('./secretallow.mjs');
           const allowed = await assertNoNewSecrets(homes.local, 'core/CORE.md', markdown.replace(/\r\n/g, '\n'), { before: await readText(path.join(homes.vault, 'core', 'CORE.md')), allowSecrets, what: '核心準則' });

@@ -99,6 +99,10 @@ test('計畫 → 演練 → 套用 → 還原：全程可逆，原始記憶不�
     }
   }
   await assert.rejects(() => undoImport(eg, { tag: applied.tag }), /已經還原過/);
+  // 管理介面切到英文時顯示 en
+  const gone = await undoImport(eg, { tag: applied.tag }).then(() => null, (e) => e);
+  assert.equal(gone.en.message, 'Could not find a record of this import, or it was already restored');
+  assert.ok(gone.en.hint);
 });
 
 test('匯入時親自改過範圍的記憶，不會馬上出現「改回去」的卡片；演練不留下沙盒暫存資料夾', async (t) => {
@@ -228,10 +232,14 @@ for (const [failAt, what] of [[3, '第一個綁定的 commit'], [4, '第二個�
     assert.ok(err, '應該失敗');
     assert.ok(err.tag, '錯誤要帶出這次匯入的紀錄，讓使用者能還原');
     assert.match(err.hint, /還原到匯入前/);
+    assert.match(err.en.hint, /Restore to before the import/);
+    assert.match(err.en.hint, new RegExp(`engram import undo ${err.tag}`));
     const p = await planImport(eg);
     assert.equal(p.applied, true);
     assert.equal(p.tag, err.tag);
     assert.ok(p.lastImport.failed, '精靈要知道上次匯入中途失敗');
+    // 錯誤有英文訊息時，失敗紀錄也附上；沒有時不附
+    assert.equal(p.lastImport.failed.en?.message, err.en.message);
     const linked = f.legacy.filter((l) => fs.lstatSync(l.mem).isSymbolicLink()).length;
     assert.equal(linked, failAt - 3, '失敗的那一個綁定已自行撤銷；在它之前完成的綁定仍在');
 

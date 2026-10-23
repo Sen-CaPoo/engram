@@ -9,14 +9,18 @@ import { exists, readJson, readText, safeWrite, stableJson } from './fsx.mjs';
 import { makeConflictId, uniqueFileName } from './ids.mjs';
 import { fromRef, toRef } from './paths.mjs';
 import { assertNoNewSecrets } from './secretallow.mjs';
+import { redactSecrets } from './secrets.mjs';
 import { commitPaths } from './vault.mjs';
 
 export function conflictsDir(vaultDir) {
   return path.join(vaultDir, 'conflicts');
 }
 
-/** 建立一筆衝突紀錄（合併器以外的情況：修改與刪除衝突、非 Markdown 檔等）。 */
-export async function quarantine(vaultDir, { ref, kind = 'content', ours = null, theirs = null, base = null, summary, by }) {
+/**
+ * 建立一筆衝突紀錄（合併器以外的情況：修改與刪除衝突、非 Markdown 檔等）。
+ * summaryEn：summary 的英文版，存在 meta.en.summary（管理介面切到英文時顯示）；沒有傳 summary 時兩者都用預設。
+ */
+export async function quarantine(vaultDir, { ref, kind = 'content', ours = null, theirs = null, base = null, summary, summaryEn, by }) {
   await fsp.mkdir(conflictsDir(vaultDir), { recursive: true });
   // 獨占建立資料夾；id 碰撞（EEXIST）就換一個，絕不覆蓋既有紀錄（BUG-7）
   let id; let dir;
@@ -28,13 +32,16 @@ export async function quarantine(vaultDir, { ref, kind = 'content', ours = null,
   if (ours !== null) await safeWrite(path.join(dir, 'ours.md'), ours);
   if (theirs !== null) await safeWrite(path.join(dir, 'theirs.md'), theirs);
   if (base !== null) await safeWrite(path.join(dir, 'base.md'), base);
+  const en = summary === undefined || summary === null ? `${ref} was modified differently on two computers` : summaryEn;
+  // meta.json 會跟著 vault 推送：摘要先遮蔽疑似金鑰
+  const safe = (t) => redactSecrets(String(t)).text;
   await safeWrite(path.join(dir, 'meta.json'), stableJson({
-    id, ref, kind, createdAt: new Date().toISOString(), summary: summary ?? `${ref} 在兩台電腦有不同的修改`, ...(by ? { by } : {}),
+    id, ref, kind, createdAt: new Date().toISOString(), summary: safe(summary ?? `${ref} 在兩台電腦有不同的修改`), ...(en ? { en: { summary: safe(en) } } : {}), ...(by ? { by } : {}),
   }));
   return id;
 }
 
-/** @returns {Promise<{ id, ref, kind, createdAt, ours, theirs, base, summary }[]>} */
+/** @returns {Promise<{ id, ref, kind, createdAt, ours, theirs, base, summary, en?: { summary } }[]>} 舊的紀錄沒有 en */
 export async function listConflicts(vaultDir) {
   let ids = [];
   try { ids = (await fsp.readdir(conflictsDir(vaultDir), { withFileTypes: true })).filter((d) => d.isDirectory() && d.name.startsWith('cf_')).map((d) => d.name); } catch { return []; }
@@ -51,6 +58,7 @@ export async function listConflicts(vaultDir) {
       theirs: await readText(path.join(dir, 'theirs.md')),
       base: await readText(path.join(dir, 'base.md')),
       summary: meta.summary ?? '',
+      ...(typeof meta.en?.summary === 'string' && meta.en.summary ? { en: { summary: meta.en.summary } } : {}),
     });
   }
   return out;
@@ -60,14 +68,14 @@ export async function listConflicts(vaultDir) {
  * 處理衝突。choice：'ours' 保留目前檔案；'theirs' 改用對方版本；'both' 對方版本另存一筆；'manual' 寫入 body。
  */
 export async function resolveConflict(ctx, id, { choice, body } = {}) {
-  invariant(['ours', 'theirs', 'both', 'manual'].includes(choice), 'choice 必須是 ours、theirs、both 或 manual');
+  invariant(['ours', 'theirs', 'both', 'manual'].includes(choice), 'choice 必須是 ours、theirs、both 或 manual', undefined, { message: 'choice must be ours, theirs, both, or manual' });
   // R-45：id 會用來組路徑並遞迴刪除，必須是 cf_ 開頭的單一資料夾名稱，而且就在 conflicts/ 底下
-  invariant(typeof id === 'string' && /^cf_[0-9A-Za-z_]+$/.test(id), '不合法的衝突 id');
+  invariant(typeof id === 'string' && /^cf_[0-9A-Za-z_]+$/.test(id), '不合法的衝突 id', undefined, { message: 'Invalid conflict id' });
   return ctx.locked('conflicts.resolve', async () => {
     const root = conflictsDir(ctx.vault);
     const dir = path.resolve(root, id);
-    invariant(path.dirname(dir) === path.resolve(root), '不合法的衝突 id');
-    if (!exists(dir)) throw new EngramError(E.NOT_FOUND, `找不到衝突：${id}`);
+    invariant(path.dirname(dir) === path.resolve(root), '不合法的衝突 id', undefined, { message: 'Invalid conflict id' });
+    if (!exists(dir)) throw new EngramError(E.NOT_FOUND, `找不到衝突：${id}`).withEn(`Conflict not found: ${id}`);
     const meta = (await readJson(path.join(dir, 'meta.json'), null)) ?? {};
     // meta.ref 來自同步的檔案，同樣要驗證是記憶檔或核心準則
     const { scopeOfRef: refScope } = await import('./memories.mjs');
@@ -82,7 +90,7 @@ export async function resolveConflict(ctx, id, { choice, body } = {}) {
         else await safeWrite(abs, theirs);
         touched.push(ref);
       } else if (choice === 'manual') {
-        invariant(typeof body === 'string', '手動合併需要提供 body');
+        invariant(typeof body === 'string', '手動合併需要提供 body', undefined, { message: 'Manual merge requires a body' });
         await assertNoNewSecrets(ctx.local, ref, body, { before: await readText(abs), what: '合併後的內容' });
         await safeWrite(abs, body);
         touched.push(ref);

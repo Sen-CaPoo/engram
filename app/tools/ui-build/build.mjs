@@ -2,11 +2,13 @@
 //   node build.mjs           正式版 → app/src/ui/dist/
 //   node build.mjs --watch   開發時持續建置
 //   node build.mjs --demo    單檔展示版（內建展示資料，點兩下就能開）→ 專案根目錄 23_介面原型_展示版.html
+//   node build.mjs --demo-en 英文展示版（合成資料，介面預設英文，用來拍英文截圖）→ 專案根目錄 23_介面原型_展示版.en.html
 import * as esbuild from 'esbuild';
 import { cpSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDemoData } from './demo-data.mjs';
+import { buildSampleDataEn } from './demo-sample-en.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(here, '../..');
@@ -41,8 +43,8 @@ async function buildApp() {
   for (const f of ['index.html', 'manifest.webmanifest', 'icon.svg', 'sw.js']) cpSync(join(uiDir, 'public', f), join(outDir, f));
 }
 
-async function buildDemo() {
-  const data = buildDemoData(rootDir);
+async function buildDemo(en = false) {
+  const data = en ? buildSampleDataEn() : buildDemoData(rootDir);
   const res = await esbuild.build({
     ...common, write: false, outdir: 'demo-out', entryNames: 'app', minify: true,
     define: { __DEMO__: 'true', __DEMO_DATA__: JSON.stringify(data) },
@@ -51,12 +53,12 @@ async function buildDemo() {
   const css = res.outputFiles.find((f) => f.path.endsWith('.css')).text.replace(/<\/style/gi, '<\\/style');
   const icon = readFileSync(join(uiDir, 'public/icon.svg'), 'utf8');
   const html = `<!doctype html>
-<html lang="zh-Hant-TW">
+<html lang="${en ? 'en' : 'zh-Hant-TW'}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0072CE">
-<title>Engram 憶跡 · 介面原型</title>
+<title>${en ? 'Engram · Demo' : 'Engram 憶跡 · 介面原型'}</title>
 <!-- 展示版：由 app/tools/ui-build/build.mjs --demo 產生，資料來自 ${data ? data.generatedFrom : '內建範例'}。請勿手改。 -->
 <link rel="icon" href="data:image/svg+xml,${encodeURIComponent(icon)}">
 <style>${css}</style>
@@ -67,10 +69,11 @@ async function buildDemo() {
 </body>
 </html>
 `;
-  const out = join(rootDir, '23_介面原型_展示版.html');
+  const out = join(rootDir, en ? '23_介面原型_展示版.en.html' : '23_介面原型_展示版.html');
   writeFileSync(out, html);
   console.log(`展示版已輸出：${out}（${(html.length / 1024).toFixed(0)} KB，${data ? `${data.memories.length} 筆記憶、${data.projects.length} 個專案` : '內建範例資料'}）`);
 }
 
-if (args.has('--demo')) await buildDemo();
+if (args.has('--demo-en')) await buildDemo(true);
+else if (args.has('--demo')) await buildDemo();
 else await buildApp();

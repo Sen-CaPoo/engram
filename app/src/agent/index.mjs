@@ -95,7 +95,7 @@ export async function startAgent({
     await new Promise((r) => setTimeout(r, 1000));
     const winner = await otherAgent(paths);
     if (winner) return { alreadyRunning: winner };
-    throw new CliError('E_PORT_IN_USE', `連接埠 ${port} 已被其他程式占用`, '關閉占用該連接埠的程式後再試；管理介面的網址固定，所以不能換連接埠。');
+    throw new CliError('E_PORT_IN_USE', `連接埠 ${port} 已被其他程式占用`, '關閉占用該連接埠的程式後再試；管理介面的網址固定，所以不能換連接埠。').withEn(`Port ${port} is already in use by another program`, 'Close the program that is using the port and try again. The dashboard address is fixed, so the port cannot be changed.');
   }
   agent.port = server.address().port;
 

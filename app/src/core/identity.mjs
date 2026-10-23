@@ -368,7 +368,7 @@ export async function swapToJunction(ctx, { encoded, pid, mode = 'safe', force =
   const st = junctionState(homes, encoded, pid);
   if (st.state === 'ok') return { state: 'already' };
   if (st.state === 'wrong-target' && st.target && !force) {
-    throw new EngramError(E.COLLISION, '這個記憶資料夾已綁定到別的專案', '確認是否為碰撞資料夾，或先解除原本的綁定', { encoded, target: st.target });
+    throw new EngramError(E.COLLISION, '這個記憶資料夾已綁定到別的專案', '確認是否為碰撞資料夾，或先解除原本的綁定', { encoded, target: st.target }).withEn('This memory folder is already bound to a different project', 'Check whether it is a colliding folder, or unbind the existing binding first');
   }
   if (st.state === 'wrong-target' || st.state === 'broken') fs.rmdirSync(memPath);
 
@@ -377,7 +377,7 @@ export async function swapToJunction(ctx, { encoded, pid, mode = 'safe', force =
     createJunction(target, memPath);
     if (!probeJunction(memPath, target)) {
       try { fs.rmdirSync(memPath); } catch { /* ignore */ }
-      throw new EngramError(E.INVALID, '建立的 junction 無法寫入', '執行 engram doctor 檢查檔案系統權限');
+      throw new EngramError(E.INVALID, '建立的 junction 無法寫入', '執行 engram doctor 檢查檔案系統權限').withEn('The junction that was created is not writable', 'Run engram doctor to check file system permissions');
     }
     // prev／prevTarget：綁定中途失敗時，bind() 依此把記憶資料夾放回切換前的樣子
     return { state: 'linked', prev: st.state, prevTarget: st.target ?? null };
@@ -402,7 +402,7 @@ export async function swapToJunction(ctx, { encoded, pid, mode = 'safe', force =
   }
   const copied = preCopied ? { copied: [], skipped: [], renamed: [] } : await copyMemoriesInto(memPath, target);
   if (!preCopied && !(await verifyCopied(memPath, target, copied.copied))) {
-    throw new EngramError(E.INVALID, '複製到 vault 的記憶驗證失敗，已停止切換', '原資料夾未被改動；執行 engram doctor');
+    throw new EngramError(E.INVALID, '複製到 vault 的記憶驗證失敗，已停止切換', '原資料夾未被改動；執行 engram doctor').withEn('Verification of the memories copied to the vault failed, so the switch was stopped', 'The original folder was not changed; run engram doctor');
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backup = path.join(backupRoot(homes), stamp, encoded, 'memory');
@@ -420,7 +420,7 @@ export async function swapToJunction(ctx, { encoded, pid, mode = 'safe', force =
     // 回滾：移除新 junction，把備份改回原名
     try { if (isLink(memPath)) fs.rmdirSync(memPath); } catch { /* ignore */ }
     try { fs.renameSync(backup, memPath); } catch { /* 留給 doctor */ }
-    throw new EngramError(E.INVALID, `建立 junction 失敗，已還原原資料夾：${err.message}`, '執行 engram doctor');
+    throw new EngramError(E.INVALID, `建立 junction 失敗，已還原原資料夾：${err.message}`, '執行 engram doctor').withEn(`Creating the junction failed and the original folder was restored: ${err.message}`, 'Run engram doctor');
   }
   return { state: 'linked', prev: 'has-content', copied, backup, backupOnly: backupOnly.map((n) => path.join(backup, n)) };
 }
@@ -545,7 +545,7 @@ export async function bind(ctx, dir, target = {}, { mode = 'safe', force = false
   return ctx.locked('identity.bind', async () => {
     const res = await resolveIdentity(ctx, dir, { fsIndexMaxAgeMs: 60_000 });
     const { root, encoded, remotes, rootCommits } = res;
-    if (!encoded) throw new EngramError(E.INVALID, '路徑太長（超過 200 字元），無法推算 Claude Code 的記憶資料夾', '請把專案移到較短的路徑');
+    if (!encoded) throw new EngramError(E.INVALID, '路徑太長（超過 200 字元），無法推算 Claude Code 的記憶資料夾', '請把專案移到較短的路徑').withEn("The path is too long (over 200 characters), so Claude Code's memory folder cannot be worked out", 'Move the project to a shorter path');
     let pid = target.pid ?? null;
     let created = null;
     if (!pid && !target.create) pid = res.pid;
@@ -553,7 +553,7 @@ export async function bind(ctx, dir, target = {}, { mode = 'safe', force = false
       created = await createProject(ctx, { name: target.create?.name, root, remotes, rootCommits, archived: !!target.create?.archived });
       pid = created.id;
     } else if (!(await readProject(ctx.vault, pid))) {
-      throw new EngramError(E.NOT_FOUND, `找不到專案：${pid}`);
+      throw new EngramError(E.NOT_FOUND, `找不到專案：${pid}`).withEn(`Project not found: ${pid}`);
     }
     // 綁定是一個整體：中途失敗（commit 被擋、檔案被占用、磁碟滿）時撤銷這次已做的部分再拋出錯誤。
     // 否則記憶資料夾已換成 junction、呼叫端（例如匯入）卻不知道，「還原到匯入前」就無法把它換回來。
@@ -831,7 +831,7 @@ export async function unbind(ctx, dir) {
     const { root } = memoryRootFor(dir);
     const bindings = await readBindings(ctx.vault, ctx.mid);
     const b = findBindingByPath(bindings, root) ?? findBindingByEncoded(bindings, encodeProjectPath(root));
-    if (!b) throw new EngramError(E.NOT_BOUND, '這個資料夾沒有綁定到 Engram');
+    if (!b) throw new EngramError(E.NOT_BOUND, '這個資料夾沒有綁定到 Engram').withEn('This folder is not bound to Engram');
     const memPath = memoryPathFor(ctx.homes, b.encoded);
     if (b.method === 'junction') await revokeJunctionRead(ctx.homes, memPath);
     if (b.method === 'junction' && isLink(memPath)) {

@@ -50,23 +50,23 @@ export async function history(ctx, { ref, limit = 50 } = {}) {
 
 /** 復原某次變更（git revert）。 */
 export async function undo(ctx, sha) {
-  if (!/^[0-9a-f]{7,40}$/i.test(String(sha))) throw new EngramError(E.INVALID, `不合法的版本：${sha}`);
+  if (!/^[0-9a-f]{7,40}$/i.test(String(sha))) throw new EngramError(E.INVALID, `不合法的版本：${sha}`).withEn(`Invalid version: ${sha}`);
   const info = (await history(ctx, { limit: 1000 })).find((c) => c.sha.startsWith(String(sha)));
   if (info?.action === 'rename-folder' && info.renameId) {
-    if (!info.undoable) throw new EngramError(E.INVALID, '資料夾改名只能在改名的那台電腦還原', '');
+    if (!info.undoable) throw new EngramError(E.INVALID, '資料夾改名只能在改名的那台電腦還原', '').withEn('A folder rename can only be undone on the computer that did the rename');
     const { undoCollisionRenames } = await import('./rename.mjs');
     return undoCollisionRenames(ctx, info.renameId);
   }
   // 只查最近 1000 個變更：找不到紀錄時不知道它是不是匯入或綁定的一部分，一律拒絕（審查意見）
-  if (!info) throw new EngramError(E.NOT_FOUND, `找不到版本 ${sha}，或它不在最近 1000 個變更裡`, '到管理介面的歷史頁面找要復原的版本');
+  if (!info) throw new EngramError(E.NOT_FOUND, `找不到版本 ${sha}，或它不在最近 1000 個變更裡`, '到管理介面的歷史頁面找要復原的版本').withEn(`Version ${sha} was not found, or it is not among the last 1000 changes`, 'Find the version to undo under Change history in Devices & sync');
   if (!info.undoable) {
-    throw new EngramError(E.INVALID, info.importTag ? '這個變更屬於一次匯入，請從匯入頁面整批還原' : '這個變更不能單獨復原', info.importTag ? `rollbackImport('${info.importTag}')` : '', { importTag: info.importTag ?? null });
+    throw new EngramError(E.INVALID, info.importTag ? '這個變更屬於一次匯入，請從匯入頁面整批還原' : '這個變更不能單獨復原', info.importTag ? `rollbackImport('${info.importTag}')` : '', { importTag: info.importTag ?? null }).withEn(info.importTag ? 'This change is part of an import. Restore the whole import from the Import page' : 'This change cannot be undone on its own', info.importTag ? `rollbackImport('${info.importTag}')` : '');
   }
   return ctx.locked('undo', async () => {
     const r = await git(['revert', '--no-edit', '--no-commit', sha], { cwd: ctx.vault, allowFail: true });
     if (r.code !== 0) {
       await git(['revert', '--abort'], { cwd: ctx.vault, allowFail: true });
-      throw new EngramError(E.CONFLICT, '這次變更之後又有其他修改，無法自動復原', '到歷史頁面手動還原個別檔案', { stderr: r.stderr.slice(-500) });
+      throw new EngramError(E.CONFLICT, '這次變更之後又有其他修改，無法自動復原', '到歷史頁面手動還原個別檔案', { stderr: r.stderr.slice(-500) }).withEn('Other changes were made after this one, so it cannot be undone automatically', 'Restore individual files by hand from each memory\'s History in the Library');
     }
     const subj = (await git(['log', '-1', '--format=%s', sha], { cwd: ctx.vault })).stdout.trim().replace(/^engram\([^)]+\):\s*/, '');
     const msg = `engram(${ctx.mid}): undo ${subj}\n\nEngram-Action: undo\nEngram-Refs: ${sha}\n`;

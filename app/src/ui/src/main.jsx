@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks'
 import { api } from './api.js';
 import { AppCtx, ToastHost, ErrorBanner, Banner, Dialog } from './components.jsx';
 import { relTime, SYNC_LABEL, composing, attentionCount } from './util.js';
+import { t, N_, LANGS, getLang, setLang, local } from './i18n.js';
 import {
   EngramLogo, IconOverview, IconLibrary, IconInbox, IconProjects, IconDevices, IconCore, IconSchedule, IconImport,
-  IconSearch, IconSun, IconMoon, IconMonitor, IconSettings, IconSync,
+  IconSearch, IconSun, IconMoon, IconMonitor, IconSettings, IconSync, IconGlobe,
 } from './icons.jsx';
 import { Overview } from './views/overview.jsx';
 import { Library } from './views/library.jsx';
@@ -19,17 +20,19 @@ import { Import } from './views/import.jsx';
 import { Settings } from './views/settings.jsx';
 import './styles.css';
 
+// 標題與分組是中文原文，顯示時經過 t()
 const ROUTES = {
-  overview: { title: '總覽', short: '總覽', icon: IconOverview, view: Overview, group: '記憶' },
-  library: { title: '記憶庫', short: '記憶庫', icon: IconLibrary, view: Library, group: '記憶' },
-  inbox: { title: '收件匣', short: '收件匣', icon: IconInbox, view: Inbox, group: '記憶' },
-  projects: { title: '專案', short: '專案', icon: IconProjects, view: Projects, group: '管理' },
-  devices: { title: '裝置與同步', short: '裝置', icon: IconDevices, view: Devices, group: '管理' },
-  core: { title: '核心準則', short: '準則', icon: IconCore, view: Core, group: '管理' },
-  schedule: { title: '排程與紀錄', short: '排程', icon: IconSchedule, view: Schedule, group: '系統' },
-  import: { title: '匯入既有記憶', short: '匯入', icon: IconImport, view: Import, group: '系統' },
-  settings: { title: '設定', short: '設定', icon: IconSettings, view: Settings, group: '系統' },
+  overview: { title: N_('總覽'), short: N_('總覽'), icon: IconOverview, view: Overview, group: N_('nav::記憶') },
+  library: { title: N_('記憶庫'), short: N_('記憶庫'), icon: IconLibrary, view: Library, group: N_('nav::記憶') },
+  inbox: { title: N_('收件匣'), short: N_('收件匣'), icon: IconInbox, view: Inbox, group: N_('nav::記憶') },
+  projects: { title: N_('nav::專案'), short: N_('nav::專案'), icon: IconProjects, view: Projects, group: N_('管理') },
+  devices: { title: N_('裝置與同步'), short: N_('裝置'), icon: IconDevices, view: Devices, group: N_('管理') },
+  core: { title: N_('核心準則'), short: N_('準則'), icon: IconCore, view: Core, group: N_('管理') },
+  schedule: { title: N_('排程與紀錄'), short: N_('排程'), icon: IconSchedule, view: Schedule, group: N_('系統') },
+  import: { title: N_('匯入既有記憶'), short: N_('匯入'), icon: IconImport, view: Import, group: N_('系統') },
+  settings: { title: N_('設定'), short: N_('設定'), icon: IconSettings, view: Settings, group: N_('系統') },
 };
+const THEME_LABEL = { system: N_('跟隨系統'), light: N_('淺色'), dark: N_('深色') };
 
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '');
@@ -53,8 +56,16 @@ function useTheme() {
     if (theme === 'system') el.removeAttribute('data-theme'); else el.setAttribute('data-theme', theme);
     try { localStorage.setItem('engram.theme', theme); } catch { /* 無法存取時維持預設 */ }
   }, [theme]);
-  const next = () => setTheme((t) => (t === 'system' ? 'light' : t === 'light' ? 'dark' : 'system'));
+  const next = () => setTheme((cur) => (cur === 'system' ? 'light' : cur === 'light' ? 'dark' : 'system'));
   return [theme, next];
+}
+
+// 介面語言：記在本機瀏覽器；切換時整個畫面重新繪製，未儲存的編輯內容不受影響
+function useLang() {
+  const [lang, set] = useState(getLang);
+  useEffect(() => { setLang(lang, false); }, [lang]);
+  const change = useCallback((id) => set(setLang(id)), []);
+  return [lang, change];
 }
 
 function App() {
@@ -68,6 +79,7 @@ function App() {
   const [leave, setLeave] = useState(null);
   const [coreConflict, setCoreConflict] = useState(false);
   const [theme, nextTheme] = useTheme();
+  const [lang, changeLang] = useLang();
   const searchRef = useRef(null);
   const lastHash = useRef(location.hash);
   const bypass = useRef(false);
@@ -95,7 +107,7 @@ function App() {
     if (replace) doIt(); else guard(doIt);
   }, []);
 
-  const reportError = useCallback((e) => setGlobalError(e ? { message: e.message || String(e), hint: e.hint || '', code: e.code } : null), []);
+  const reportError = useCallback((e) => setGlobalError(e ? { message: e.message || String(e), hint: e.hint || '', code: e.code, en: e.en } : null), []);
   const loadStatus = useCallback(() => api.status().then((s) => { setStatus(s); setStatusError(null); }).catch((e) => setStatusError(e)), []);
   const loadProjects = useCallback(() => api.projects().then(setProjects).catch(() => {}), []);
   const bump = useRef(null);
@@ -107,10 +119,10 @@ function App() {
 
   const toast = useCallback((text, undo) => {
     const id = Math.random().toString(36).slice(2);
-    setToasts((t) => [...t.slice(-2), { id, text, undo }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), undo ? 8000 : 4000);
+    setToasts((list) => [...list.slice(-2), { id, text, undo }]);
+    setTimeout(() => setToasts((list) => list.filter((x) => x.id !== id)), undo ? 8000 : 4000);
   }, []);
-  const dismiss = useCallback((id) => setToasts((t) => t.filter((x) => x.id !== id)), []);
+  const dismiss = useCallback((id) => setToasts((list) => list.filter((x) => x.id !== id)), []);
 
   const syncNow = useCallback(async () => {
     try { await api.sync(); loadStatus(); } catch (e) { reportError(e); }
@@ -156,12 +168,14 @@ function App() {
   }, [nConf]);
 
   const projectsById = useMemo(() => Object.fromEntries((projects || []).map((p) => [p.pid, p])), [projects]);
-  const ctx = useMemo(() => ({ status, projects, projectsById, version, refresh, toast, go, syncNow, reportError, dirty }), [status, projects, projectsById, version]);
+  const ctx = useMemo(() => ({ status, projects, projectsById, version, refresh, toast, go, syncNow, reportError, dirty, lang, changeLang }), [status, projects, projectsById, version, lang]);
   const R = ROUTES[loc.route];
   const View = R.view;
   const hot = attentionCount(status);
   const urgent = status ? status.inbox.conflicts + status.inbox.findings.high : 0;
-  useEffect(() => { document.title = `${R.title} · Engram 憶跡`; }, [R]);
+  useEffect(() => { document.title = `${t(R.title)} · ${t('Engram 憶跡')}`; }, [R, lang]);
+  const otherLang = LANGS.find((l) => l.id !== lang);
+  const themeText = t('主題：{name}', { name: t(THEME_LABEL[theme]) });
 
   const onSearch = (e) => {
     if (composing(e)) return;
@@ -179,35 +193,35 @@ function App() {
     <AppCtx.Provider value={ctx}>
       <div class="app">
         <aside class="sidebar">
-          <a class="brand" href="#/overview" onClick={navClick('overview')} aria-label="Engram 憶跡：Claude Code 記憶同步">
+          <a class="brand" href="#/overview" onClick={navClick('overview')} aria-label={t('Engram 憶跡：Claude Code 記憶同步')}>
             <EngramLogo />
-            <span class="word"><b>Engram 憶跡</b><small>Claude Code 記憶同步</small></span>
+            <span class="word"><b>{t('Engram 憶跡')}</b><small>{t('Claude Code 記憶同步')}</small></span>
           </a>
-          <nav class="nav" aria-label="主要導覽">
+          <nav class="nav" aria-label={t('主要導覽')}>
             {Object.entries(ROUTES).map(([key, r]) => {
-              const label = r.group !== lastGroup ? <div class="nav-label" key={`g-${r.group}`}>{r.group}</div> : null;
+              const label = r.group !== lastGroup ? <div class="nav-label" key={`g-${r.group}`}>{t(r.group)}</div> : null;
               lastGroup = r.group;
               const Icon = r.icon;
               return [
                 label,
-                <a key={key} href={toHash(key)} onClick={navClick(key)} aria-current={loc.route === key ? 'page' : undefined} title={r.title}>
-                  <Icon /><span class="txt">{r.title}</span><span class="short" aria-hidden="true">{r.short}</span>
-                  {key === 'inbox' && hot > 0 && <span class={`count ${urgent ? 'hot' : 'warm'}`} aria-label={`${hot} 件需要處理`}>{hot}</span>}
+                <a key={key} href={toHash(key)} onClick={navClick(key)} aria-current={loc.route === key ? 'page' : undefined} title={t(r.title)}>
+                  <Icon /><span class="txt">{t(r.title)}</span><span class="short" aria-hidden="true">{t(r.short)}</span>
+                  {key === 'inbox' && hot > 0 && <span class={`count ${urgent ? 'hot' : 'warm'}`} aria-label={t('{n} 件需要處理', { n: hot })}>{hot}</span>}
                 </a>,
               ];
             })}
           </nav>
           <div class="sidebar-foot">
-            {api.isDemo && <div class="demo-badge">展示版：資料由記憶盤點產生，動作只在這個頁面裡模擬，不會改到任何檔案。</div>}
+            {api.isDemo && <div class="demo-badge">{t('展示版：資料由記憶盤點產生，動作只在這個頁面裡模擬，不會改到任何檔案。')}</div>}
             {status && (
-              <div class="trace" aria-label="裝置">
+              <div class="trace" aria-label={t('裝置')}>
                 {status.devices.map((d, i) => (
                   <div key={d.id}>
                     {i > 0 && <div class="trace-link" aria-hidden="true" />}
                     <div class="trace-row">
                       <span class={`node${d.isSelf ? ' self' : ''}`} />
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</span>
-                      <small>{d.isSelf ? '這台' : relTime(d.lastSyncAt || d.lastSeenAt)}</small>
+                      <small>{d.isSelf ? t('這台') : relTime(d.lastSyncAt || d.lastSeenAt)}</small>
                     </div>
                   </div>
                 ))}
@@ -218,15 +232,18 @@ function App() {
 
         <div class="main">
           <header class="topbar">
-            <h1>{R.title}</h1>
+            <h1>{t(R.title)}</h1>
             <div class="spacer" />
             <label class="searchbox">
               <IconSearch style={{ width: 16, height: 16, flex: 'none' }} />
-              <input ref={searchRef} id="global-search" type="search" placeholder="搜尋所有記憶" onKeyDown={onSearch} aria-label="搜尋所有記憶" />
+              <input ref={searchRef} id="global-search" type="search" placeholder={t('搜尋所有記憶')} onKeyDown={onSearch} aria-label={t('搜尋所有記憶')} />
               <span class="kbd">Ctrl K</span>
             </label>
             {status && <SyncPill sync={status.sync} onClick={() => go('devices')} />}
-            <button class="btn ghost icon" onClick={nextTheme} aria-label={`主題：${theme === 'system' ? '跟隨系統' : theme === 'light' ? '淺色' : '深色'}`} title={`主題：${theme === 'system' ? '跟隨系統' : theme === 'light' ? '淺色' : '深色'}`}>
+            <button class="btn ghost sm lang-switch" onClick={() => changeLang(otherLang.id)} lang={otherLang.id} aria-label={t('切換介面語言：{name}', { name: otherLang.label })} title={t('切換介面語言：{name}', { name: otherLang.label })}>
+              <IconGlobe /><span class="txt">{otherLang.label}</span>
+            </button>
+            <button class="btn ghost icon" onClick={nextTheme} aria-label={themeText} title={themeText}>
               {theme === 'dark' ? <IconMoon /> : theme === 'light' ? <IconSun /> : <IconMonitor />}
             </button>
           </header>
@@ -234,7 +251,7 @@ function App() {
             {(globalError || coreConflict) && (
               <div class="page global-banner" style={{ marginBottom: 'var(--sp-4)' }}>
                 {globalError && <ErrorBanner error={globalError} onDismiss={() => setGlobalError(null)} />}
-                {coreConflict && <Banner tone="bad" title="核心準則有同步衝突" actions={<button class="btn sm" onClick={() => go('inbox')}>處理衝突</button>}>兩台電腦都改了 CORE.md。解決之前，每次對話載入的是這台的版本。</Banner>}
+                {coreConflict && <Banner tone="bad" title={t('核心準則有同步衝突')} actions={<button class="btn sm" onClick={() => go('inbox')}>{t('處理衝突')}</button>}>{t('兩台電腦都改了 CORE.md。解決之前，每次對話載入的是這台的版本。')}</Banner>}
               </div>
             )}
             {!status && statusError ? <AgentDown error={statusError} onRetry={loadStatus} /> : <View params={loc.params} go={go} key={loc.route} />}
@@ -243,8 +260,8 @@ function App() {
       </div>
       <ToastHost toasts={toasts} dismiss={dismiss} />
       {leave && (
-        <Dialog title="離開這一頁？" desc={`有尚未儲存的內容：${leave.labels.join('、')}。離開後會遺失（草稿仍暫存在這個分頁，回來時可以恢復）。`} onClose={() => setLeave(null)}
-          footer={<><button class="btn" onClick={() => setLeave(null)}>留在這一頁</button><button class="btn danger" onClick={() => { const r = leave.run; dirtyMap.current.clear(); setLeave(null); r(); }}>離開</button></>}>
+        <Dialog title={t('離開這一頁？')} desc={t('有尚未儲存的內容：{labels}。離開後會遺失（草稿仍暫存在這個分頁，回來時可以恢復）。', { labels: leave.labels.join(t('、')) })} onClose={() => setLeave(null)}
+          footer={<><button class="btn" onClick={() => setLeave(null)}>{t('留在這一頁')}</button><button class="btn danger" onClick={() => { const r = leave.run; dirtyMap.current.clear(); setLeave(null); r(); }}>{t('離開')}</button></>}>
           <span />
         </Dialog>
       )}
@@ -253,12 +270,12 @@ function App() {
 }
 
 function SyncPill({ sync, onClick }) {
-  const text = sync.state === 'ok' ? `已同步 · ${relTime(sync.lastSuccessAt)}` : sync.state === 'syncing' ? '同步中…' : SYNC_LABEL[sync.state];
+  const text = sync.state === 'ok' ? t('已同步 · {when}', { when: relTime(sync.lastSuccessAt) }) : sync.state === 'syncing' ? t('同步中…') : t(SYNC_LABEL[sync.state] || sync.state);
   return (
-    <button class={`sync-pill ${sync.state}`} onClick={onClick} title="查看裝置與同步">
+    <button class={`sync-pill ${sync.state}`} onClick={onClick} title={t('查看裝置與同步')}>
       <span class="led" aria-hidden="true" />
       <span class="txt">{text}</span>
-      {sync.ahead > 0 && <span class="chip brand" style={{ height: 18 }} title={`${sync.ahead} 個變更等待推送`}>↑{sync.ahead}</span>}
+      {sync.ahead > 0 && <span class="chip brand" style={{ height: 18 }} title={t('{n} 個變更等待推送', { n: sync.ahead })}>↑{sync.ahead}</span>}
     </button>
   );
 }
@@ -267,14 +284,14 @@ function SyncPill({ sync, onClick }) {
 function AgentDown({ error, onRetry }) {
   return (
     <div class="agent-down panel" style={{ padding: 24 }}>
-      <h2 style={{ font: '600 20px/1.3 var(--font-display)' }}>連不到 Engram 常駐程式</h2>
-      <p class="muted">管理介面需要常駐程式提供資料。你的記憶不受影響：Claude Code 照常讀寫，常駐程式恢復後會自動補同步。</p>
+      <h2 style={{ font: '600 20px/1.3 var(--font-display)' }}>{t('連不到 Engram 常駐程式')}</h2>
+      <p class="muted">{t('管理介面需要常駐程式提供資料。你的記憶不受影響：Claude Code 照常讀寫，常駐程式恢復後會自動補同步。')}</p>
       <ol>
-        <li>正常情況下，登入 Windows 後常駐程式會自動啟動。如果剛開機，請等一分鐘再重試。</li>
-        <li>也可以在終端機執行 <code>engram agent</code> 手動啟動，或執行 <code>engram doctor</code> 檢查原因。</li>
-        <li>如果反覆出現，請到「排程與紀錄」確認登入工作 \Engram\Agent 是否存在（可執行 <code>engram schedule install</code> 重建）。</li>
+        <li>{t('正常情況下，登入 Windows 後常駐程式會自動啟動。如果剛開機，請等一分鐘再重試。')}</li>
+        <li>{t('也可以在終端機執行 {agent} 手動啟動，或執行 {doctor} 檢查原因。', { agent: <code>engram agent</code>, doctor: <code>engram doctor</code> })}</li>
+        <li>{t('如果反覆出現，請到「排程與紀錄」確認登入工作 {task} 是否存在（可執行 {cmd} 重建）。', { task: '\\Engram\\Agent', cmd: <code>engram schedule install</code> })}</li>
       </ol>
-      <div class="btn-row"><button class="btn primary" onClick={onRetry}><IconSync />重試</button><span class="faint" style={{ fontSize: 12 }}>{error?.message}</span></div>
+      <div class="btn-row"><button class="btn primary" onClick={onRetry}><IconSync />{t('重試')}</button><span class="faint" style={{ fontSize: 12 }}>{local(error, 'message')}</span></div>
     </div>
   );
 }

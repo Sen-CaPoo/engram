@@ -1,8 +1,12 @@
 // 展示模式：在瀏覽器記憶體內模擬常駐程式的 HTTP API，形狀與 api.js 契約、40 號 §15 型別完全一致。
 // 資料來源：建置時由 tools/ui-build/demo-data.mjs 從開發者的記憶盤點產生（__DEMO_DATA__），沒有時用下方的少量範例。
+// 英文展示版（build.mjs --demo-en）改用 demo-sample-en.mjs 的合成資料，介面預設英文。
+// 與常駐程式相同，給人看的文字附 en 欄位（finding.en.title 等），介面依語言挑選。
+import { setLang } from './i18n.js';
 
 /* global __DEMO_DATA__ */
 const RAW = typeof __DEMO_DATA__ !== 'undefined' && __DEMO_DATA__ ? __DEMO_DATA__ : fallbackData();
+const EN_DATA = RAW.lang === 'en';
 
 const NOW = Date.now();
 const minutesAgo = (m) => new Date(NOW - m * 60000).toISOString();
@@ -23,18 +27,21 @@ const listeners = new Set();
 const emit = (name, data) => listeners.forEach((fn) => fn(name, data));
 
 // 審查用的狀態變體：在網址加上 ?sync=never|offline|auth|error、&stale=1、&probe=fail、&agentdown=1
+// &lang=en|zh-TW 指定介面語言（英文展示版預設英文）
 const VARIANT = (() => { try { return Object.fromEntries(new URLSearchParams(location.search)); } catch { return {}; } })();
+if (VARIANT.lang || EN_DATA) setLang(VARIANT.lang || 'en');
 const SYNC_ERRORS = {
-  offline: { code: 'E_OFFLINE', message: '連不到 GitHub', hint: '記憶先存在這台；恢復連線後會自動補同步。' },
-  auth: { code: 'E_AUTH', message: 'GitHub 登入已過期', hint: '執行 gh auth login 重新登入 GitHub；如果 git 的認證沒有交給 GitHub CLI，改在 PowerShell 或 Git Bash 執行 git -C "$HOME/.engram/vault" fetch，依提示在瀏覽器登入。' },
-  error: { code: 'E_PUSH_PROTECTED', message: 'GitHub 拒絕推送：偵測到疑似金鑰', hint: '在收件匣的「疑似含有金鑰」卡片遮蔽後再同步。', ref: '' },
+  offline: { code: 'E_OFFLINE', message: '連不到 GitHub', hint: '記憶先存在這台；恢復連線後會自動補同步。', en: { message: 'Cannot reach GitHub', hint: 'Memories are kept on this computer and sync automatically once you are back online.' } },
+  auth: { code: 'E_AUTH', message: 'GitHub 登入已過期', hint: '執行 gh auth login 重新登入 GitHub；如果 git 的認證沒有交給 GitHub CLI，改在 PowerShell 或 Git Bash 執行 git -C "$HOME/.engram/vault" fetch，依提示在瀏覽器登入。', en: { message: 'Your GitHub sign-in has expired', hint: 'Run gh auth login to sign in to GitHub again. If git does not use GitHub CLI for credentials, run git -C "$HOME/.engram/vault" fetch in PowerShell or Git Bash instead and sign in through the browser when prompted.' } },
+  error: { code: 'E_PUSH_PROTECTED', message: 'GitHub 拒絕推送：偵測到疑似金鑰', hint: '在收件匣的「疑似含有金鑰」卡片遮蔽後再同步。', ref: '', en: { message: 'GitHub rejected the push: possible secret detected', hint: 'Redact it from the "possible secret" card in the inbox, then sync again.' } },
 };
 let sync = VARIANT.sync === 'never'
   ? { state: 'never', lastSuccessAt: null, lastAttemptAt: null, ahead: 12, behind: 0 }
   : SYNC_ERRORS[VARIANT.sync]
     ? { state: VARIANT.sync, lastSuccessAt: minutesAgo(60 * 3), lastAttemptAt: minutesAgo(2), ahead: 2, behind: 0, error: SYNC_ERRORS[VARIANT.sync] }
     : { state: 'ok', lastSuccessAt: minutesAgo(4), lastAttemptAt: minutesAgo(4), ahead: 0, behind: 0 };
-let coreText = CORE_TEXT();
+let coreText = EN_DATA ? CORE_TEXT_EN() : CORE_TEXT();
+const REDACTED = EN_DATA ? '[redacted: stored in Windows Credential Manager]' : '［已遮蔽：存放在 Windows 認證管理員］';
 let importState = { applied: false, tag: null };
 let guidelinesAdopted = false;
 let pendingList = projects.slice(0, 1).map((p) => ({ path: 'C:\\Users\\Demo\\Desktop\\' + (p.aliases?.[0] || p.name) + '-v2', pid: p.pid, encoded: 'C--Users-Demo-Desktop-example-v2', since: minutesAgo(35), reason: 'ask' }));
@@ -82,24 +89,25 @@ const findings = [];
   const used = new Set();
   const pick = (pred) => { const m = memories.find((x) => !used.has(x.ref) && pred(x)); if (m) used.add(m.ref); return m; };
   const big = [...memories].sort((a, b) => b.size - a.size)[0];
-  if (big && big.size > 8 * 1024) { used.add(big.ref); add({ code: 'H10', severity: 'medium', title: '單檔過大', detail: `${big.name}.md 有 ${Math.round(big.size / 1024)} KB。被讀取時會佔用大量上下文，建議請 Claude 拆成幾個主題檔。`, refs: [big.ref] }); }
+  if (big && big.size > 8 * 1024) { used.add(big.ref); add({ code: 'H10', severity: 'medium', title: '單檔過大', detail: `${big.name}.md 有 ${Math.round(big.size / 1024)} KB。被讀取時會佔用大量上下文，建議請 Claude 拆成幾個主題檔。`, refs: [big.ref], en: { title: 'File too large', detail: `${big.name}.md is ${Math.round(big.size / 1024)} KB. Reading it takes up a lot of context; ask Claude to split it into a few topic files.` } }); }
   const groups = new Map();
   for (const m of memories) { const k = m.name.split('-')[0]; if (k.length >= 4) groups.set(k, [...(groups.get(k) || []), m]); }
   const dup = [...groups.entries()].find(([, ms]) => ms.length >= 2 && ms.length <= 4 && ms.every((m) => m.scope.kind === ms[0].scope.kind));
-  if (dup) { const refs = dup[1].map((m) => m.ref); refs.forEach((r) => used.add(r)); add({ code: 'H07', severity: 'medium', title: `可能重複：${dup[0]} 主題有 ${refs.length} 筆`, detail: '這幾筆記憶的主題重疊。合併成一筆，Claude 讀取時比較不會混淆。', refs, fix: { action: 'merge', args: { refs }, label: '並排比對並合併' } }); }
+  if (dup) { const refs = dup[1].map((m) => m.ref); refs.forEach((r) => used.add(r)); add({ code: 'H07', severity: 'medium', title: `可能重複：${dup[0]} 主題有 ${refs.length} 筆`, detail: '這幾筆記憶的主題重疊。合併成一筆，Claude 讀取時比較不會混淆。', refs, fix: { action: 'merge', args: { refs }, label: '並排比對並合併', en: { label: 'Compare and merge' } }, en: { title: `Possible duplicates: ${refs.length} memories about ${dup[0]}`, detail: 'These memories overlap. Merging them into one keeps Claude from getting confused when it reads them.' } }); }
   const secret = pick((m) => m.scope.kind === 'project' && /(PAT|token|金鑰|密碼|DB|資料庫)/i.test(m.description));
-  if (secret) secret.body += '\n\n查詢用的權杖：`' + 'gh' + 'p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' + '`（範例，非真實金鑰）';
-  if (secret) add({ code: 'H13', severity: 'high', title: '疑似含有金鑰，已暫停同步這個檔案', detail: '內文出現類似個人存取權杖（ghp_…）的字串。這個檔案只留在本機，不會推送到 GitHub。建議改成只記「金鑰存放在哪裡」。', refs: [secret.ref], pid: secret.scope.pid, fix: { action: 'edit', args: { ref: secret.ref, lines: [7] }, label: '移除金鑰' } });
-  add({ code: 'H06', severity: 'high', title: '資料夾名稱碰撞：多個資料夾共用同一份 Claude Code 紀錄', detail: 'C:\\Users\\Demo\\Desktop\\甲方專案 → 甲方專案-k3fz；C:\\Users\\Demo\\Desktop\\乙方專案 → 乙方專案-7qma。Claude Code 把中文與符號都換成「-」，這些資料夾與 丙方設計 編碼相同（C--Users-Demo-Desktop-----）。依命名規則在原名後加 4 碼代號即可分開；改名後重新綁定、記憶裡的舊路徑一併更新，可以整批還原。改名前的對話不會出現在 /resume 清單。', refs: ['C--Users-Demo-Desktop-----'], fix: { action: 'rename-collisions', args: { paths: ['C:\\Users\\Demo\\Desktop\\甲方專案', 'C:\\Users\\Demo\\Desktop\\乙方專案'] }, label: '依命名規則改名' } });
+  if (secret) secret.body += EN_DATA ? '\n\nRead-only token: `' + 'gh' + 'p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' + '` (sample, not a real secret)' : '\n\n查詢用的權杖：`' + 'gh' + 'p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' + '`（範例，非真實金鑰）';
+  if (secret) add({ code: 'H13', severity: 'high', title: '疑似含有金鑰，已暫停同步這個檔案', detail: '內文出現類似個人存取權杖（ghp_…）的字串。這個檔案只留在本機，不會推送到 GitHub。建議改成只記「金鑰存放在哪裡」。', refs: [secret.ref], pid: secret.scope.pid, fix: { action: 'edit', args: { ref: secret.ref, lines: [7] }, label: '移除金鑰', en: { label: 'Remove secret' } }, en: { title: 'Possible secret: syncing of this file is paused', detail: 'The text contains something that looks like a personal access token (ghp_…). This file stays on this computer and is not pushed to GitHub. Record only where the secret is stored instead.' } });
+  if (EN_DATA) add({ code: 'H06', severity: 'high', title: '資料夾名稱碰撞：多個資料夾共用同一份 Claude Code 紀錄', detail: 'C:\\Users\\Demo\\Desktop\\Client A → Client A-k3fz；C:\\Users\\Demo\\Desktop\\Client.A → Client.A-7qma。', refs: ['C--Users-Demo-Desktop-Client-A'], fix: { action: 'rename-collisions', args: { paths: ['C:\\Users\\Demo\\Desktop\\Client A', 'C:\\Users\\Demo\\Desktop\\Client.A'] }, label: '依命名規則改名', en: { label: 'Rename by naming rule' } }, en: { title: 'Folder name collision: several folders share one Claude Code history', detail: 'C:\\Users\\Demo\\Desktop\\Client A → Client A-k3fz; C:\\Users\\Demo\\Desktop\\Client.A → Client.A-7qma. Claude Code replaces spaces and symbols with "-", so these folders encode the same as Client-A (C--Users-Demo-Desktop-Client-A). Adding a 4-character code to the original name keeps them apart; the folders are rebound, old paths in your memories are updated, and the whole batch can be undone. Conversations from before the rename will not appear in the /resume list.' } });
+  else add({ code: 'H06', severity: 'high', title: '資料夾名稱碰撞：多個資料夾共用同一份 Claude Code 紀錄', detail: 'C:\\Users\\Demo\\Desktop\\甲方專案 → 甲方專案-k3fz；C:\\Users\\Demo\\Desktop\\乙方專案 → 乙方專案-7qma。Claude Code 把中文與符號都換成「-」，這些資料夾與 丙方設計 編碼相同（C--Users-Demo-Desktop-----）。依命名規則在原名後加 4 碼代號即可分開；改名後重新綁定、記憶裡的舊路徑一併更新，可以整批還原。改名前的對話不會出現在 /resume 清單。', refs: ['C--Users-Demo-Desktop-----'], fix: { action: 'rename-collisions', args: { paths: ['C:\\Users\\Demo\\Desktop\\甲方專案', 'C:\\Users\\Demo\\Desktop\\乙方專案'] }, label: '依命名規則改名', en: { label: 'Rename by naming rule' } }, en: { title: 'Folder name collision: several folders share one Claude Code history', detail: 'C:\\Users\\Demo\\Desktop\\甲方專案 → 甲方專案-k3fz; C:\\Users\\Demo\\Desktop\\乙方專案 → 乙方專案-7qma. Claude Code replaces Chinese characters and symbols with "-", so these folders encode the same as 丙方設計 (C--Users-Demo-Desktop-----). Adding a 4-character code to the original name keeps them apart; the folders are rebound, old paths in your memories are updated, and the whole batch can be undone. Conversations from before the rename will not appear in the /resume list.' } });
   const pathy = pick((m) => m.scope.kind === 'project' && /[A-Z]:\\/.test(m.description));
-  if (pathy) add({ code: 'H08', severity: 'medium', title: '專案記憶裡有本機路徑', detail: '說明中出現這台電腦的磁碟路徑，另一台電腦的路徑可能不同。路徑部分適合改成單機記憶。', refs: [pathy.ref], pid: pathy.scope.pid, fix: { action: 'move', args: { ref: pathy.ref, scope: { kind: 'machine', mid: self.id } }, label: '改為單機記憶' } });
+  if (pathy) add({ code: 'H08', severity: 'medium', title: '專案記憶裡有本機路徑', detail: '說明中出現這台電腦的磁碟路徑，另一台電腦的路徑可能不同。路徑部分適合改成單機記憶。', refs: [pathy.ref], pid: pathy.scope.pid, fix: { action: 'move', args: { ref: pathy.ref, scope: { kind: 'machine', mid: self.id } }, label: '改為單機記憶', en: { label: 'Make it a machine memory' } }, en: { title: 'Local path in a project memory', detail: 'The description contains a disk path on this computer; the path may differ on your other computers. The path part fits better in a machine memory.' } });
   for (let i = 0; i < 2; i++) {
     const m = pick((x) => x.scope.kind === 'project' && x.type === 'feedback');
-    if (m) add({ code: 'H09', severity: 'low', title: '這筆回饋可能適用所有專案', detail: `「${m.description.slice(0, 48)}…」看起來是你的工作習慣，不只屬於「${projectName(m.scope.pid)}」。升級為全域後，每個專案都看得到。`, refs: [m.ref], pid: m.scope.pid, fix: { action: 'move', args: { ref: m.ref, scope: { kind: 'global' } }, label: '升級為全域' } });
+    if (m) add({ code: 'H09', severity: 'low', title: '這筆回饋可能適用所有專案', detail: `「${m.description.slice(0, 48)}…」看起來是你的工作習慣，不只屬於「${projectName(m.scope.pid)}」。升級為全域後，每個專案都看得到。`, refs: [m.ref], pid: m.scope.pid, fix: { action: 'move', args: { ref: m.ref, scope: { kind: 'global' } }, label: '升級為全域', en: { label: 'Make it global' } }, en: { title: 'This feedback may apply to every project', detail: `"${m.description.slice(0, 48)}…" looks like one of your working habits, not something specific to "${projectName(m.scope.pid)}". Make it global so every project sees it.` } });
   }
   const stale = [...memories].filter((m) => !used.has(m.ref)).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))[0];
-  if (stale) { used.add(stale.ref); add({ code: 'H11', severity: 'low', title: '可能過時', detail: '超過 90 天沒有更新，所屬專案也很久沒開過。封存後不再出現在索引裡，需要時可以還原。', refs: [stale.ref], fix: { action: 'remove', args: { ref: stale.ref }, label: '封存（可從歷史還原）' } }); }
-  add({ code: 'H05', severity: 'medium', title: '有 1 筆記憶還沒收編', detail: '這個資料夾在綁定生效前的那次對話裡寫了新記憶，還留在 Claude Code 的預設位置。收編後會複製進 vault，原檔保留到確認為止。', refs: ['~/.claude/projects/C--Users-Demo-Desktop-example/memory/new-note.md'], fix: { action: 'sweep', args: { encoded: 'C--Users-Demo-Desktop-example' }, label: '收編到 Engram' } });
+  if (stale) { used.add(stale.ref); add({ code: 'H11', severity: 'low', title: '可能過時', detail: '超過 90 天沒有更新，所屬專案也很久沒開過。封存後不再出現在索引裡，需要時可以還原。', refs: [stale.ref], fix: { action: 'remove', args: { ref: stale.ref }, label: '封存（可從歷史還原）', en: { label: 'Archive (restorable from history)' } }, en: { title: 'Possibly outdated', detail: 'Not updated for more than 90 days, and its project has not been opened for a long time. Once archived it no longer appears in the index; you can restore it when needed.' } }); }
+  add({ code: 'H05', severity: 'medium', title: '有 1 筆記憶還沒收編', detail: '這個資料夾在綁定生效前的那次對話裡寫了新記憶，還留在 Claude Code 的預設位置。收編後會複製進 vault，原檔保留到確認為止。', refs: ['~/.claude/projects/C--Users-Demo-Desktop-example/memory/new-note.md'], fix: { action: 'sweep', args: { encoded: 'C--Users-Demo-Desktop-example' }, label: '收編到 Engram', en: { label: 'Adopt into Engram' } }, en: { title: '1 memory has not been adopted yet', detail: 'This folder wrote a new memory in a conversation before its binding took effect, so it is still in the Claude Code default location. Adopting copies it into the vault; the original stays until you confirm.' } });
   for (const f of findings) {
     for (const r of f.refs) { const m = byRef(r); if (m) m.findings.push(f.code); }
     if (f.pid) { const p = projects.find((x) => x.pid === f.pid); if (p) p.counts.findings++; }
@@ -108,13 +116,17 @@ const findings = [];
 
 // ── 衝突（合成內容） ─────────────────────────────────
 const conflictTarget = memories.find((m) => m.scope.kind === 'project' && !m.findings.length) || memories[0];
-const BASE_TEXT = '測試環境的資料庫連線設定：\n\n- 主機：`db-test.internal`，連接埠 5432\n- 連線逾時 10 秒\n\n**How to apply:** 跑整合測試前先確認 VPN 已連線。';
+const BASE_TEXT = EN_DATA
+  ? 'Database connection settings for the test environment:\n\n- Host: `db-test.internal`, port 5432\n- Connection timeout 10 seconds\n\n**How to apply:** Make sure the VPN is connected before running integration tests.'
+  : '測試環境的資料庫連線設定：\n\n- 主機：`db-test.internal`，連接埠 5432\n- 連線逾時 10 秒\n\n**How to apply:** 跑整合測試前先確認 VPN 已連線。';
+const TIMEOUT = EN_DATA ? ['Connection timeout 10 seconds', 'Connection timeout 30 seconds (the office network is slow)', 'Connection timeout 20 seconds, retry 3 times on failure'] : ['連線逾時 10 秒', '連線逾時 30 秒（公司網路較慢）', '連線逾時 20 秒，失敗時重試 3 次'];
 const conflicts = conflictTarget ? [{
   id: 'cf_20261022T0912_k3m1', ref: conflictTarget.ref, kind: 'content', createdAt: minutesAgo(29),
   summary: '兩台電腦都改了「連線逾時」這一行。這台改成 30 秒，第二台改成 20 秒並補了重試次數。',
+  en: { summary: 'Both computers changed the "connection timeout" line. This one changed it to 30 seconds; the other changed it to 20 seconds and added a retry count.' },
   base: BASE_TEXT,
-  ours: BASE_TEXT.replace('連線逾時 10 秒', '連線逾時 30 秒（公司網路較慢）'),
-  theirs: BASE_TEXT.replace('連線逾時 10 秒', '連線逾時 20 秒，失敗時重試 3 次'),
+  ours: BASE_TEXT.replace(TIMEOUT[0], TIMEOUT[1]),
+  theirs: BASE_TEXT.replace(TIMEOUT[0], TIMEOUT[2]),
   otherMachine: other.label,
 }] : [];
 
@@ -151,28 +163,31 @@ const at0930 = (() => { const d = new Date(NOW); d.setHours(9, 30, 0, 0); if (d.
 const lastHealth = at0930.toISOString();
 const nextHealth = new Date(at0930.getTime() + 864e5).toISOString();
 const jobs = [
-  { id: 'sync', label: '背景同步', schedule: '每 10 分鐘，睡眠恢復後立即補跑', enabled: true, nextRunAt: minutesLater(6), lastRunAt: minutesAgo(4), lastResult: { ok: true, ms: 1840, note: '拉取 3 個變更，推送 1 個' } },
-  { id: 'watch', label: '檔案監看', schedule: 'vault 有變更且安靜 30 秒後做本機 commit', enabled: true, nextRunAt: null, lastRunAt: minutesAgo(52), lastResult: { ok: true, ms: 120, note: 'autosave +1 ~1' } },
-  { id: 'health', label: '健康檢查', schedule: '每天 09:30；錯過時在啟動後補跑', enabled: true, nextRunAt: nextHealth, lastRunAt: lastHealth, lastResult: { ok: true, ms: 412, note: '發現 2 項高、4 項中、3 項低' } },
-  { id: 'probe', label: '相容性探測', schedule: 'Claude Code 改版時；會用你的 Claude 額度跑 6 次 Haiku 小測試（約 3 萬 token／次）', enabled: true, nextRunAt: null, lastRunAt: minutesAgo(60 * 4), lastResult: VARIANT.probe === 'fail' ? { ok: false, ms: 7410, note: 'C3 未通過（Claude Code 2.1.307）；已暫停 junction 綁定' } : { ok: true, ms: 6230, note: '7 項全部通過（Claude Code 2.1.306）' } },
-  { id: 'curate', label: '每週整理建議', schedule: '每週一 10:00，以 claude -p 產生建議（只寫入收件匣）', enabled: false, nextRunAt: null, lastRunAt: null, lastResult: null },
+  { id: 'sync', label: '背景同步', schedule: '每 10 分鐘，睡眠恢復後立即補跑', en: { label: 'Background sync', schedule: 'Every 10 minutes; runs right away after the computer wakes up' }, enabled: true, nextRunAt: minutesLater(6), lastRunAt: minutesAgo(4), lastResult: { ok: true, ms: 1840, note: '拉取 3 個變更，推送 1 個', en: { note: 'Pulled 3 changes, pushed 1' } } },
+  { id: 'watch', label: '檔案監看', schedule: 'vault 有變更且安靜 30 秒後做本機 commit', en: { label: 'File watcher', schedule: 'Commits locally after the vault changes and stays quiet for 30 seconds' }, enabled: true, nextRunAt: null, lastRunAt: minutesAgo(52), lastResult: { ok: true, ms: 120, note: 'autosave +1 ~1' } },
+  { id: 'health', label: '健康檢查', schedule: '每天 09:30；錯過時在啟動後補跑', en: { label: 'Health check', schedule: 'Daily at 09:30; runs after startup if missed' }, enabled: true, nextRunAt: nextHealth, lastRunAt: lastHealth, lastResult: { ok: true, ms: 412, note: '發現 2 項高、4 項中、3 項低', en: { note: 'Found 2 high, 4 medium, 3 low' } } },
+  { id: 'probe', label: '相容性探測', schedule: 'Claude Code 改版時；會用你的 Claude 額度跑 6 次 Haiku 小測試（約 3 萬 token／次）', en: { label: 'Compatibility probe', schedule: 'When Claude Code is updated; runs 6 small Haiku tests on your Claude usage (about 30k tokens each)' }, enabled: true, nextRunAt: null, lastRunAt: minutesAgo(60 * 4), lastResult: VARIANT.probe === 'fail' ? { ok: false, ms: 7410, note: 'C3 未通過（Claude Code 2.1.307）；已暫停 junction 綁定', en: { note: 'C3 failed (Claude Code 2.1.307); junction binding paused' } } : { ok: true, ms: 6230, note: '7 項全部通過（Claude Code 2.1.306）', en: { note: 'All 7 passed (Claude Code 2.1.306)' } } },
+  { id: 'curate', label: '每週整理建議', schedule: '每週一 10:00，以 claude -p 產生建議（只寫入收件匣）', en: { label: 'Weekly tidy suggestions', schedule: 'Mondays at 10:00; suggestions from claude -p (written to the inbox only)' }, enabled: false, nextRunAt: null, lastRunAt: null, lastResult: null },
 ];
 const probe = {
   at: minutesAgo(60 * 4), claudeVersion: VARIANT.probe === 'fail' ? '2.1.307' : '2.1.306', ok: VARIANT.probe !== 'fail',
   // 與 app/src/cli/probe/contracts.mjs 相同的契約；?probe=fail 模擬 C3（junction 寫入被詢問權限）失敗
   checks: [
-    ['C1', '從資料夾根目錄啟動時，settings.local.json 的 autoMemoryDirectory 會生效（撞名資料夾的備援）'],
-    ['C2', '從 git 子資料夾啟動時，記憶目錄仍是 repo 根目錄的編碼資料夾（junction 綁定的前提）'],
-    ['C3', '透過 junction 寫入記憶：檔案落在 junction 目標，MEMORY.md 照常更新，沒有權限提示'],
-    ['C4', 'MEMORY.md 在 SessionStart hook 之前讀入（因此正規化不能放在 SessionStart）'],
-    ['C5', '寫入時 frontmatter 的頂層自訂欄位會被搬到 metadata 底下（解析器必須兩處都讀）'],
-    ['C6', 'SessionStart 的 additionalContext 會出現在模型上下文（動態內容的前提）'],
-    ['C7', '執行環境把 junction 判定為 symlink（Claude Code 的清理流程因此會略過它）'],
-  ].map(([id, label]) => ({ id, label, ok: !(VARIANT.probe === 'fail' && id === 'C3'), detail: VARIANT.probe === 'fail' && id === 'C3' ? '透過 junction 寫入記憶時被要求權限（Claude Code 2.1.307，權限模式 auto）' : '' })),
+    ['C1', '從資料夾根目錄啟動時，settings.local.json 的 autoMemoryDirectory 會生效（撞名資料夾的備援）', 'Started from the folder root, autoMemoryDirectory in settings.local.json takes effect (fallback for colliding folders)'],
+    ['C2', '從 git 子資料夾啟動時，記憶目錄仍是 repo 根目錄的編碼資料夾（junction 綁定的前提）', 'Started from a git subfolder, the memory folder is still the encoded folder of the repo root (required for junction binding)'],
+    ['C3', '透過 junction 寫入記憶：檔案落在 junction 目標，MEMORY.md 照常更新，沒有權限提示', 'Writing memories through a junction: files land in the junction target, MEMORY.md updates as usual, no permission prompt'],
+    ['C4', 'MEMORY.md 在 SessionStart hook 之前讀入（因此正規化不能放在 SessionStart）', 'MEMORY.md is read before the SessionStart hook (so normalization cannot run in SessionStart)'],
+    ['C5', '寫入時 frontmatter 的頂層自訂欄位會被搬到 metadata 底下（解析器必須兩處都讀）', 'On write, custom top-level frontmatter fields are moved under metadata (the parser must read both)'],
+    ['C6', 'SessionStart 的 additionalContext 會出現在模型上下文（動態內容的前提）', 'SessionStart additionalContext appears in the model context (required for dynamic content)'],
+    ['C7', '執行環境把 junction 判定為 symlink（Claude Code 的清理流程因此會略過它）', 'The runtime treats junctions as symlinks (so Claude Code cleanup skips them)'],
+  ].map(([id, label, labelEn]) => {
+    const failed = VARIANT.probe === 'fail' && id === 'C3';
+    return { id, label, ok: !failed, detail: failed ? '透過 junction 寫入記憶時被要求權限（Claude Code 2.1.307，權限模式 auto）' : '', en: { label: labelEn, detail: failed ? 'Writing a memory through a junction asked for permission (Claude Code 2.1.307, permission mode auto)' : '' } };
+  }),
 };
 const agentInfo = () => ({
-  pid: 18244, version: '1.0.0', startedAt: minutesAgo(60 * 9 + 12), port: 4777, claudeVersion: VARIANT.probe === 'fail' ? '2.1.307' : '2.1.306', paused: VARIANT.probe === 'fail',
-  logonTask: { installed: true, state: '執行中', launcher: 'wscript', lastRunAt: minutesAgo(60 * 9 + 12) },
+  pid: 18244, version: '1.1.0', startedAt: minutesAgo(60 * 9 + 12), port: 4777, claudeVersion: VARIANT.probe === 'fail' ? '2.1.307' : '2.1.306', paused: VARIANT.probe === 'fail',
+  logonTask: { installed: true, state: 'running', launcher: 'wscript', lastRunAt: minutesAgo(60 * 9 + 12) },
   jobs: clone(jobs), probe: clone(probe),
 });
 const logs = [
@@ -219,10 +234,10 @@ function statusReport() {
     counts,
     inbox: { conflicts: conflicts.length, findings: f },
     devices: [
-      { id: self.id, label: self.label, lastSeenAt: new Date().toISOString(), lastSyncAt: sync.lastSuccessAt, engramVersion: '1.0.0', isSelf: true },
+      { id: self.id, label: self.label, lastSeenAt: new Date().toISOString(), lastSyncAt: sync.lastSuccessAt, engramVersion: '1.1.0', isSelf: true },
       VARIANT.stale
-        ? { id: other.id, label: other.label, lastSeenAt: minutesAgo(60 * 24 * 9), lastSyncAt: minutesAgo(60 * 24 * 9), engramVersion: '1.0.0', isSelf: false }
-        : { id: other.id, label: other.label, lastSeenAt: minutesAgo(52), lastSyncAt: minutesAgo(52), engramVersion: '1.0.0', isSelf: false },
+        ? { id: other.id, label: other.label, lastSeenAt: minutesAgo(60 * 24 * 9), lastSyncAt: minutesAgo(60 * 24 * 9), engramVersion: '1.1.0', isSelf: false }
+        : { id: other.id, label: other.label, lastSeenAt: minutesAgo(52), lastSyncAt: minutesAgo(52), engramVersion: '1.1.0', isSelf: false },
     ],
     agent: { paused: VARIANT.probe === 'fail', probe: { ok: probe.ok, failed: probe.checks.filter((c) => !c.ok).map((c) => c.id) } },
   };
@@ -271,7 +286,7 @@ export const demoApi = {
   isDemo: true,
   async status() {
     await wait(80);
-    if (VARIANT.agentdown) throw Object.assign(new Error('連不到 Engram 常駐程式'), { code: 'E_AGENT_DOWN', hint: '' });
+    if (VARIANT.agentdown) throw Object.assign(new Error('連不到 Engram 常駐程式'), { code: 'E_AGENT_DOWN', hint: '', en: { message: 'Cannot reach the Engram agent' } });
     return statusReport();
   },
   async activity(days = 30) { await wait(60); return activity(days); },
@@ -279,7 +294,7 @@ export const demoApi = {
   async memory(ref) {
     await wait(60);
     const m = byRef(ref);
-    if (!m) throw Object.assign(new Error('找不到這筆記憶'), { code: 'E_NOT_FOUND' });
+    if (!m) throw Object.assign(new Error('找不到這筆記憶'), { code: 'E_NOT_FOUND', en: { message: 'Memory not found' } });
     return { ...summary(m), frontmatter: frontmatterOf(m), body: m.body, raw: rawOf(m), path: `C:\\Users\\Demo\\.engram\\vault\\${m.ref.replace(/\//g, '\\')}`, history: commits.filter((c) => c.refs.includes(ref)).slice(0, 5) };
   },
   async writeMemoryRaw(ref, raw) {
@@ -358,14 +373,14 @@ export const demoApi = {
     const m = byRef(ref);
     const re = /ghp_[A-Za-z0-9]{20,}/g;
     const lines = m.body.split('\n');
-    const matches = lines.flatMap((l, i) => (re.test(l) ? [{ line: i + 1, kind: 'GitHub 個人存取權杖' }] : []));
-    return { before: m.body, after: m.body.replace(re, '［已遮蔽：存放在 Windows 認證管理員］'), matches };
+    const matches = lines.flatMap((l, i) => (re.test(l) ? [{ line: i + 1, kind: EN_DATA ? 'GitHub personal access token' : 'GitHub 個人存取權杖' }] : []));
+    return { before: m.body, after: m.body.replace(re, REDACTED), matches };
   },
   async secretRedact(ref) {
     await wait(150);
     const m = byRef(ref);
     const prev = m.body;
-    m.body = m.body.replace(/ghp_[A-Za-z0-9]{20,}/g, '［已遮蔽：存放在 Windows 認證管理員］');
+    m.body = m.body.replace(/ghp_[A-Za-z0-9]{20,}/g, REDACTED);
     const f = findings.find((x) => x.code === 'H13' && x.refs.includes(ref));
     if (f) dropFinding(f.id);
     return action(`遮蔽金鑰 ${ref}`, [ref], () => { m.body = prev; if (f) findings.push(f); });
@@ -402,7 +417,7 @@ export const demoApi = {
   async undo(s) {
     await wait(150);
     const fn = undoers.get(s);
-    if (!fn) throw Object.assign(new Error('這個動作無法復原'), { code: 'E_INVALID' });
+    if (!fn) throw Object.assign(new Error('這個動作無法復原'), { code: 'E_INVALID', en: { message: 'This action cannot be undone' } });
     fn(); undoers.delete(s);
     const c = commits.find((x) => x.sha === s); if (c) c.undoable = false;
     return action(`復原 ${s}`, c?.refs || []);
@@ -416,7 +431,7 @@ export const demoApi = {
     return {
       text: coreText, lines, bytes,
       chain: [
-        { path: '~/.claude/CLAUDE.md', kind: 'user', lines: 58, bytes: 2412, depth: 0, note: '你的手寫準則＋Engram 管理區塊' },
+        { path: '~/.claude/CLAUDE.md', kind: 'user', lines: 58, bytes: 2412, depth: 0, note: '你的手寫準則＋Engram 管理區塊', en: { note: 'Your own guidelines + the Engram block' } },
         { path: '~/.engram/vault/core/CORE.md', kind: 'import', lines, bytes, depth: 1 },
         { path: '~/.engram/vault/global/INDEX.md', kind: 'import', lines: 12, bytes: 1630, depth: 2 },
         { path: `~/.engram/vault/machines/${self.id}/INDEX.md`, kind: 'import', lines: 13, bytes: 1290, depth: 1, isSelf: true },
@@ -469,7 +484,7 @@ export const demoApi = {
     const sources = RAW.plan.sources.map((src) => {
       if (src.exists) return src;
       const twin = RAW.plan.sources.find((o) => o.exists && o !== src && loose(o.target.name) === loose(src.target.name));
-      return twin ? { ...src, suggestions: [{ kind: 'source', sameAs: `${twin.encoded}|${twin.resolvedPath}`, name: twin.target.name, path: twin.resolvedPath, reason: `名稱與這次匯入的 ${twin.resolvedPath} 相同` }] } : src;
+      return twin ? { ...src, suggestions: [{ kind: 'source', sameAs: `${twin.encoded}|${twin.resolvedPath}`, name: twin.target.name, path: twin.resolvedPath, reason: `名稱與這次匯入的 ${twin.resolvedPath} 相同`, en: { reason: `Same name as ${twin.resolvedPath} in this import` } }] } : src;
     });
     return clone({ ...RAW.plan, sources, budget: { core: 71, rules: 0, available: 129, global: 60, machine: 30, fits: true }, applied: importState.applied, tag: importState.tag });
   },
@@ -482,7 +497,7 @@ export const demoApi = {
       ok: true, ms: 15580, at: new Date().toISOString(), totals: t,
       accounting: { ok: true, planned: t.memories, copyPlanned: copy, skipPlanned: t.memories - copy, vaultMemoryFiles: copy, byScope: { global: t.global, machine: t.machine, project: copy - t.global - t.machine } },
       restore: { ok: true, via: 'rollbackImport', reverted: t.sources, remainingDiff: '', legacyChanged: [] },
-      selfTest: { ok: true, ms: 5900, checks: ['甲方設定檔綁定', '乙方設定檔綁定', '共用資料夾不換成 junction', 'git 專案 junction', '一鍵還原完成', '換回實體資料夾', '匯入後的修改保留', '新記憶放回', 'settings.json 一致', '甲方資料夾一致', '乙方資料夾一致', 'git 專案資料夾一致'].map((name) => ({ name, ok: true, detail: '' })) },
+      selfTest: { ok: true, ms: 5900, checks: [['甲方設定檔綁定', 'Settings-file binding (client A)'], ['乙方設定檔綁定', 'Settings-file binding (client B)'], ['共用資料夾不換成 junction', 'Shared folder is not turned into a junction'], ['git 專案 junction', 'Junction for the git project'], ['一鍵還原完成', 'One-click restore completed'], ['換回實體資料夾', 'Turned back into a real folder'], ['匯入後的修改保留', 'Changes made after import are kept'], ['新記憶放回', 'New memories are put back'], ['settings.json 一致', 'settings.json matches'], ['甲方資料夾一致', 'Client A folder matches'], ['乙方資料夾一致', 'Client B folder matches'], ['git 專案資料夾一致', 'Git project folder matches']].map(([name, nameEn]) => ({ name, ok: true, detail: '', en: { name: nameEn } })) },
       realUntouched: { ok: true, changed: 0 },
       health: [{ code: 'H07', severity: 'medium', title: '可能重複：同主題 3 筆', refs: 3 }, { code: 'H10', severity: 'medium', title: '單檔過大', refs: 1 }],
       steps: [],
@@ -502,7 +517,7 @@ export const demoApi = {
     return {
       adopted: guidelinesAdopted,
       current: '# CLAUDE.md\n\n## 1. Think Before Coding\n- State your assumptions explicitly.\n\n## 2. Simplicity First\n- Minimum code that solves the problem.\n',
-      proposed: '# 工作準則（由 ~/.claude/CLAUDE.md 搬入，兩台電腦共用）\n\n## 1. Think Before Coding\n- State your assumptions explicitly.\n\n## 2. Simplicity First\n- Minimum code that solves the problem.\n',
+      proposed: EN_DATA ? '# Working guidelines (moved from ~/.claude/CLAUDE.md, shared by both computers)\n\n## 1. Think Before Coding\n- State your assumptions explicitly.\n\n## 2. Simplicity First\n- Minimum code that solves the problem.\n' : '# 工作準則（由 ~/.claude/CLAUDE.md 搬入，兩台電腦共用）\n\n## 1. Think Before Coding\n- State your assumptions explicitly.\n\n## 2. Simplicity First\n- Minimum code that solves the problem.\n',
       coreLine: '@rules/user-guidelines.md', lines: 63,
     };
   },
@@ -539,6 +554,35 @@ function CORE_TEXT() {
 - 不記錄金鑰或密碼的值，只記「存放在哪裡」。
 
 ## 記憶索引
+@../global/INDEX.md
+`;
+}
+
+function CORE_TEXT_EN() {
+  return `# Core rules
+
+> Managed by Engram and shared by both computers. Edit it in the Engram dashboard.
+
+## Communication
+- Lead with the answer; keep replies short.
+- Main environment: Windows 11, Git Bash.
+
+## How to work
+1. **Think before coding**: state assumptions; when there are several readings, list them instead of picking one silently.
+2. **Simplicity first**: write the minimum code that solves the problem; no features nobody asked for.
+3. **Surgical changes**: touch only what you must and keep the existing style.
+4. **Goal-driven**: turn tasks into verifiable success criteria; done means verified.
+
+## Memory protocol
+- One topic per file; run \`engram search\` first to avoid duplicates.
+- Always write absolute dates (2026-10-22), never "yesterday" or "last week".
+- Scope:
+  - Only about this project → write it as a regular auto memory (project scope)
+  - Preferences and lessons for every project → \`engram remember --scope global\`
+  - Only about this computer (paths, installs, network, disks) → \`engram remember --scope machine\`
+- Never record secret values; record where they are stored.
+
+## Memory index
 @../global/INDEX.md
 `;
 }

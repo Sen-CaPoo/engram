@@ -18,7 +18,7 @@ export const E = Object.freeze({
 export class EngramError extends Error {
   /**
    * @param {string} code  E 裡的其中一個值
-   * @param {string} message  給人看的說明（正體中文）
+   * @param {string} message  給人看的說明（正體中文；英文版用 withEn 附上）
    * @param {string} [hint]  建議的下一步
    * @param {object} [details]
    */
@@ -30,12 +30,28 @@ export class EngramError extends Error {
     if (details !== undefined) this.details = details;
   }
 
+  /**
+   * 附上英文版（管理介面切到英文時顯示）；回傳自己，可以直接 throw。命令列一律顯示中文。
+   * @param {string} message
+   * @param {string} [hint]
+   */
+  withEn(message, hint = '') {
+    this.en = { message, ...(hint ? { hint } : {}) };
+    return this;
+  }
+
   toJSON() {
-    return { code: this.code, message: this.message, hint: this.hint, ...(this.details ? { details: this.details } : {}) };
+    return { code: this.code, message: this.message, hint: this.hint, ...(this.details ? { details: this.details } : {}), ...(this.en ? { en: this.en } : {}) };
   }
 }
 
-/** 斷言；失敗時丟 E_INVALID。 */
-export function invariant(cond, message, hint) {
-  if (!cond) throw new EngramError(E.INVALID, message, hint);
+/**
+ * 斷言；失敗時丟 E_INVALID。
+ * @param {{ message: string, hint?: string }} [en]  英文版（同 EngramError#withEn）
+ */
+export function invariant(cond, message, hint, en) {
+  if (!cond) {
+    const err = new EngramError(E.INVALID, message, hint);
+    throw en ? err.withEn(en.message, en.hint) : err;
+  }
 }

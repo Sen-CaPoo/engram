@@ -5,6 +5,7 @@ import path from 'node:path';
 import { after, afterEach, before, beforeEach, describe, mock, test } from 'node:test';
 import { createJobs, detectClockJump, lastDailySlot, nextDailySlot, TICK_MS } from '../../src/agent/jobs.mjs';
 import { createPendingBinder, pendingBindings } from '../../src/agent/pending.mjs';
+import { CliError } from '../../src/cli/errors.mjs';
 import { createLogger } from '../../src/cli/log.mjs';
 import { PAUSE_ON_FAIL, claudeArgs, pausedFrom } from '../../src/cli/probe/index.mjs';
 import { createFakeEngine } from './fake-engine.mjs';
@@ -124,7 +125,51 @@ describe('執行結果與通知', () => {
     assert.match(r.note, /同步完成/);
     const sync = jobs.list().find((j) => j.id === 'sync');
     assert.equal(sync.lastRunAt, new Date(T0).toISOString());
-    assert.deepEqual(Object.keys(sync.lastResult), ['ok', 'ms', 'note']);
+    assert.deepEqual(Object.keys(sync.lastResult), ['ok', 'ms', 'note', 'en']);
+    // 管理介面切到英文時顯示 en
+    assert.match(sync.lastResult.en.note, /Sync complete/);
+    assert.deepEqual(Object.keys(sync.en), ['label', 'schedule']);
+    assert.equal(sync.en.label, 'Network sync');
+  });
+
+  test('每個工作都有英文名稱與排程說明；結果備註附英文（失敗時依錯誤的英文訊息）', async () => {
+    const { jobs, eg } = setup();
+    for (const j of jobs.list()) {
+      assert.ok(j.en.label && !/[一-鿿]/.test(j.en.label), j.id);
+      assert.ok(j.en.schedule && !/[一-鿿]/.test(j.en.schedule), j.id);
+    }
+    // 引擎的失敗訊息有英文版時，備註也附英文；沒有時只有中文（介面退回中文）
+    eg.sync = async () => ({ ok: false, state: 'offline', error: { code: 'E_OFFLINE', message: '連不到 GitHub', en: { message: 'Cannot reach GitHub' } } });
+    const failed = await jobs.run('sync', 'manual');
+    assert.equal(failed.ok, false);
+    assert.equal(failed.note, 'E_OFFLINE：連不到 GitHub');
+    assert.equal(failed.en.note, 'E_OFFLINE: Cannot reach GitHub');
+    eg.sync = async () => ({ ok: false, state: 'offline', error: { code: 'E_OFFLINE', message: '連不到 GitHub' } });
+    const noEn = await jobs.run('sync', 'manual');
+    assert.equal(noEn.note, 'E_OFFLINE：連不到 GitHub');
+    assert.equal(noEn.en, undefined);
+    // 丟出的 CliError 也一樣
+    eg.health = async () => { throw new CliError('E_INVALID', '參數錯誤').withEn('Invalid argument'); };
+    const thrown = await jobs.run('health', 'manual');
+    assert.equal(thrown.en.note, 'E_INVALID: Invalid argument');
+  });
+
+  test('舊版存檔的 lastResult 沒有 en 也能載入與顯示', () => {
+    fs.mkdirSync(paths.local, { recursive: true });
+    fs.writeFileSync(paths.jobsFile, JSON.stringify({ jobs: { sync: { lastRunAt: new Date(T0).toISOString(), lastResult: { ok: true, ms: 5, note: '同步完成：舊紀錄' } } } }));
+    const { jobs } = setup({ fresh: false });
+    const sync = jobs.list().find((j) => j.id === 'sync');
+    assert.deepEqual(sync.lastResult, { ok: true, ms: 5, note: '同步完成：舊紀錄' });
+    assert.equal(sync.en.label, 'Network sync');
+  });
+
+  test('1.0.0 存的探測結果沒有 en：依契約 id 補上英文名稱，不改中文', () => {
+    const old = { at: new Date(T0).toISOString(), claudeVersion: '2.1.306', ok: true, checks: [{ id: 'C1', label: '舊的中文名稱', ok: true, detail: '' }, { id: 'C9', label: '不存在的契約', ok: true, detail: '' }] };
+    const { jobs } = setup({ probe: old });
+    const [c1, c9] = jobs.probe().checks;
+    assert.equal(c1.label, '舊的中文名稱');
+    assert.ok(c1.en.label && !/[一-鿿]/.test(c1.en.label));
+    assert.equal(c9.en, undefined);
   });
 
   test('鎖被占用 → 不算失敗，1 分鐘後重試', async () => {

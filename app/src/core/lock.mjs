@@ -93,9 +93,9 @@ async function acquireFile(lockPath, { op, waitMs, staleMs }) {
           await new Promise((r) => setTimeout(r, 5 + Math.floor(Math.random() * 20)));
           continue;
         }
-        if (Date.now() >= deadline) throw new EngramError(E.LOCKED, 'Engram 正在進行另一項操作', '稍後再試一次', { holder: info ? { pid: info.pid, op: info.op, startedAt: info.startedAt } : null });
+        if (Date.now() >= deadline) throw new EngramError(E.LOCKED, 'Engram 正在進行另一項操作', '稍後再試一次', { holder: info ? { pid: info.pid, op: info.op, startedAt: info.startedAt } : null }).withEn('Engram is busy with another operation', 'Try again in a moment');
       } else if (Date.now() >= deadline) {
-        throw new EngramError(E.LOCKED, '無法建立鎖檔', '稍後再試一次', { code: err.code });
+        throw new EngramError(E.LOCKED, '無法建立鎖檔', '稍後再試一次', { code: err.code }).withEn('Could not create the lock file', 'Try again in a moment');
       }
       await new Promise((r) => setTimeout(r, Math.min(80 + attempt * 40, 400)));
     }
@@ -139,7 +139,7 @@ export async function withLock(lockPath, op, fn, { waitMs = 15_000, staleMs = ST
   const deadline = Date.now() + waitMs;
   try {
     let timer;
-    const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(new EngramError(E.LOCKED, 'Engram 正在進行另一項操作', '稍後再試一次')), waitMs); });
+    const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(new EngramError(E.LOCKED, 'Engram 正在進行另一項操作', '稍後再試一次').withEn('Engram is busy with another operation', 'Try again in a moment')), waitMs); });
     try { await Promise.race([prev, timeout]); } finally { clearTimeout(timer); }
     const nonce = await acquireFile(lockPath, { op, waitMs: Math.max(0, deadline - Date.now()), staleMs });
     const hb = startHeartbeat(lockPath, nonce);

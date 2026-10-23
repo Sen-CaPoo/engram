@@ -78,12 +78,13 @@ const readOr = (p, fallback) => { try { return fs.readFileSync(p, 'utf8'); } cat
 /**
  * 執行自我測試。
  * @param {{ engine: { init: Function, open: Function }, sandbox: string }} o  sandbox：可寫入、結束後由呼叫端刪除的空資料夾
- * @returns {Promise<{ ok: boolean, ms: number, checks: { name: string, ok: boolean, detail: string }[] }>}
+ * @returns {Promise<{ ok: boolean, ms: number, checks: { name: string, ok: boolean, detail: string, en: { name: string, detail: string } }[] }>}
  */
 export async function bindingSelfTest({ engine, sandbox }) {
   const t0 = Date.now();
   const checks = [];
-  const check = (name, ok, detail = '') => checks.push({ name, ok: !!ok, detail });
+  // en：管理介面切到英文時顯示的名稱與說明（detailEn 預設與中文相同，適用於原始輸出）
+  const check = (name, nameEn, ok, detail = '', detailEn = detail) => checks.push({ name, ok: !!ok, detail, en: { name: nameEn, detail: detailEn } });
   try {
     // ── 匯入前的合成世界：一個 git 專案，加上兩個路徑編碼相同的中文資料夾 ──
     const userHome = path.join(sandbox, 'user');
@@ -122,10 +123,10 @@ export async function bindingSelfTest({ engine, sandbox }) {
     const plan = await eg.sweepLegacy({ dryRun: true });
     const res = await eg.sweepLegacy({ dryRun: false, plan, bindSources: true });
     const method = Object.fromEntries((res.bound ?? []).map((x) => [path.basename(x.path), x.method]));
-    check('撞名資料夾以設定檔綁定（甲方）', method['甲方專案'] === 'settings', `方式：${method['甲方專案'] ?? '未綁定'}`);
-    check('撞名資料夾以設定檔綁定（乙方）', method['乙方專案'] === 'settings', `方式：${method['乙方專案'] ?? '未綁定'}`);
-    check('撞名的共用記憶資料夾沒有換成 junction', !isLink(legacyC));
-    check('一般 git 專案以 junction 綁定', method['shop-app'] === 'junction' && isLink(legacyP), `方式：${method['shop-app'] ?? '未綁定'}`);
+    check('撞名資料夾以設定檔綁定（甲方）', 'Colliding folder A bound through the settings file', method['甲方專案'] === 'settings', `方式：${method['甲方專案'] ?? '未綁定'}`, `Method: ${method['甲方專案'] ?? 'not bound'}`);
+    check('撞名資料夾以設定檔綁定（乙方）', 'Colliding folder B bound through the settings file', method['乙方專案'] === 'settings', `方式：${method['乙方專案'] ?? '未綁定'}`, `Method: ${method['乙方專案'] ?? 'not bound'}`);
+    check('撞名的共用記憶資料夾沒有換成 junction', 'The shared memory folder of the colliding folders was not replaced with a junction', !isLink(legacyC));
+    check('一般 git 專案以 junction 綁定', 'A regular git project is bound through a junction', method['shop-app'] === 'junction' && isLink(legacyP), `方式：${method['shop-app'] ?? '未綁定'}`, `Method: ${method['shop-app'] ?? 'not bound'}`);
 
     // ── 匯入後：Claude 改了既有記憶、又新增一筆，常駐程式存檔 ──
     fs.writeFileSync(path.join(legacyP, 'deploy-rule.md'), memoryText({ name: 'deploy-rule', description: '部署規則', originSessionId: sP, body: 'v2：改成週四部署（匯入後的修改）。' }));
@@ -135,17 +136,17 @@ export async function bindingSelfTest({ engine, sandbox }) {
 
     // ── 一鍵還原（與「還原到匯入前」同一套程式） ──
     const rb = await eg.rollbackImport(res.restorePoint);
-    check('一鍵還原完成', rb?.ok !== false, rb?.ok === false ? String(rb?.error ?? rb?.message ?? '') : '');
-    check('還原後 git 專案的記憶資料夾換回實體資料夾', !isLink(legacyP));
-    check('匯入後的修改沒有遺失', /v2/.test(readOr(path.join(legacyP, 'deploy-rule.md'), '')));
-    check('匯入後新寫的記憶放回原資料夾', fs.existsSync(path.join(legacyP, 'new-after-import.md')));
-    check('settings.json 逐位元組回到匯入前', readOr(path.join(claudeHome, 'settings.json'), null) === before.settings);
-    for (const [label, dir, key] of [['甲方', a, 'a'], ['乙方', b, 'b'], ['git 專案', proj, 'proj']]) {
+    check('一鍵還原完成', 'One-click restore completed', rb?.ok !== false, rb?.ok === false ? String(rb?.error ?? rb?.message ?? '') : '');
+    check('還原後 git 專案的記憶資料夾換回實體資料夾', "After the restore, the git project's memory folder is a real folder again", !isLink(legacyP));
+    check('匯入後的修改沒有遺失', 'Changes made after the import were not lost', /v2/.test(readOr(path.join(legacyP, 'deploy-rule.md'), '')));
+    check('匯入後新寫的記憶放回原資料夾', 'Memories written after the import were put back in the original folder', fs.existsSync(path.join(legacyP, 'new-after-import.md')));
+    check('settings.json 逐位元組回到匯入前', 'settings.json is byte-for-byte the same as before the import', readOr(path.join(claudeHome, 'settings.json'), null) === before.settings);
+    for (const [label, labelEn, dir, key] of [['甲方', 'colliding folder A', a, 'a'], ['乙方', 'colliding folder B', b, 'b'], ['git 專案', 'git project folder', proj, 'proj']]) {
       const d = changedKeys(before[key], hashTree(dir));
-      check(`${label}資料夾逐檔回到匯入前`, d.length === 0, d.join('、'));
+      check(`${label}資料夾逐檔回到匯入前`, `The ${labelEn} is file-for-file identical to before the import`, d.length === 0, d.join('、'), d.join(', '));
     }
   } catch (err) {
-    check('自我測試執行完畢', false, String(err?.message ?? err));
+    check('自我測試執行完畢', 'The self-test ran to completion', false, String(err?.message ?? err), String(err?.en?.message ?? err?.message ?? err));
   }
   return { ok: checks.length > 0 && checks.every((c) => c.ok), ms: Date.now() - t0, checks };
 }

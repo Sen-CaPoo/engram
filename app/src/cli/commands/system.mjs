@@ -13,6 +13,8 @@ import { SEVERITY_LABEL } from '../output.mjs';
 import { appVersion, BIN_PATH, DEFAULT_PORT, localPaths } from '../paths.mjs';
 import { pausedFrom, runProbe } from '../probe/index.mjs';
 import { spawnDetachedNode } from '../proc.mjs';
+import { safeFinding } from './inbox.mjs';
+import { redactText } from './safe.mjs';
 
 const mark = (ok) => (ok ? '✓' : '✗');
 const LAUNCHER_LABEL = { wscript: 'wscript（隱藏視窗）', conhost: 'conhost --headless', direct: '直接執行 node' };
@@ -29,7 +31,9 @@ export async function cmdDoctor(ctx) {
   try {
     const eg = await ctx.engine();
     const d = await eg.doctor();
-    Object.assign(data, { ok: d.ok !== false, checks: d.checks ?? [], findings: d.findings ?? [] });
+    // 輸出會交給 Claude（安裝手冊要它執行 engram doctor）：卡片沿用收件匣的遮蔽；檢查項目可能帶遠端網址裡的權杖
+    const safeCheck = (c) => ({ ...c, label: redactText(c.label), ...(c.detail != null ? { detail: redactText(c.detail) } : {}) });
+    Object.assign(data, { ok: d.ok !== false, checks: (d.checks ?? []).map(safeCheck), findings: (d.findings ?? []).map(safeFinding) });
   } catch (err) {
     Object.assign(data, { ok: false, engine: { ok: false, error: toErrorInfo(err) } });
   }

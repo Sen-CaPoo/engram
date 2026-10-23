@@ -1,26 +1,28 @@
 // 共用的小工具：時間、標籤、Markdown 轉換、frontmatter 拆解。
+import { t, N_, local, locale, getLang } from './i18n.js';
 
-export const TYPE_LABEL = { user: '使用者', feedback: '回饋', project: '專案', reference: '參考' };
-export const SEVERITY_LABEL = { high: '高', medium: '中', low: '低', auto: '自動' };
+// 標籤表的值是中文原文，顯示時一律經過 t()
+export const TYPE_LABEL = { user: N_('使用者'), feedback: N_('回饋'), project: N_('專案'), reference: N_('參考') };
+export const SEVERITY_LABEL = { high: N_('高'), medium: N_('中'), low: N_('低'), auto: N_('自動') };
 export const SYNC_LABEL = {
-  ok: '已同步', syncing: '同步中', offline: '離線', auth: '需要登入 GitHub', error: '同步失敗', never: '尚未同步',
+  ok: N_('已同步'), syncing: N_('同步中'), busy: N_('同步中'), offline: N_('離線'), auth: N_('需要登入 GitHub'), error: N_('同步失敗'), never: N_('尚未同步'),
 };
 
 const pad = (n) => String(n).padStart(2, '0');
 
 export function relTime(iso, now = Date.now()) {
   if (!iso) return '—';
-  const t = new Date(iso).getTime();
-  const s = Math.round((now - t) / 1000);
-  if (s < 45) return '剛剛';
-  if (s < 3600) return `${Math.round(s / 60)} 分鐘前`;
-  if (s < 6 * 3600) return `${Math.round(s / 3600)} 小時前`;
-  const d = new Date(t), today = new Date(now);
+  const at = new Date(iso).getTime();
+  const s = Math.round((now - at) / 1000);
+  if (s < 45) return t('剛剛');
+  if (s < 3600) return t('{n} 分鐘前', { n: Math.round(s / 60) });
+  if (s < 6 * 3600) return t('{n} 小時前', { n: Math.round(s / 3600) });
+  const d = new Date(at), today = new Date(now);
   const dayDiff = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 864e5);
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  if (dayDiff === 0) return `今天 ${hm}`;
-  if (dayDiff === 1) return `昨天 ${hm}`;
-  if (dayDiff < 7) return `${dayDiff} 天前`;
+  if (dayDiff === 0) return t('今天 {hm}', { hm });
+  if (dayDiff === 1) return t('昨天 {hm}', { hm });
+  if (dayDiff < 7) return t('{n} 天前', { n: dayDiff });
   if (d.getFullYear() === today.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
@@ -28,11 +30,11 @@ export function relTime(iso, now = Date.now()) {
 export function untilTime(iso, now = Date.now()) {
   if (!iso) return '—';
   const s = Math.round((new Date(iso).getTime() - now) / 1000);
-  if (s <= 30) return '即將執行';
-  if (s < 3600) return `${Math.ceil(s / 60)} 分鐘後`;
+  if (s <= 30) return t('即將執行');
+  if (s < 3600) return t('{n} 分鐘後', { n: Math.ceil(s / 60) });
   const d = new Date(iso);
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  if (s < 24 * 3600 && d.getDate() === new Date(now).getDate()) return `今天 ${hm}`;
+  if (s < 24 * 3600 && d.getDate() === new Date(now).getDate()) return t('今天 {hm}', { hm });
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
@@ -48,7 +50,7 @@ export function fmtBytes(n) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function fmtNum(n) { return n == null ? '—' : n.toLocaleString('zh-TW'); }
+export function fmtNum(n) { return n == null ? '—' : n.toLocaleString(locale()); }
 
 export function scopeKey(scope) {
   if (!scope) return '';
@@ -122,8 +124,8 @@ export function markdownToHtml(md) {
 }
 
 export function debounce(fn, ms) {
-  let t;
-  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  let timer;
+  return (...a) => { clearTimeout(timer); timer = setTimeout(() => fn(...a), ms); };
 }
 
 export function plural(n, unit) { return `${fmtNum(n)} ${unit}`; }
@@ -137,36 +139,39 @@ export function attentionCount(status) {
 
 // 變更紀錄改用白話，不顯示 git 術語
 const ACTION_TEXT = {
-  sync: '與其他電腦同步', autosave: '自動儲存', move: '改變範圍', merge: '合併記憶', edit: '編輯記憶', remove: '刪除記憶',
-  restore: '還原記憶', import: '匯入既有記憶', sweep: '收編既有記憶', bind: '綁定專案資料夾', unbind: '解除綁定',
-  init: '建立記憶庫', conflict: '隔離同步衝突', tidy: '整理索引', link: '合併專案', undo: '復原變更', core: '編輯核心準則',
+  sync: N_('與其他電腦同步'), autosave: N_('自動儲存'), move: N_('改變範圍'), merge: N_('合併記憶'), edit: N_('編輯記憶'), remove: N_('刪除記憶'),
+  restore: N_('還原記憶'), import: N_('匯入既有記憶'), sweep: N_('收編既有記憶'), bind: N_('綁定專案資料夾'), unbind: N_('解除綁定'),
+  init: N_('建立記憶庫'), conflict: N_('隔離同步衝突'), tidy: N_('整理索引'), link: N_('合併專案'), undo: N_('復原變更'), core: N_('編輯核心準則'),
 };
 export function humanizeCommit(c) {
-  const title = ACTION_TEXT[c.action] || '變更';
+  const title = t(ACTION_TEXT[c.action] || N_('變更'));
   const m = /([+＋])(\d+)\s*[~～](\d+)\s*[−-](\d+)/.exec(c.message || '');
   if (m) {
     const parts = [];
-    if (+m[2]) parts.push(`新增 ${m[2]} 筆`);
-    if (+m[3]) parts.push(`修改 ${m[3]} 筆`);
-    if (+m[4]) parts.push(`刪除 ${m[4]} 筆`);
-    return { title, detail: parts.join('、') || '沒有內容變更' };
+    if (+m[2]) parts.push(t('新增 {n} 筆', { n: +m[2] }));
+    if (+m[3]) parts.push(t('修改 {n} 筆', { n: +m[3] }));
+    if (+m[4]) parts.push(t('刪除 {n} 筆', { n: +m[4] }));
+    return { title, detail: parts.join(t('、')) || t('沒有內容變更') };
   }
-  if (c.action === 'sync') return { title, detail: /merge/i.test(c.message) ? '合併了另一台電腦的變更' : '推送這台的變更' };
-  return { title, detail: (c.message || '').replace(/^engram\([^)]*\):\s*/, '') };
+  if (c.action === 'sync') return { title, detail: /merge/i.test(c.message) ? t('合併了另一台電腦的變更') : t('推送這台的變更') };
+  // 變更紀錄的訊息是 git commit 原文（中文）；英文介面看不懂，只顯示已翻譯的標題
+  const detail = (c.message || '').replace(/^engram\([^)]*\):\s*/, '');
+  return { title, detail: getLang() !== 'zh-TW' && /\p{Script=Han}/u.test(detail) ? '' : detail };
 }
 
 // 復原的結果：資料夾改名的整批還原可能只完成一部分（有資料夾被其他程式開著），照實說並提示再按一次
 export function undoText(res, okText) {
-  if (res?.done === false) return `部分還原：${res.notes?.[0] ?? '有資料夾沒有改回'}。處理後再按一次復原`;
-  if (res?.notes?.length) return `${okText}；注意：${res.notes.join('；')}`;
+  const notes = local(res, 'notes');
+  if (res?.done === false) return t('部分還原：{note}。處理後再按一次復原', { note: notes?.[0] ?? t('有資料夾沒有改回') });
+  if (notes?.length) return t('{ok}；注意：{notes}', { ok: okText, notes: notes.join(t('；')) });
   return okText;
 }
 
 // 經過多久（用在「已經 9 天沒有同步」這類句子）
 export function since(iso, now = Date.now()) {
-  if (!iso) return '很久';
+  if (!iso) return t('很久');
   const m = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000));
-  if (m < 60) return `${m} 分鐘`;
-  if (m < 48 * 60) return `${Math.round(m / 60)} 小時`;
-  return `${Math.round(m / 1440)} 天`;
+  if (m < 60) return t('{n} 分鐘', { n: m });
+  if (m < 48 * 60) return t('{n} 小時', { n: Math.round(m / 60) });
+  return t('{n} 天', { n: Math.round(m / 1440) });
 }

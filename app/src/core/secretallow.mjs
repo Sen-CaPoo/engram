@@ -33,7 +33,7 @@ export function allowEntries(allow, ref) {
  * 另一台電腦才會同時收到兩者）。
  */
 export async function addAllow(localDir, _ref, { preview, hash }) {
-  if (!HASH_RE.test(String(hash ?? ''))) throw new EngramError(E.INVALID, '「不是金鑰」清單需要值的雜湊');
+  if (!HASH_RE.test(String(hash ?? ''))) throw new EngramError(E.INVALID, '「不是金鑰」清單需要值的雜湊').withEn('The "not a secret" list needs the hash of the value');
   const rel = `${NOT_SECRETS_DIR}/${hash}`;
   const abs = path.join(vaultOf(localDir), NOT_SECRETS_DIR, hash);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
@@ -60,6 +60,13 @@ export function scanWithAllow(text, ref, allow = {}) {
 const valueOf = (text, h) => String(text).slice(h.offset, h.offset + h.length);
 // 訊息只列行號與種類，不帶出值的任何片段（H13 的原則；封存、移動的對象不一定是 Claude 寫的內容）
 const describe = (hits) => `第 ${[...new Set(hits.map((h) => h.line))].join('、')} 行，${[...new Set(hits.map((h) => h.kind))].join('、')}`;
+const describeEn = (hits) => {
+  const lines = [...new Set(hits.map((h) => h.line))];
+  return `${lines.length === 1 ? 'line' : 'lines'} ${lines.join(', ')}: ${[...new Set(hits.map((h) => h.kind))].join(', ')}`;
+};
+// 呼叫端傳進來的 what 是中文詞，英文訊息用這兩張表對照（查不到就原樣帶入）
+const NOUN_EN = { 內容: 'the content', 合併後的內容: 'the merged content', 核心準則: 'the core rules' };
+const VERB_EN = { 移動: { verb: 'move', pp: 'moved' }, 合併: { verb: 'merge', pp: 'merged' }, 封存: { verb: 'archive', pp: 'archived' } };
 
 /**
  * M5：引擎的寫入 API 不把疑似金鑰帶進記憶庫。含金鑰的檔案不會 commit（只能留在這台），之後再封存、移動或合併就會遺失或只提交一半，
@@ -76,7 +83,9 @@ export async function assertNoNewSecrets(localDir, ref, text, { before = null, a
   if (!allowSecrets) {
     throw new EngramError(E.SECRET, `${what}疑似含有金鑰（${describe(hits)}），Engram 不會寫入`,
       '記憶裡只記金鑰存放在哪裡、怎麼取得（例如 Windows 認證管理員的項目名稱）。確定不是金鑰時：管理介面會詢問是否照樣儲存；或由你在自己的終端機（不是 Claude Code）執行 engram not-secret --value <那個值>，再寫一次。',
-      { kinds: [...new Set(hits.map((h) => h.kind))], lines: [...new Set(hits.map((h) => h.line))] });
+      { kinds: [...new Set(hits.map((h) => h.kind))], lines: [...new Set(hits.map((h) => h.line))] })
+      .withEn(`Possible secret in ${NOUN_EN[what] ?? what} (${describeEn(hits)}); Engram will not write it`,
+        'Memories should only record where a secret is stored and how to get it (for example, the entry name in Windows Credential Manager). If you are sure it is not a secret: the dashboard will ask whether to save it anyway, or run engram not-secret --value <that value> in your own terminal (not Claude Code) and write it again.');
   }
   const added = [];
   for (const h of hits) added.push(await addAllow(localDir, ref, { preview: h.preview, hash: secretHash(valueOf(text, h)) }));
@@ -96,6 +105,12 @@ export async function assertNotHeld(localDir, ref, raw, what, { headRaw = null, 
   const why = removable
     ? '最新的內容還沒進同步歷史，' + what + '後就找不回來'
     : '搬到新位置後不會同步，另一台電腦會失去這筆記憶';
+  const verbEn = VERB_EN[what] ?? { verb: what, pp: what };
+  const whyEn = removable
+    ? `the latest content is not in the sync history yet, so it cannot be recovered once ${verbEn.pp}`
+    : 'it is not synced once moved to the new location, so the other computer would lose this memory';
   throw new EngramError(E.SECRET, `${ref} 疑似含有金鑰（${describe(hits)}），不能${what}：${why}`,
-    `請先在收件匣遮蔽金鑰（或在管理介面確認「這不是金鑰」），再${what}。`);
+    `請先在收件匣遮蔽金鑰（或在管理介面確認「這不是金鑰」），再${what}。`)
+    .withEn(`${ref} appears to contain a secret (${describeEn(hits)}), so it cannot be ${verbEn.pp}: ${whyEn}`,
+      `Redact the secret in the inbox first (or confirm "Not a secret" in the dashboard), then ${verbEn.verb} it.`);
 }

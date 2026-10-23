@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { machineSpecific } from './classify.mjs';
-import { semanticKey } from './frontmatter.mjs';
+import { diagEn, semanticKey } from './frontmatter.mjs';
 import { exists, readText, sha1 } from './fsx.mjs';
 import { readSweepLog } from './sweep.mjs';
 import { JUNCTION_MODES, junctionState } from './identity.mjs';
@@ -22,9 +22,12 @@ function fid(code, refs) {
   return `${code}:${createHash('sha1').update(refs.join('|')).digest('hex').slice(0, 10)}`;
 }
 
-/** key：refs 相同但對象不同時（例如每個綁定都指向 bindings.json），用來區分 id，避免「忽略」一張卡片連帶蓋掉別張。 */
-function finding(code, severity, title, detail, { refs = [], pid, fix, key } = {}) {
-  return { id: fid(code, key ? [key] : refs.length ? refs : [title]), code, severity, title, detail, refs, ...(pid ? { pid } : {}), ...(fix ? { fix } : {}) };
+/**
+ * key：refs 相同但對象不同時（例如每個綁定都指向 bindings.json），用來區分 id，避免「忽略」一張卡片連帶蓋掉別張。
+ * en：英文版 { title, detail }（管理介面切到英文時顯示）；fix 的英文放在 fix.en.label。id 一律以中文標題計算。
+ */
+function finding(code, severity, title, detail, { refs = [], pid, fix, key, en } = {}) {
+  return { id: fid(code, key ? [key] : refs.length ? refs : [title]), code, severity, title, detail, refs, ...(pid ? { pid } : {}), ...(fix ? { fix } : {}), ...(en ? { en } : {}) };
 }
 
 /** 中英文都適用的雙字組集合（用於描述相似度）。 */
@@ -43,6 +46,11 @@ function jaccardSet(a, b) {
 }
 
 function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+// 英文版：H12 的說明用 frontmatter.mjs 的 diagEn 翻譯解析錯誤；H06、H08 用 rename.mjs 的 BLOCKED_LABEL_EN、classify.mjs 的 reasonsEn。
+const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 
 
@@ -86,16 +94,28 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
     if (st.lines > LIMITS.indexLines || st.bytes > LIMITS.indexBytes) {
       out.push(finding('H01', 'high', `「${p?.name ?? pid}」的記憶索引超過載入上限`,
         `MEMORY.md 有 ${st.lines} 行、${(st.bytes / 1024).toFixed(1)}KB；Claude Code 只載入前 200 行或 25KB，之後的記憶不會被看到。建議合併或封存。`,
-        { refs: [ref], pid, fix: { action: 'open-project', args: { pid }, label: '開啟專案整理' } }));
+        {
+          refs: [ref], pid, fix: { action: 'open-project', args: { pid }, label: '開啟專案整理', en: { label: 'Open project cleanup' } },
+          en: {
+            title: `The memory index for "${p?.name ?? pid}" is over the load limit`,
+            detail: `MEMORY.md has ${st.lines} lines and ${(st.bytes / 1024).toFixed(1)}KB. Claude Code loads only the first 200 lines or 25KB, so memories after that are not seen. Consider merging or archiving some.`,
+          },
+        }));
     } else if (st.lines >= LIMITS.indexWarn) {
-      out.push(finding('H01', 'low', `「${p?.name ?? pid}」的記憶索引接近上限`, `MEMORY.md 已有 ${st.lines} 行（上限 200 行）。`, { refs: [ref], pid }));
+      out.push(finding('H01', 'low', `「${p?.name ?? pid}」的記憶索引接近上限`, `MEMORY.md 已有 ${st.lines} 行（上限 200 行）。`, {
+        refs: [ref], pid,
+        en: { title: `The memory index for "${p?.name ?? pid}" is close to the limit`, detail: `MEMORY.md already has ${st.lines} lines (limit: 200).` },
+      }));
     }
   }
 
   // H02／H03：索引與檔案不一致（正規化會自動修好）
   const unindexed = memories.filter((m) => !m.indexed);
   if (unindexed.length) {
-    out.push(finding('H03', 'auto', `${unindexed.length} 筆記憶不在索引裡`, '下次同步時會自動補上。', { refs: unindexed.map((m) => m.ref), fix: { action: 'normalize', args: {}, label: '立即整理索引' } }));
+    out.push(finding('H03', 'auto', `${unindexed.length} 筆記憶不在索引裡`, '下次同步時會自動補上。', {
+      refs: unindexed.map((m) => m.ref), fix: { action: 'normalize', args: {}, label: '立即整理索引', en: { label: 'Tidy index now' } },
+      en: { title: `${unindexed.length === 1 ? '1 memory is' : `${unindexed.length} memories are`} not in the index`, detail: 'They will be added automatically on the next sync.' },
+    }));
   }
 
   // H04：綁定的資料夾不見了；H17：junction 失效
@@ -103,29 +123,59 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
     const name = projects.get(b.pid)?.name ?? b.pid;
     if (!exists(b.path)) {
       out.push(finding('H04', 'medium', `「${name}」在這台電腦的資料夾不見了`, `原路徑 ${b.path} 已不存在（可能搬家或改名）。在新位置開啟 Claude Code 時會自動重新連結。`,
-        { refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:missing`, fix: { action: 'forget-binding', args: { encoded: b.key }, label: '移除這個舊綁定' } }));
+        {
+          refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:missing`, fix: { action: 'forget-binding', args: { encoded: b.key }, label: '移除這個舊綁定', en: { label: 'Remove this old binding' } },
+          en: {
+            title: `The folder for "${name}" is gone on this computer`,
+            detail: `The original path ${b.path} no longer exists (it may have been moved or renamed). Engram will reconnect it automatically when you open Claude Code in the new location.`,
+          },
+        }));
       continue;
     }
     // R-54：舊版從 git 子資料夾第一次開啟時，綁定放在子資料夾的編碼（Claude Code 用的是根目錄的編碼）
     const want = encodeProjectPath(b.path);
     if (want && want.toLowerCase() !== b.encoded.toLowerCase()) {
       out.push(finding('H17', 'high', `「${name}」的記憶連結建在錯誤的位置`, '之前第一次從子資料夾開啟這個專案時，記憶連結建在子資料夾的位置，Claude Code 不會從那裡讀寫記憶；從子資料夾開啟時寫的記憶沒有進入 Engram（會出現在「尚未納管的記憶」）。',
-        { refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:encoding`, fix: { action: 'reconcile-bindings', args: {}, label: '修正連結位置' } }));
+        {
+          refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:encoding`, fix: { action: 'reconcile-bindings', args: {}, label: '修正連結位置', en: { label: 'Fix link location' } },
+          en: {
+            title: `The memory link for "${name}" is in the wrong place`,
+            detail: 'When this project was first opened from a subfolder, the memory link was created at the subfolder\'s location. Claude Code does not read or write memory from there, so memories written while the project was open from a subfolder never reached Engram (they will show up under "unmanaged memories").',
+          },
+        }));
       continue;
     }
     if (b.method === 'junction' && b.state !== 'pending') {
       const j = junctionState(ctx.homes, b.encoded, b.pid);
       if (j.state !== 'ok') {
         out.push(finding('H17', 'high', `「${name}」的記憶連結失效`, `Claude Code 的記憶資料夾狀態為 ${j.state}，新寫入的記憶可能沒有進入 Engram。`,
-          { refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:broken`, fix: { action: 'rebind', args: { dir: b.path }, label: '重新建立連結' } }));
+          {
+            refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:broken`, fix: { action: 'rebind', args: { dir: b.path }, label: '重新建立連結', en: { label: 'Recreate link' } },
+            en: {
+              title: `The memory link for "${name}" is broken`,
+              detail: `The status of Claude Code's memory folder is ${j.state}. Newly written memories may not have reached Engram.`,
+            },
+          }));
       } else if (!(await isJunctionReadAllowed(ctx.homes, j.path))) {
         out.push(finding('H17', 'medium', `「${name}」讀取記憶時會跳出權限詢問`, '這個記憶連結還沒列入 Claude Code 的 additionalDirectories，互動模式下每次讀取都會詢問。',
-          { refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:read`, fix: { action: 'allow-read', args: { encoded: b.encoded }, label: '允許讀取' } }));
+          {
+            refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:read`, fix: { action: 'allow-read', args: { encoded: b.encoded }, label: '允許讀取', en: { label: 'Allow reading' } },
+            en: {
+              title: `Reading memory for "${name}" will trigger a permission prompt`,
+              detail: 'This memory link is not in Claude Code\'s additionalDirectories yet, so in interactive mode it asks for permission every time it is read.',
+            },
+          }));
       }
     }
     if (b.state === 'pending') {
       out.push(finding('H17', 'low', `「${name}」等待切換到 Engram`, '原本的記憶資料夾還有內容或有進行中的對話，對話結束後會自動切換。',
-        { refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:pending`, fix: { action: 'rebind', args: { dir: b.path }, label: '現在切換' } }));
+        {
+          refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:pending`, fix: { action: 'rebind', args: { dir: b.path }, label: '現在切換', en: { label: 'Switch now' } },
+          en: {
+            title: `"${name}" is waiting to switch to Engram`,
+            detail: 'The original memory folder still has content or an active conversation. It will switch automatically when the conversation ends.',
+          },
+        }));
     }
   }
 
@@ -142,7 +192,13 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
   if (blocked.length) {
     out.push(finding('H17', 'medium', '讀寫記憶時會跳出權限詢問',
       `Claude Code 的預設權限模式是 ${[...new Set(blocked)].join('、')}。在這個模式下，透過記憶連結（junction）讀寫記憶都會詢問；用專案設定檔指向記憶庫則不會。按「改用設定檔連結」後，從專案根目錄啟動就不會再詢問；從子資料夾啟動時則不會用到 Engram 的記憶。影響 ${blocked.length} 個專案。`,
-      { refs: [`machines/${ctx.mid}/bindings.json`], key: 'write-permission', fix: { action: 'reconcile-bindings', args: {}, label: '改用設定檔連結' } }));
+      {
+        refs: [`machines/${ctx.mid}/bindings.json`], key: 'write-permission', fix: { action: 'reconcile-bindings', args: {}, label: '改用設定檔連結', en: { label: 'Use settings-file links' } },
+        en: {
+          title: 'Reading and writing memory will trigger permission prompts',
+          detail: `Claude Code's default permission mode is ${[...new Set(blocked)].join(', ')}. In this mode, reading or writing memory through the memory link (junction) always asks for permission; pointing to the vault from the project settings file does not. After you press "Use settings-file links", launching from the project root no longer asks; launching from a subfolder will not use Engram's memory. Affects ${count(blocked.length, 'project', 'projects')}.`,
+        },
+      }));
   }
 
   // H05：尚未納管的記憶（已收編且內容沒變的檔案不再回報）；H06：中文路徑碰撞
@@ -165,13 +221,19 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
       if (pending.length) {
         out.push(finding('H05', 'medium', `發現尚未納管的記憶：${s.roots[0] ?? s.encoded}`,
           `${pending.length} 筆記憶還在 Claude Code 的本機資料夾，不會同步。`,
-          { refs: [s.encoded], fix: { action: 'sweep', args: { encoded: s.encoded }, label: '收編到 Engram' } }));
+          {
+            refs: [s.encoded], fix: { action: 'sweep', args: { encoded: s.encoded }, label: '收編到 Engram', en: { label: 'Adopt into Engram' } },
+            en: {
+              title: `Unmanaged memories found: ${s.roots[0] ?? s.encoded}`,
+              detail: `${pending.length === 1 ? '1 memory is' : `${pending.length} memories are`} still in Claude Code's local folder and will not sync.`,
+            },
+          }));
       }
     }
   }
   // H06：撞名（SW-4）。用過 Claude Code 的資料夾和現存的其他資料夾編碼相同；依命名規則「原名-4 碼代號」改名即可分開。
   // 兩個以上用過的資料夾共用同一份紀錄（記憶與對話已經在混）為高，其餘為中。refs 沿用編碼名稱，忽略的紀錄不受影響
-  const { planCollisionRenames, BLOCKED_LABEL } = await import('./rename.mjs');
+  const { planCollisionRenames, BLOCKED_LABEL, BLOCKED_LABEL_EN } = await import('./rename.mjs');
   const groups = new Map();
   for (const it of await planCollisionRenames(ctx, { indexMaxAgeMs: 3_600_000 })) {
     if (!groups.has(it.encoded.toLowerCase())) groups.set(it.encoded.toLowerCase(), []);
@@ -180,9 +242,17 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
   for (const items of groups.values()) {
     const ready = items.filter((it) => it.to && !it.blocked);
     const lines = items.map((it) => (it.to ? `${it.path} → ${path.basename(it.to)}` : `${it.path}（暫不改名：${BLOCKED_LABEL[it.blocked] ?? it.blocked}）`));
+    const linesEn = items.map((it) => (it.to ? `${it.path} → ${path.basename(it.to)}` : `${it.path} (not renamed for now: ${BLOCKED_LABEL_EN[it.blocked] ?? it.blocked})`));
     out.push(finding('H06', items.length > 1 ? 'high' : 'medium', items.length > 1 ? '資料夾名稱碰撞：多個資料夾共用同一份 Claude Code 紀錄' : `資料夾名稱碰撞：${path.basename(items[0].path)} 與其他資料夾在 Claude Code 裡同名`,
       `${lines.join('；')}。Claude Code 把中文與符號都換成「-」，這些資料夾與 ${items[0].others.map((o) => path.basename(o)).join('、')} 編碼相同（${items[0].encoded}）。依命名規則在原名後加 4 碼代號即可分開；改名後重新綁定、記憶裡的舊路徑一併更新，可以整批還原。改名前的對話不會出現在 /resume 清單。`,
-      { refs: [items[0].encoded], ...(ready.length ? { fix: { action: 'rename-collisions', args: { paths: ready.map((it) => it.path) }, label: '依命名規則改名' } } : {}) }));
+      {
+        refs: [items[0].encoded],
+        ...(ready.length ? { fix: { action: 'rename-collisions', args: { paths: ready.map((it) => it.path) }, label: '依命名規則改名', en: { label: 'Rename by naming rule' } } } : {}),
+        en: {
+          title: items.length > 1 ? 'Colliding folders: several folders share one Claude Code history' : `Colliding folders: ${path.basename(items[0].path)} has the same name as other folders in Claude Code`,
+          detail: `${linesEn.join('; ')}. Claude Code replaces Chinese characters and symbols with "-", so these folders get the same encoded name as ${items[0].others.map((o) => path.basename(o)).join(', ')} (${items[0].encoded}). Adding a 4-character code after the original name (the naming rule) tells them apart. After renaming, Engram rebinds the folders and updates old paths inside memories, and the whole batch can be restored. Conversations from before the rename will not appear in the /resume list.`,
+        },
+      }));
   }
   void scanByEnc;
 
@@ -202,7 +272,13 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
     const enc = encodeProjectPath(root);
     if (!mine.some((v) => v.encoded.toLowerCase() === String(enc).toLowerCase())) continue;
     out.push(finding('H19', 'medium', `「${m.name}」可能屬於另一個資料夾`, `這筆記憶是在 ${root} 寫下的，但目前放在「${projects.get(m.scope.pid)?.name ?? m.scope.pid}」。兩個資料夾在 Claude Code 內部撞名，寫入時被混在一起。`,
-      { refs: [m.ref], pid: m.scope.pid, fix: { action: 'reassign', args: { ref: m.ref, root }, label: `移到 ${path.basename(root)}` } }));
+      {
+        refs: [m.ref], pid: m.scope.pid, fix: { action: 'reassign', args: { ref: m.ref, root }, label: `移到 ${path.basename(root)}`, en: { label: `Move to ${path.basename(root)}` } },
+        en: {
+          title: `"${m.name}" may belong to another folder`,
+          detail: `This memory was written in ${root}, but it is currently under "${projects.get(m.scope.pid)?.name ?? m.scope.pid}". The two folders collide inside Claude Code, so their writes got mixed together.`,
+        },
+      }));
   }
 
   // H07：可能重複。不同電腦各自的單機記憶同名或相同不算重複：每台電腦本來就各記一份自己的環境（合併會讓其中一台失去它）
@@ -220,7 +296,10 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
     if (group.length < 2) continue;
     const refs = group.map((m) => m.ref).sort();
     refs.forEach((r) => reported.add(r));
-    out.push(finding('H07', 'medium', `${group.length} 筆內容相同的記憶`, group.map((m) => m.ref).join('、'), { refs, fix: { action: 'merge', args: { refs }, label: '合併' } }));
+    out.push(finding('H07', 'medium', `${group.length} 筆內容相同的記憶`, group.map((m) => m.ref).join('、'), {
+      refs, fix: { action: 'merge', args: { refs }, label: '合併', en: { label: 'Merge' } },
+      en: { title: `${group.length} memories with identical content`, detail: group.map((m) => m.ref).join(', ') },
+    }));
   }
   const bg = memories.map((m) => ({ m, b: bigrams(`${m.name} ${m.description}`) }));
   for (let i = 0; i < bg.length; i++) {
@@ -231,7 +310,10 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
       const sim = jaccardSet(a.b, b.b);
       if (sameName || sim >= 0.6) {
         const refs = [a.m.ref, b.m.ref].sort();
-        out.push(finding('H07', 'medium', `可能重複：${a.m.name}`, `${sameName ? '名稱相同' : `描述相似度 ${(sim * 100).toFixed(0)}%`}：${refs.join('、')}`, { refs, fix: { action: 'merge', args: { refs }, label: '並排比對與合併' } }));
+        out.push(finding('H07', 'medium', `可能重複：${a.m.name}`, `${sameName ? '名稱相同' : `描述相似度 ${(sim * 100).toFixed(0)}%`}：${refs.join('、')}`, {
+          refs, fix: { action: 'merge', args: { refs }, label: '並排比對與合併', en: { label: 'Compare side by side and merge' } },
+          en: { title: `Possible duplicate: ${a.m.name}`, detail: `${sameName ? 'Same name' : `Description similarity ${(sim * 100).toFixed(0)}%`}: ${refs.join(', ')}` },
+        }));
       }
     }
   }
@@ -248,27 +330,65 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
         const label = owner ? machines.get(owner).label : null;
         out.push(finding('H08', 'medium', `「${m.name}」看起來只適用${label ? `「${label}」` : '某台電腦'}`,
           `偵測到：${sig.reasons.join('、')}。放在共用範圍時，另一台電腦也會讀到。${owner ? '' : '無法判斷是哪一台電腦的事實，請在記憶庫手動搬移到對應電腦的單機範圍。'}`,
-          { refs: [m.ref], pid, ...(owner ? { fix: { action: 'move', args: { ref: m.ref, scope: { kind: 'machine', mid: owner } }, label: `改為「${label}」的單機記憶` } } : {}) }));
+          {
+            refs: [m.ref], pid, ...(owner ? { fix: { action: 'move', args: { ref: m.ref, scope: { kind: 'machine', mid: owner } }, label: `改為「${label}」的單機記憶`, en: { label: `Change to a machine memory for "${label}"` } } } : {}),
+            en: {
+              title: `"${m.name}" seems to apply only to ${label ? `"${label}"` : 'one computer'}`,
+              detail: `Detected: ${sig.reasonsEn.join(', ')}. In a shared scope, the other computer will read it too.${owner ? '' : ' Engram cannot tell which computer this fact belongs to, so move it by hand in the Library to that computer\'s machine scope.'}`,
+            },
+          }));
       }
     }
     if (m.scope?.kind === 'project' && ['user', 'feedback'].includes(m.type)) {
-      out.push(finding('H09', 'low', `「${m.name}」可能適用所有專案`, `類型為 ${m.type}，通常是跨專案成立的偏好或做法。`, { refs: [m.ref], pid, fix: { action: 'move', args: { ref: m.ref, scope: { kind: 'global' } }, label: '升級為全域' } }));
+      out.push(finding('H09', 'low', `「${m.name}」可能適用所有專案`, `類型為 ${m.type}，通常是跨專案成立的偏好或做法。`, {
+        refs: [m.ref], pid, fix: { action: 'move', args: { ref: m.ref, scope: { kind: 'global' } }, label: '升級為全域', en: { label: 'Promote to Global' } },
+        en: { title: `"${m.name}" may apply to all projects`, detail: `Its type is ${m.type}, which usually means a preference or practice that holds across projects.` },
+      }));
     }
-    if (m.size > LIMITS.fileHigh) out.push(finding('H10', 'medium', `「${m.name}」檔案過大`, `${(m.size / 1024).toFixed(1)}KB；被讀取時會佔用大量上下文。建議請 Claude 拆分或精簡。`, { refs: [m.ref], pid }));
-    else if (m.size > LIMITS.fileWarn) out.push(finding('H10', 'low', `「${m.name}」檔案偏大`, `${(m.size / 1024).toFixed(1)}KB（建議 8KB 以內）。`, { refs: [m.ref], pid }));
+    if (m.size > LIMITS.fileHigh) {
+      out.push(finding('H10', 'medium', `「${m.name}」檔案過大`, `${(m.size / 1024).toFixed(1)}KB；被讀取時會佔用大量上下文。建議請 Claude 拆分或精簡。`, {
+        refs: [m.ref], pid,
+        en: { title: `"${m.name}" is too large`, detail: `${(m.size / 1024).toFixed(1)}KB. Reading it uses a lot of context. Ask Claude to split or trim it.` },
+      }));
+    } else if (m.size > LIMITS.fileWarn) {
+      out.push(finding('H10', 'low', `「${m.name}」檔案偏大`, `${(m.size / 1024).toFixed(1)}KB（建議 8KB 以內）。`, {
+        refs: [m.ref], pid,
+        en: { title: `"${m.name}" is fairly large`, detail: `${(m.size / 1024).toFixed(1)}KB (8KB or less is recommended).` },
+      }));
+    }
     const updated = Date.parse(m.updatedAt ?? '') || 0;
     if (pid && updated && now - updated > 90 * DAY) {
       const last = Math.max(0, ...scans.filter((s) => Object.values(bindings).some((b) => b.pid === pid && b.path && s.roots.some((r) => r.toLowerCase() === b.path.toLowerCase()))).map((s) => s.lastActivityMs));
-      if (!last || now - last > 60 * DAY) out.push(finding('H11', 'low', `「${m.name}」可能已過時`, `超過 90 天沒有更新，所屬專案也超過 60 天沒開。`, { refs: [m.ref], pid, fix: { action: 'remove', args: { ref: m.ref }, label: '封存（可從歷史還原）' } }));
+      if (!last || now - last > 60 * DAY) {
+        out.push(finding('H11', 'low', `「${m.name}」可能已過時`, `超過 90 天沒有更新，所屬專案也超過 60 天沒開。`, {
+          refs: [m.ref], pid, fix: { action: 'remove', args: { ref: m.ref }, label: '封存（可從歷史還原）', en: { label: 'Archive (can be restored from history)' } },
+          en: { title: `"${m.name}" may be outdated`, detail: 'Not updated in over 90 days, and its project has not been opened in over 60 days.' },
+        }));
+      }
     }
     if (m._parsed?.errors?.length) {
-      out.push(finding('H12', 'medium', `「${m.name}」的 frontmatter 格式有誤`, `${m._parsed.errors.slice(0, 2).join('；')}。Engram 不會自動改寫這筆記憶，請用原始碼模式修正。`, { refs: [m.ref], pid, fix: { action: 'edit', args: { ref: m.ref, raw: true }, label: '修正格式' } }));
+      out.push(finding('H12', 'medium', `「${m.name}」的 frontmatter 格式有誤`, `${m._parsed.errors.slice(0, 2).join('；')}。Engram 不會自動改寫這筆記憶，請用原始碼模式修正。`, {
+        refs: [m.ref], pid, fix: { action: 'edit', args: { ref: m.ref, raw: true }, label: '修正格式', en: { label: 'Fix format' } },
+        en: {
+          title: `The frontmatter of "${m.name}" is malformed`,
+          detail: `${m._parsed.errors.slice(0, 2).map((e) => sentence(diagEn(e))).join('; ')}. Engram will not rewrite this memory automatically; fix it in raw mode.`,
+        },
+      }));
     } else if (!m._parsed?.data?.name || !m._parsed?.data?.description || !m.type) {
-      out.push(finding('H12', 'medium', `「${m.name}」的 frontmatter 不完整`, '缺少 name、description 或 metadata.type，可能不會被正確索引。', { refs: [m.ref], pid, fix: { action: 'edit', args: { ref: m.ref }, label: '補上欄位' } }));
+      out.push(finding('H12', 'medium', `「${m.name}」的 frontmatter 不完整`, '缺少 name、description 或 metadata.type，可能不會被正確索引。', {
+        refs: [m.ref], pid, fix: { action: 'edit', args: { ref: m.ref }, label: '補上欄位', en: { label: 'Add missing fields' } },
+        en: { title: `The frontmatter of "${m.name}" is incomplete`, detail: 'name, description, or metadata.type is missing, so it may not be indexed correctly.' },
+      }));
     }
     const secrets = scanWithAllow(text, m.ref, allow);
     if (secrets.length) {
-      out.push(finding('H13', 'high', `「${m.name}」疑似含有金鑰或密碼`, `${secrets.map((s) => `第 ${s.line} 行 ${s.kind}（${s.preview}）`).join('；')}。此檔案不會同步，也不會列在索引裡（之後的對話看不到它），直到改成記錄「存放位置」。`, { refs: [m.ref], pid, fix: { action: 'edit', args: { ref: m.ref, lines: secrets.map((s) => s.line) }, label: '移除金鑰' } }));
+      out.push(finding('H13', 'high', `「${m.name}」疑似含有金鑰或密碼`, `${secrets.map((s) => `第 ${s.line} 行 ${s.kind}（${s.preview}）`).join('；')}。此檔案不會同步，也不會列在索引裡（之後的對話看不到它），直到改成記錄「存放位置」。`, {
+        refs: [m.ref], pid, fix: { action: 'edit', args: { ref: m.ref, lines: secrets.map((s) => s.line) }, label: '移除金鑰', en: { label: 'Remove secret' } },
+        en: {
+          title: `"${m.name}" may contain a secret or password`,
+          detail: `${secrets.map((s) => `line ${s.line} ${s.kind} (${s.preview})`).join('; ')}. This file will not sync and is left out of the index (later conversations cannot see it) until you record where the secret is stored instead.`,
+        },
+      }));
     }
   }
 
@@ -280,7 +400,13 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
     const secrets = text ? scanWithAllow(text, ref, allow) : [];
     if (secrets.length) {
       out.push(finding('H13', 'high', `核心準則「${path.basename(ref)}」疑似含有金鑰或密碼`, `${secrets.map((s) => `第 ${s.line} 行 ${s.kind}（${s.preview}）`).join('；')}。此檔案不會同步，而且每次對話都會載入。`,
-        { refs: [ref], fix: { action: 'edit', args: { ref, lines: secrets.map((s) => s.line) }, label: '移除金鑰' } }));
+        {
+          refs: [ref], fix: { action: 'edit', args: { ref, lines: secrets.map((s) => s.line) }, label: '移除金鑰', en: { label: 'Remove secret' } },
+          en: {
+            title: `Core rules file "${path.basename(ref)}" may contain a secret or password`,
+            detail: `${secrets.map((s) => `line ${s.line} ${s.kind} (${s.preview})`).join('; ')}. This file will not sync, and it is loaded in every conversation.`,
+          },
+        }));
     }
   }
 
@@ -289,10 +415,23 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
   const remote = state.remote ?? null;
   const lastOk = Date.parse(state.sync?.lastSuccessAt ?? '') || 0;
   if (remote && (!lastOk || now - lastOk > DAY)) {
-    out.push(finding('H14', 'medium', lastOk ? '超過 24 小時沒有成功同步' : '尚未成功同步過', state.sync?.error?.message ?? '另一台電腦的變更可能還沒到這裡。', { refs: [], fix: { action: 'sync', args: {}, label: '立即同步' } }));
+    out.push(finding('H14', 'medium', lastOk ? '超過 24 小時沒有成功同步' : '尚未成功同步過', state.sync?.error?.message ?? '另一台電腦的變更可能還沒到這裡。', {
+      refs: [], fix: { action: 'sync', args: {}, label: '立即同步', en: { label: 'Sync now' } },
+      en: {
+        title: lastOk ? 'No successful sync in over 24 hours' : 'No successful sync yet',
+        // 錯誤物件若有英文版（EngramError#withEn）就用英文版，否則照原訊息
+        detail: state.sync?.error?.en?.message ?? state.sync?.error?.message ?? 'Changes from the other computer may not have arrived here yet.',
+      },
+    }));
   }
   for (const h of state.heldDeletions ?? []) {
-    out.push(finding('H18', 'high', `偵測到大量刪除：${projects.get(h.pid)?.name ?? h.pid}`, `${h.refs.length} 筆記憶在同一輪被刪除，已暫停同步這些刪除。`, { refs: h.refs, pid: h.pid, fix: { action: 'restore-deletions', args: { pid: h.pid }, label: '還原' } }));
+    out.push(finding('H18', 'high', `偵測到大量刪除：${projects.get(h.pid)?.name ?? h.pid}`, `${h.refs.length} 筆記憶在同一輪被刪除，已暫停同步這些刪除。`, {
+      refs: h.refs, pid: h.pid, fix: { action: 'restore-deletions', args: { pid: h.pid }, label: '還原', en: { label: 'Restore' } },
+      en: {
+        title: `Mass deletion detected: ${projects.get(h.pid)?.name ?? h.pid}`,
+        detail: `${h.refs.length === 1 ? '1 memory was' : `${h.refs.length} memories were`} deleted in the same round. Syncing those deletions is on hold.`,
+      },
+    }));
   }
 
   // H15：未處理的衝突
@@ -301,7 +440,14 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
     for (const id of ids) {
       let meta = {};
       try { meta = JSON.parse(fs.readFileSync(path.join(ctx.vault, 'conflicts', id, 'meta.json'), 'utf8')); } catch { /* ignore */ }
-      out.push(finding('H15', 'high', `衝突待處理：${meta.ref ?? id}`, meta.summary ?? '兩台電腦同時修改了同一筆記憶。', { refs: [meta.ref ?? id], fix: { action: 'open-conflict', args: { id }, label: '處理衝突' } }));
+      out.push(finding('H15', 'high', `衝突待處理：${meta.ref ?? id}`, meta.summary ?? '兩台電腦同時修改了同一筆記憶。', {
+        refs: [meta.ref ?? id], fix: { action: 'open-conflict', args: { id }, label: '處理衝突', en: { label: 'Resolve conflict' } },
+        en: {
+          title: `Conflict needs attention: ${meta.ref ?? id}`,
+          // 衝突紀錄的 summary 由合併器寫入，有英文版（meta.en.summary）就用英文版；舊的紀錄沒有就照原文
+          detail: meta.en?.summary ?? meta.summary ?? 'Two computers changed the same memory at the same time.',
+        },
+      }));
     }
   } catch { /* 沒有衝突資料夾 */ }
 
@@ -311,7 +457,13 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
   const mi = await indexStats(path.join(machineDir(ctx.vault, ctx.mid), SCOPE_INDEX));
   const total = core.lines + gi.lines + mi.lines;
   if (total > LIMITS.coreLines) {
-    out.push(finding('H16', 'medium', '核心準則加索引超過 200 行', `CORE.md ${core.lines} 行、全域索引 ${gi.lines} 行、單機索引 ${mi.lines} 行，共 ${total} 行。過長時 Claude 比較不會照做。`, { refs: ['core/CORE.md'], fix: { action: 'open-core', args: {}, label: '編輯核心準則' } }));
+    out.push(finding('H16', 'medium', '核心準則加索引超過 200 行', `CORE.md ${core.lines} 行、全域索引 ${gi.lines} 行、單機索引 ${mi.lines} 行，共 ${total} 行。過長時 Claude 比較不會照做。`, {
+      refs: ['core/CORE.md'], fix: { action: 'open-core', args: {}, label: '編輯核心準則', en: { label: 'Edit core rules' } },
+      en: {
+        title: 'Core rules plus indexes exceed 200 lines',
+        detail: `CORE.md has ${core.lines} lines, the global index ${gi.lines}, and the machine index ${mi.lines}: ${total} lines in total. When it gets this long, Claude is less likely to follow it.`,
+      },
+    }));
   }
 
   const rank = { high: 0, medium: 1, low: 2, auto: 3 };

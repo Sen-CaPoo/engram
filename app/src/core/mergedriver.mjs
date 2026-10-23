@@ -10,6 +10,7 @@ import os from 'node:os';
 import nodePath from 'node:path';
 import { normalizeEngramLocation, parseMemoryFile, replaceBody, setFields } from './frontmatter.mjs';
 import { makeConflictId } from './ids.mjs';
+import { redactSecrets } from './secrets.mjs';
 
 /**
  * git 合併器入口。
@@ -40,9 +41,11 @@ export async function mergeDriver({ base, ours, theirs, path = '', conflictsDir,
     if (pb.errors.length) broken.push('base');
     if (broken.length) {
       const who = broken.includes('ours') ? '本機版本' : broken.includes('theirs') ? '對方版本' : '共同祖先';
+      const whoEn = broken.includes('ours') ? "this computer's version" : broken.includes('theirs') ? "the other computer's version" : 'the common ancestor version';
       const conflictId = await quarantine(await dirOf(), now, {
         ref: path, oursText, theirsText, baseText,
         summary: `「${name}」的${who}無法解析，已保留本機版本，另一台的版本已隔離待處理`,
+        summaryEn: `"${name}" could not be parsed in ${whoEn}. This computer's version was kept and the other computer's version was quarantined for review`,
         conflictedKeys: [],
         bodyConflict: false,
         unparsable: broken,
@@ -80,9 +83,11 @@ export async function mergeDriver({ base, ours, theirs, path = '', conflictsDir,
     const realConflicts = conflictedKeys.filter((k) => !isTimeKey(k) && !isOursKey(k)).map((k) => k.join('.'));
     if (bodyConflict || realConflicts.length) {
       const what = [bodyConflict ? '內文' : '', realConflicts.length ? `欄位（${realConflicts.join('、')}）` : ''].filter(Boolean).join('與');
+      const whatEn = [bodyConflict ? 'body' : '', realConflicts.length ? `fields: ${realConflicts.join(', ')}` : ''].filter(Boolean).join(' and ');
       const conflictId = await quarantine(await dirOf(), now, {
         ref: path, oursText, theirsText, baseText,
         summary: `「${name}」的${what}在兩台電腦都被修改，已保留本機版本，另一台的版本已隔離待處理`,
+        summaryEn: `"${name}" was modified on both computers (${whatEn}). This computer's version was kept and the other computer's version was quarantined for review`,
         conflictedKeys: realConflicts,
         bodyConflict,
       });
@@ -101,6 +106,7 @@ export async function mergeDriver({ base, ours, theirs, path = '', conflictsDir,
       conflictId = await quarantine(await dirOf(), now, {
         ref: path, oursText, theirsText, baseText,
         summary: `「${name || nodePath.basename(path || ours || '')}」自動合併失敗（${err?.message ?? err}），已保留本機版本，另一台的版本已隔離待處理`,
+        summaryEn: `Automatic merge of "${name || nodePath.basename(path || ours || '')}" failed (${typeof err?.en === 'string' ? err.en : err?.en?.message ?? err?.message ?? err}). This computer's version was kept and the other computer's version was quarantined for review`,
         conflictedKeys: [],
         bodyConflict: false,
         error: String(err?.stack ?? err),
@@ -205,7 +211,7 @@ async function mergeFile(ours, base, theirs, git) {
     const fo = nodePath.join(tmp, 'ours'), fb = nodePath.join(tmp, 'base'), ft = nodePath.join(tmp, 'theirs');
     await Promise.all([writeFile(fo, ours, 'utf8'), writeFile(fb, base, 'utf8'), writeFile(ft, theirs, 'utf8')]);
     const { code, stdout, stderr } = await run(git, ['-c', 'core.quotepath=false', '-c', 'core.autocrlf=false', 'merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'base', '-L', 'theirs', fo, fb, ft]);
-    if (code === null || code < 0 || code > 127) throw new Error(`git merge-file 失敗（${code}）：${stderr.trim()}`);
+    if (code === null || code < 0 || code > 127) throw Object.assign(new Error(`git merge-file 失敗（${code}）：${stderr.trim()}`), { en: `git merge-file failed (${code}): ${stderr.trim()}` });
     return { text: stdout, conflicts: code };
   } finally {
     await rm(tmp, { recursive: true, force: true });
@@ -217,7 +223,7 @@ function run(cmd, args, cwd, timeoutMs = 30_000) {
     const child = spawn(cmd, args, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' } });
     const out = [], err = [];
     // 逾時就終止並當成失敗，由呼叫端退回「保留本機版本＋隔離對方」
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } reject(new Error('git merge-file 逾時')); }, timeoutMs);
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } reject(Object.assign(new Error('git merge-file 逾時'), { en: 'git merge-file timed out' })); }, timeoutMs);
     child.stdout.on('data', (d) => out.push(d));
     child.stderr.on('data', (d) => err.push(d));
     child.on('error', (e) => { clearTimeout(timer); reject(e); });
@@ -231,7 +237,7 @@ function run(cmd, args, cwd, timeoutMs = 30_000) {
 // ───────────────────────── 隔離區 ─────────────────────────
 
 /** 以獨占方式建立衝突資料夾；id 撞名時換一個（亂數相同時改加流水號），絕不覆蓋既有紀錄。 */
-async function quarantine(dir, now, { ref, oursText, theirsText, baseText, summary, conflictedKeys, bodyConflict, error, unparsable, parseErrors }) {
+async function quarantine(dir, now, { ref, oursText, theirsText, baseText, summary, summaryEn, conflictedKeys, bodyConflict, error, unparsable, parseErrors }) {
   await mkdir(dir, { recursive: true });
   let id;
   let target;
@@ -246,10 +252,12 @@ async function quarantine(dir, now, { ref, oursText, theirsText, baseText, summa
   if (oursText !== null && oursText !== undefined) writes.push(writeFile(nodePath.join(target, 'ours.md'), oursText, 'utf8'));
   if (theirsText !== null && theirsText !== undefined) writes.push(writeFile(nodePath.join(target, 'theirs.md'), theirsText, 'utf8'));
   if (baseText) writes.push(writeFile(nodePath.join(target, 'base.md'), baseText, 'utf8'));
-  const meta = { id, ref, kind: 'content', createdAt: now.toISOString(), summary, conflictedKeys, bodyConflict };
+  // meta.json 會跟著 vault 推送（同步時的金鑰檢查只看 .md）：摘要、錯誤與解析錯誤可能附上含金鑰的原文那一行，寫入前遮蔽
+  const safe = (t) => (t == null ? t : redactSecrets(String(t)).text);
+  const meta = { id, ref, kind: 'content', createdAt: now.toISOString(), summary: safe(summary), ...(summaryEn ? { en: { summary: safe(summaryEn) } } : {}), conflictedKeys, bodyConflict };
   if (unparsable) meta.unparsable = unparsable;
-  if (parseErrors) meta.parseErrors = parseErrors;
-  if (error) meta.error = error;
+  if (parseErrors) meta.parseErrors = Object.fromEntries(Object.entries(parseErrors).map(([side, list]) => [side, Array.isArray(list) ? list.map(safe) : list]));
+  if (error) meta.error = safe(error);
   writes.push(writeFile(nodePath.join(target, 'meta.json'), JSON.stringify(meta, null, 2) + '\n', 'utf8'));
   await Promise.all(writes);
   return id;

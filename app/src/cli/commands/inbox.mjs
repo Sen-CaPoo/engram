@@ -59,11 +59,17 @@ const CONTENT_ACTIONS = new Set(['merge', 'edit', 'open-conflict', 'open-core', 
  * 卡片的文字也會交給 Claude：一律遮蔽（例如 H12 的 frontmatter 錯誤訊息會附上那一行原文）。
  * H13 的說明含有金鑰的前 4 個字元，改成只列行號。
  */
-function safeFinding(f) {
+export function safeFinding(f) {
   const safe = { ...f, title: redactText(f.title), detail: redactText(f.detail) };
+  // 英文版（en）的文字同樣含有那一行原文或金鑰前幾個字元，一併遮蔽
+  if (f.en) safe.en = { ...f.en, ...(f.en.title != null ? { title: redactText(f.en.title) } : {}), ...(f.en.detail != null ? { detail: redactText(f.en.detail) } : {}) };
   if (f.code !== 'H13') return safe;
   const lines = f.fix?.args?.lines ?? [];
-  return { ...safe, detail: `${lines.length ? `第 ${lines.join('、')} 行` : '內文'}疑似含有金鑰或密碼（內容不顯示）。此檔案不會同步，也不會列在索引裡（之後的對話看不到它），直到改成記錄「存放位置」。` };
+  return {
+    ...safe,
+    detail: `${lines.length ? `第 ${lines.join('、')} 行` : '內文'}疑似含有金鑰或密碼（內容不顯示）。此檔案不會同步，也不會列在索引裡（之後的對話看不到它），直到改成記錄「存放位置」。`,
+    ...(f.en ? { en: { ...safe.en, detail: `${lines.length ? `${lines.length > 1 ? 'Lines' : 'Line'} ${lines.join(', ')}` : 'The body'} may contain a secret or password (content not shown). This file will not sync and is left out of the index (later conversations cannot see it) until you record where the secret is stored instead.` } } : {}),
+  };
 }
 
 const fixesOf = (f) => (f.fixes?.length ? f.fixes : f.fix ? [f.fix] : []);

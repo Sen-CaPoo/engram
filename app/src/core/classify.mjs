@@ -20,36 +20,45 @@ function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 /**
  * 判斷內容是否只在某台電腦成立。
  * @param {{ type?: string, text: string, hostnames?: string[] }} input
- * @returns {{ yes: boolean, reasons: string[] }}
+ * reasonsEn 是 reasons 的英文版（同樣的順序，小寫開頭，可以接在句子裡）。
+ * @returns {{ yes: boolean, reasons: string[], reasonsEn: string[] }}
  */
 export function machineSpecific({ type, text, hostnames = [] }) {
-  if (type === 'user') return { yes: false, reasons: [] };
+  if (type === 'user') return { yes: false, reasons: [], reasonsEn: [] };
   const reasons = [];
-  if (STRONG.test(text)) reasons.push('提到這台電腦');
+  const reasonsEn = [];
+  if (STRONG.test(text)) { reasons.push('提到這台電腦'); reasonsEn.push('mentions this computer'); }
   let host = null;
   for (const h of hostnames) {
     if (h && h.length >= 4 && new RegExp(`\\b${escapeRe(h)}\\b`, 'i').test(text)) { host = h; break; }
   }
-  if (host) reasons.push(`提到主機名稱 ${host}`);
+  if (host) { reasons.push(`提到主機名稱 ${host}`); reasonsEn.push(`mentions the host name ${host}`); }
   if (!reasons.length) {
     const anchored = DRIVE_PATH.test(text);
-    if (anchored && LOCAL_ENV.test(text)) reasons.push('描述本機環境，並含本機路徑');
-    else if (anchored && INSTALL_AT.test(text)) reasons.push('記錄安裝位置');
-    else if (DISK_STATE.test(text)) reasons.push('描述磁碟狀況');
-    else if (anchored && NETWORK_SET.test(text)) reasons.push('記錄網路設定');
+    if (anchored && LOCAL_ENV.test(text)) { reasons.push('描述本機環境，並含本機路徑'); reasonsEn.push('describes the local environment and includes a local path'); }
+    else if (anchored && INSTALL_AT.test(text)) { reasons.push('記錄安裝位置'); reasonsEn.push('records an install location'); }
+    else if (DISK_STATE.test(text)) { reasons.push('描述磁碟狀況'); reasonsEn.push('describes disk status'); }
+    else if (anchored && NETWORK_SET.test(text)) { reasons.push('記錄網路設定'); reasonsEn.push('records network settings'); }
   }
-  return { yes: reasons.length > 0, reasons };
+  return { yes: reasons.length > 0, reasons, reasonsEn };
 }
 
 /**
- * 收編時的預設範圍建議。
- * @returns {{ scope: 'project'|'global'|'machine', reason: string }}
+ * 收編時的預設範圍建議。en.reason 是 reason 的英文版。
+ * @returns {{ scope: 'project'|'global'|'machine', reason: string, en: { reason: string } }}
  */
 export function suggestScope({ type, text, hostnames = [] }) {
-  if (type === 'user') return { scope: 'global', reason: '使用者層級的資訊，所有專案都適用' };
+  if (type === 'user') return { scope: 'global', reason: '使用者層級的資訊，所有專案都適用', en: { reason: 'User-level information that applies to all projects' } };
   const m = machineSpecific({ type, text, hostnames });
-  if (m.yes) return { scope: 'machine', reason: m.reasons.join('、') };
-  return { scope: 'project', reason: type === 'feedback' ? '回饋類型先留在專案，收件匣會建議是否升級為全域' : '專案相關' };
+  if (m.yes) {
+    const en = m.reasonsEn.join(', ');
+    return { scope: 'machine', reason: m.reasons.join('、'), en: { reason: en.charAt(0).toUpperCase() + en.slice(1) } };
+  }
+  return {
+    scope: 'project',
+    reason: type === 'feedback' ? '回饋類型先留在專案，收件匣會建議是否升級為全域' : '專案相關',
+    en: { reason: type === 'feedback' ? 'Feedback stays in the project for now; the inbox will suggest whether to promote it to global' : 'Project-related' },
+  };
 }
 
 /** 寬鬆比對名稱：忽略大小寫、空白、. - _ */

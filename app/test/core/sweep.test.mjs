@@ -142,6 +142,12 @@ describe('SW-3：撞名與搬家的來源歸屬、空的封存專案、封存專
       const sForm = by(path.join(desk, '乙方表單'));
       assert.deepEqual(files(sForm), ['form.md']);
       assert.ok(sForm.suggestions.some((x) => x.kind === 'path' && x.path.toLowerCase() === path.join(desk, '文件', '乙方表單').toLowerCase()), '建議搬家後的新位置');
+      // 英文版（1.1.0）：每個項目與建議都附 en.reason，中文 reason 不變
+      for (const s of plan.sources) {
+        for (const it of s.items) assert.ok(it.reason && typeof it.en?.reason === 'string' && it.en.reason, `項目缺英文理由：${it.file}`);
+        for (const sg of s.suggestions) assert.ok(sg.reason && typeof sg.en?.reason === 'string' && sg.en.reason, `建議缺英文理由：${sg.kind}`);
+      }
+      assert.match(sForm.suggestions.find((x) => x.kind === 'path').en.reason, /no longer exists; a folder with the same name is here/);
       const sClass = by(path.join(desk, '公司內訓教材'));
       assert.equal(sClass.how, 'content-path', '內文優先於編碼反推');
       assert.equal(sClass.exists, false);
@@ -237,6 +243,7 @@ describe('SW-3：撞名與搬家的來源歸屬、空的封存專案、封存專
       const s = plan.sources.find((x) => x.resolvedPath?.toLowerCase() === ops.toLowerCase());
       assert.equal(s.target.isNew, true, '只建議、不自動連結');
       assert.ok(s.suggestions.some((x) => x.kind === 'project' && x.pid === archived.pid), '建議連到同名的封存專案');
+      assert.match(s.suggestions.find((x) => x.pid === archived.pid).en.reason, /^Same name as the archived project "未歸屬（Ops）"/);
       const r = await e.sweepLegacy({ dryRun: false, plan: applyEdits(plan, { targets: { [s.encoded]: { pid: archived.pid } } }) });
       assert.deepEqual(r.deferred, []);
       const p = (await e.projects.list()).find((x) => x.pid === archived.pid);

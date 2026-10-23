@@ -203,7 +203,7 @@ async function resolveUnmerged(ctx) {
   const written = [];
   const write = async (abs, text) => {
     const ok = await safeWrite(abs, text);
-    if (!ok) throw new EngramError(E.LOCKED, '解決衝突時檔案正被使用，這一輪先不合併', '稍後會自動重試');
+    if (!ok) throw new EngramError(E.LOCKED, '解決衝突時檔案正被使用，這一輪先不合併', '稍後會自動重試').withEn('A file was in use while resolving conflicts, so this round skips merging', 'It will retry automatically soon');
   };
   for (const p of paths) {
     const ls = await git(['ls-files', '-u', '-z', '--', p], { cwd: ctx.vault });
@@ -222,14 +222,14 @@ async function resolveUnmerged(ctx) {
       else {
         // 內容衝突但合併器沒處理（例如非 Markdown）：保留本機版本，隔離對方
         await write(abs, ours);
-        ids.push(await quarantine(ctx.vault, { ref: p, kind: 'content', ours, theirs, base, summary: `${p} 兩邊都有修改，已保留本機版本` }));
+        ids.push(await quarantine(ctx.vault, { ref: p, kind: 'content', ours, theirs, base, summary: `${p} 兩邊都有修改，已保留本機版本`, summaryEn: `${p} was modified on both computers; this computer's version was kept` }));
       }
     } else if (ours !== null) {
       await write(abs, ours);
-      ids.push(await quarantine(ctx.vault, { ref: p, kind: 'modify-delete', ours, theirs: null, base, summary: '另一台電腦刪除了這筆記憶，但這台有修改，已保留' }));
+      ids.push(await quarantine(ctx.vault, { ref: p, kind: 'modify-delete', ours, theirs: null, base, summary: '另一台電腦刪除了這筆記憶，但這台有修改，已保留', summaryEn: 'The other computer deleted this memory, but this computer modified it, so it was kept' }));
     } else if (theirs !== null) {
       await write(abs, theirs);
-      ids.push(await quarantine(ctx.vault, { ref: p, kind: 'modify-delete', ours: null, theirs, base, summary: '這台電腦刪除了這筆記憶，但另一台有修改，已保留修改後的版本' }));
+      ids.push(await quarantine(ctx.vault, { ref: p, kind: 'modify-delete', ours: null, theirs, base, summary: '這台電腦刪除了這筆記憶，但另一台有修改，已保留修改後的版本', summaryEn: 'This computer deleted this memory, but the other computer modified it, so the modified version was kept' }));
     }
     written.push(p);
   }
@@ -331,7 +331,7 @@ async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
     // 1. 本機 commit
     const allow = await loadAllow(ctx.local);
     const plan = await planCommit(ctx, { now, engineWritten, allow });
-    if (plan.unmerged.length) throw new EngramError(E.CONFLICT, '還有未解決的合併衝突，這一輪不提交', '執行 engram doctor', { unmerged: plan.unmerged });
+    if (plan.unmerged.length) throw new EngramError(E.CONFLICT, '還有未解決的合併衝突，這一輪不提交', '執行 engram doctor', { unmerged: plan.unmerged }).withEn('There are unresolved merge conflicts, so this round does not commit', 'Run engram doctor');
     result.held = plan.held;
     result.skipped = { recent: plan.recent, secrets: plan.secrets };
     if (plan.stage.length) {
@@ -355,7 +355,8 @@ async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
           if (m.code !== 0) {
             if (/would be overwritten|untracked working tree files/i.test(m.stderr + m.stdout)) {
               // 本機有扣住的刪除或正在寫入的檔案，這一輪先不合併
-              throw new EngramError(E.CONFLICT, '本機有尚未提交的變更，這一輪暫不合併', '處理收件匣中被扣住的刪除或疑似含有金鑰的檔案（H18、H13）；都沒有的話，稍後再同步', { stderr: m.stderr.slice(-500) });
+              throw new EngramError(E.CONFLICT, '本機有尚未提交的變更，這一輪暫不合併', '處理收件匣中被扣住的刪除或疑似含有金鑰的檔案（H18、H13）；都沒有的話，稍後再同步', { stderr: m.stderr.slice(-500) })
+                .withEn('There are uncommitted local changes, so this round does not merge', 'Handle the held deletions or possible-secret files in the inbox (H18, H13); if there are none, sync again in a moment');
             }
             if (!(await hasMergeInProgress(ctx))) throw classifyGitError(m, ['merge']);
             try {
@@ -363,7 +364,7 @@ async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
               result.conflicts.push(...ids);
               for (const p of written) await git(['add', '-A', '--', p], { cwd: ctx.vault });
               const left = await git(['ls-files', '-u'], { cwd: ctx.vault });
-              if (left.stdout.trim()) throw new EngramError(E.CONFLICT, '合併後仍有未解決的路徑', '', { left: left.stdout.slice(0, 500) });
+              if (left.stdout.trim()) throw new EngramError(E.CONFLICT, '合併後仍有未解決的路徑', '', { left: left.stdout.slice(0, 500) }).withEn('Some paths are still unresolved after the merge');
               await git(['commit', '-q', '--no-edit'], { cwd: ctx.vault, env });
             } catch (err) {
               await git(['merge', '--abort'], { cwd: ctx.vault, allowFail: true });
@@ -415,7 +416,7 @@ async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
     result.state = syncState.state;
     return result;
   } catch (err) {
-    const e = err instanceof EngramError ? err : new EngramError(E.GIT, err.message);
+    const e = err instanceof EngramError ? err : new EngramError(E.GIT, err.message).withEn(err.message);
     const stateName = { [E.OFFLINE]: 'offline', [E.AUTH]: 'auth', [E.PROXY]: 'offline', [E.PUSH_PROTECTED]: 'error', [E.LOCKED]: 'busy' }[e.code] ?? 'error';
     await updateState(ctx.local, {
       sync: { ...(prevState.sync ?? {}), state: stateName, lastAttemptAt: startedAt, lastSuccessAt: prevState.sync?.lastSuccessAt ?? null, error: e.toJSON() },

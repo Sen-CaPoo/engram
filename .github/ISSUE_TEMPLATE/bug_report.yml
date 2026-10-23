@@ -1,5 +1,5 @@
-name: 問題回報
-description: Engram 沒有照預期運作
+name: 問題回報 / Bug report
+description: Engram 沒有照預期運作 / Engram isn't working as expected
 labels: [bug]
 body:
   - type: markdown
@@ -7,32 +7,35 @@ body:
       value: |
         感謝回報！貼上任何輸出前，請確認裡面沒有個人資料、記憶內容或金鑰。
         安全性問題請不要在這裡回報，改用 Security → Report a vulnerability。
+
+        Thanks for reporting! Before you paste any output, make sure it contains no personal data, memory content, or secrets.
+        Please don't report security issues here; use Security → Report a vulnerability instead.
   - type: textarea
     id: what
     attributes:
-      label: 發生了什麼事
-      description: 你做了什麼、預期看到什麼、實際看到什麼。
+      label: 發生了什麼事 / What happened
+      description: 你做了什麼、預期看到什麼、實際看到什麼。 / What you did, what you expected to see, and what you actually saw.
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: 重現步驟
+      label: 重現步驟 / Steps to reproduce
       placeholder: |
-        1. 
-        2. 
-        3. 
+        1.
+        2.
+        3.
   - type: textarea
     id: doctor
     attributes:
-      label: engram doctor 的輸出
-      description: 在終端機執行 engram doctor，把結果貼在這裡。
+      label: engram doctor 的輸出 / Output of engram doctor
+      description: 在終端機執行 engram doctor，把結果貼在這裡。 / Run engram doctor in a terminal and paste the result here.
       render: text
   - type: input
     id: version
     attributes:
-      label: 版本
-      description: engram version 與 claude --version 的輸出
-      placeholder: engram 1.0.0（Node v24.x）· Claude Code 2.x
+      label: 版本 / Version
+      description: engram version 與 claude --version 的輸出 / Output of engram version and claude --version
+      placeholder: engram 1.1.0（Node v24.x）· Claude Code 2.x
     validations:
       required: true

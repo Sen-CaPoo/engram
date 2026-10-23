@@ -326,6 +326,8 @@ describe('對抗式審查的情境', () => {
       assert.equal(u1.done, false);
       assert.equal(u1.ok, false);
       assert.ok(u1.notes.some((n) => n.includes(path.basename(A2))), JSON.stringify(u1.notes));
+      assert.equal(u1.en.notes.length, u1.notes.length, '英文 notes 與中文 notes 一一對應');
+      assert.ok(u1.en.notes.some((n) => n.includes(A2) && /could not be renamed back/.test(n) && /Close any program using this folder/.test(n)), JSON.stringify(u1.en.notes));
       assert.ok(fs.existsSync(B) && !fs.existsSync(B2), '沒被占用的那筆已還原');
       assert.ok(fs.existsSync(A2) && !fs.existsSync(A), '被占用的那筆停在新名稱');
       const mid = Object.values(JSON.parse(fs.readFileSync(bindingsFile, 'utf8')));
@@ -367,6 +369,9 @@ describe('對抗式審查的情境', () => {
         assert.equal(u.done, true, JSON.stringify(u));
         assert.equal(u.ok, false, '有說明，不是全部照常還原');
         assert.ok(u.notes.some((n) => n.includes(A2)), JSON.stringify(u.notes));
+        assert.equal(u.en.notes.length, u.notes.length, '英文 notes 與中文 notes 一一對應');
+        assert.ok(u.en.notes.some((n) => n.includes(A2) && /^Could not find the renamed folder /.test(n)), JSON.stringify(u.en.notes));
+        assert.equal(/is a different folder and is not bound/.test(u.en.notes.join('\n')), recreate, '原位置另有資料夾時才附加說明');
         assert.deepEqual(u.restored.map((x) => x.to.toLowerCase()), [B.toLowerCase()], '只有真的改回的那筆算還原');
         const bindings = Object.values(JSON.parse(fs.readFileSync(path.join(e.paths.vault, 'machines', e.machine.id, 'bindings.json'), 'utf8')));
         assert.ok(!bindings.some((b) => [A.toLowerCase(), A2.toLowerCase()].includes(b.path.toLowerCase())), `${recreate ? '原位置的新資料夾' : '不存在的資料夾'}沒有綁定`);

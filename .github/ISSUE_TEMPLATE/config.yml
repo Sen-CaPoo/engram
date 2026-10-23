@@ -1,8 +1,14 @@
 blank_issues_enabled: true
 contact_links:
-  - name: 常見問題
+  - name: 常見問題 / FAQ (繁體中文)
     url: https://github.com/Sen-CaPoo/engram/blob/main/docs/%E5%B8%B8%E8%A6%8B%E5%95%8F%E9%A1%8C.md
-    about: 安裝與使用時的常見疑問、疑難排解
-  - name: 使用說明
+    about: 安裝與使用時的常見疑問、疑難排解 / Common questions and troubleshooting (Traditional Chinese)
+  - name: 常見問題 / FAQ (English)
+    url: https://github.com/Sen-CaPoo/engram/blob/main/docs/en/faq.md
+    about: 安裝與使用時的常見疑問、疑難排解 / Common questions and troubleshooting (English)
+  - name: 使用說明 / User guide (繁體中文)
     url: https://github.com/Sen-CaPoo/engram/blob/main/docs/%E4%BD%BF%E7%94%A8%E8%AA%AA%E6%98%8E.md
-    about: 完整功能說明與指令速查
+    about: 完整功能說明與指令速查 / Full feature guide and command cheat sheet (Traditional Chinese)
+  - name: 使用說明 / User guide (English)
+    url: https://github.com/Sen-CaPoo/engram/blob/main/docs/en/user-guide.md
+    about: 完整功能說明與指令速查 / Full feature guide and command cheat sheet (English)

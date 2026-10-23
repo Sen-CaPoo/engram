@@ -7,6 +7,12 @@ export class CliError extends Error {
     this.code = code;
     this.hint = hint;
   }
+
+  /** 附上英文版（管理介面切到英文時顯示）；回傳自己。 */
+  withEn(message, hint = '') {
+    this.en = { message, ...(hint ? { hint } : {}) };
+    return this;
+  }
 }
 
 // 引擎沒有附建議時，依錯誤碼補一句「接下來怎麼做」
@@ -26,10 +32,43 @@ const DEFAULT_HINTS = {
   E_SECRET: '記憶裡只記金鑰存放在哪裡、怎麼取得；確定不是金鑰時，執行 engram not-secret 記入「不是金鑰」清單後再試一次。',
 };
 
+const GENERIC_HINT = '執行 engram doctor 檢查環境；詳細記錄在 ~/.engram/local/logs/。';
+
+// DEFAULT_HINTS 的英文版（管理介面切到英文時顯示）
+const DEFAULT_HINTS_EN = {
+  E_LOCKED: 'Another Engram process is writing. Try again in a moment.',
+  E_NOT_BOUND: 'Run engram bind in the project folder first.',
+  E_OFFLINE: 'Check your network connection. The agent syncs again automatically once you are back online.',
+  E_AUTH: 'Run gh auth login to sign in to GitHub again. If git does not use GitHub CLI for credentials, run git -C "$HOME/.engram/vault" fetch in PowerShell or Git Bash instead and sign in through the browser when prompted.',
+  E_PROXY: 'Check that the http.proxy setting in git is correct.',
+  E_PUSH_PROTECTED: 'GitHub push protection blocked a file. Run engram ui to see which one.',
+  E_NOT_FOUND: 'Check that the name or path is correct.',
+  E_INVALID: 'Check the arguments you entered.',
+  E_USAGE: 'Run engram help to see the usage.',
+  E_ENGINE_MISSING: 'Make sure app/src/core/ is complete, or reinstall Engram.',
+  E_AGENT_DOWN: 'Run engram agent to start the agent in the foreground and see the error.',
+  E_NOT_IMPLEMENTED: 'This feature is not finished yet.',
+  E_SECRET: 'In your memories, record only where a secret is stored and how to get it. If it is not a secret, run engram not-secret to add it to the "not a secret" list, then try again.',
+};
+const GENERIC_HINT_EN = 'Run engram doctor to check your setup. Details are logged in ~/.engram/local/logs/.';
+
 /** 任何錯誤 → { code, message, hint } */
 export function toErrorInfo(err) {
   const code = err?.code && String(err.code).startsWith('E_') ? err.code : 'E_INTERNAL';
   const message = err?.message || String(err);
-  const hint = err?.hint || DEFAULT_HINTS[code] || '執行 engram doctor 檢查環境；詳細記錄在 ~/.engram/local/logs/。';
+  const hint = err?.hint || DEFAULT_HINTS[code] || GENERIC_HINT;
   return { code, message, hint };
+}
+
+/**
+ * 管理介面用：toErrorInfo 再加上 en（錯誤有 withEn 時用它；建議是預設的那幾句時用對應的英文）。
+ * 命令列只用 toErrorInfo，輸出不變。
+ */
+export function toErrorInfoI18n(err) {
+  const info = toErrorInfo(err);
+  const en = {};
+  if (err?.en?.message) en.message = err.en.message;
+  if (err?.en?.hint) en.hint = err.en.hint;
+  else if (!err?.hint) en.hint = DEFAULT_HINTS[info.code] ? DEFAULT_HINTS_EN[info.code] : GENERIC_HINT_EN;
+  return Object.keys(en).length ? { ...info, en } : info;
 }

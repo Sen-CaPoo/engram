@@ -51,6 +51,19 @@ const withBody = (text, body) => {
 
 // ───────── 直接呼叫 ─────────
 
+test('衝突紀錄的 meta.json 會被推送：frontmatter 錯誤那一行含金鑰時，解析錯誤與摘要都遮蔽', async (t) => {
+  const SECRET = `ghp_${'Hh1Jj2Kk3L'.repeat(4)}`;
+  const good = (body) => `---\nname: x\ndescription: "d"\nmetadata:\n  type: reference\n---\n\n${body}\n`;
+  const { r, conflictsDir } = await runDriver(t, {
+    base: good('v0'), theirs: good('theirs'),
+    ours: `---\nname: x\ndescription: "d" ${SECRET}\nmetadata:\n  type: reference\n---\n\nours\n`,
+  });
+  assert.equal(r.result, 'quarantined');
+  const raw = readFileSync(join(conflictsDir, r.conflictId, 'meta.json'), 'utf8');
+  assert.ok(!raw.includes('ghp_'), 'meta.json 不可以含金鑰');
+  assert.ok(readConflict(conflictsDir, r.conflictId).meta.parseErrors.ours.length > 0, '解析錯誤仍然記錄（已遮蔽）');
+});
+
 test('只有 modified 與 originSessionId 不同 → clean，取較新的一方', async (t) => {
   const base = read('demo-project-deploy.md');
   const ours = setFields(base, { 'metadata.modified': '2026-10-02T00:00:00.000Z', 'metadata.originSessionId': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
@@ -100,6 +113,7 @@ test('同一行兩邊都改 → quarantined，檔案保留本機版本且沒有�
   assert.deepEqual(c.meta.conflictedKeys, []);
   assert.equal(c.meta.createdAt, NOW.toISOString());
   assert.match(c.meta.summary, /「sample-long-cjk」的內文在兩台電腦都被修改/);
+  assert.match(c.meta.en.summary, /^"sample-long-cjk" was modified on both computers \(body\)\. /, '英文摘要');
 });
 
 test('非 harness 欄位兩邊都改 → quarantined，保留本機的值', async (t) => {
@@ -115,6 +129,7 @@ test('非 harness 欄位兩邊都改 → quarantined，保留本機的值', asyn
   assert.deepEqual(c.meta.conflictedKeys, ['description']);
   assert.equal(c.meta.bodyConflict, false);
   assert.match(c.meta.summary, /欄位（description）/);
+  assert.match(c.meta.en.summary, /^"sample-tool-quirk" was modified on both computers \(fields: description\)\. /, '英文摘要');
 });
 
 test('一邊加 metadata.engram、一邊改內文 → 兩者合併', async (t) => {
@@ -187,6 +202,7 @@ test('發生例外時本機檔案不變、exitCode 仍為 0', async (t) => {
   assert.equal(readFileSync(ours, 'utf8'), text);
   const c = readConflict(conflictsDir, r.conflictId);
   assert.match(c.meta.summary, /自動合併失敗/);
+  assert.match(c.meta.en.summary, /^Automatic merge of ".+" failed \(.+\)\. This computer's version was kept/, '英文摘要');
   assert.ok(c.meta.error);
 });
 
@@ -351,6 +367,7 @@ async function assertRefused(t, { base = RV_BASE, ours, theirs, side }) {
   if (base) assert.equal(c.read('base.md'), base);
   assert.ok(c.meta.unparsable.includes(side), JSON.stringify(c.meta.unparsable));
   assert.match(c.meta.summary, side === 'ours' ? /本機版本無法解析/ : /對方版本無法解析，已保留本機版本/);
+  assert.match(c.meta.en.summary, side === 'ours' ? /could not be parsed in this computer's version\. / : /could not be parsed in the other computer's version\. /, '英文摘要');
   return c;
 }
 

@@ -24,14 +24,21 @@ function describeHere(r) {
   return `${where}：尚未納入 Engram（engram bind 可立即綁定）`;
 }
 
+/** 物件裡每個字串值都遮蔽疑似金鑰（保留結構） */
+const redactDeep = (v) => (typeof v === 'string' ? redactText(v)
+  : Array.isArray(v) ? v.map(redactDeep)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redactDeep(x)])) : v);
+
 export async function cmdStatus(ctx) {
   const eg = await ctx.engine();
   const report = await eg.status();
   const here = await eg.identity.resolve(ctx.cwd).catch((err) => ({ error: toErrorInfo(err) }));
   const agent = agentState(localPaths());
-  const { machine: m, sync: s, counts: c, inbox } = report;
+  const { machine: m, counts: c, inbox } = report;
   // 遠端網址可能內嵌權杖（https://user:token@github.com/…）：status 的輸出也會交給 Claude
   const v = { ...report.vault, remote: report.vault?.remote ? redactText(report.vault.remote) : report.vault?.remote };
+  // 同步錯誤的訊息可能帶出 git 輸出（例如含權杖的網址）：一律遮蔽，連同英文版與細節
+  const s = report.sync?.error ? { ...report.sync, error: redactDeep(report.sync.error) } : report.sync;
   const f = inbox?.findings ?? {};
   const lines = [
     `Engram 憶跡 · ${m.label || m.id}（${m.id}）`,
@@ -43,7 +50,7 @@ export async function cmdStatus(ctx) {
     `目前資料夾：${describeHere(here)}`,
     `常駐程式：${agent.running ? `執行中（pid ${agent.pid}，http://127.0.0.1:${agent.port}/）` : '沒有在執行（engram ui 會自動啟動）'}`,
   ];
-  ctx.out.result({ ...report, vault: v, here, agentProcess: agent }, lines);
+  ctx.out.result({ ...report, vault: v, sync: s, here, agentProcess: agent }, lines);
 }
 
 /** 多個呼叫端在短時間內要求同步時，只有最後一個在安靜 ms 之後真的執行。 */
@@ -163,7 +170,9 @@ export async function cmdImport(ctx) {
   if (!['plan', 'apply', 'undo'].includes(sub)) throw new CliError('E_USAGE', '請指定 plan、apply 或 undo', '例如：engram import plan');
   const eg = await ctx.engine();
   if (sub === 'plan') {
-    const plan = await (await migrateFn('planImport'))(eg, {});
+    const raw = await (await migrateFn('planImport'))(eg, {});
+    // --json 的輸出會交給 Claude：舊記憶的說明與名稱可能含金鑰，先遮蔽
+    const plan = raw?.sources ? { ...raw, sources: raw.sources.map((s) => ({ ...s, items: (s.items ?? []).map((it) => ({ ...it, name: redactText(it.name), description: redactText(it.description) })) })) } : raw;
     const t = plan?.totals ?? {};
     ctx.out.result(plan, [
       `匯入計畫：${t.sources ?? count(plan?.sources)} 個來源資料夾、${t.memories ?? 0} 筆記憶。`,

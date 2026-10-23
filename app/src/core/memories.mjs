@@ -40,14 +40,14 @@ export function normalizeScope(scope, defaultMid) {
     const mid = scope?.mid ?? defaultMid;
     if (ID_RE.test(String(mid ?? ''))) return { kind: 'machine', mid };
   }
-  throw new EngramError(E.INVALID, `不合法的範圍：${JSON.stringify(scope).slice(0, 120)}`);
+  throw new EngramError(E.INVALID, `不合法的範圍：${JSON.stringify(scope).slice(0, 120)}`).withEn(`Invalid scope: ${JSON.stringify(scope).slice(0, 120)}`);
 }
 
 export function scopeDir(vaultDir, scope) {
   if (scope.kind === 'global') return path.join(vaultDir, 'global');
   if (scope.kind === 'project') return projectMemoryDir(vaultDir, scope.pid);
   if (scope.kind === 'machine') return machineDir(vaultDir, scope.mid);
-  throw new EngramError(E.INVALID, `未知的範圍：${JSON.stringify(scope)}`);
+  throw new EngramError(E.INVALID, `未知的範圍：${JSON.stringify(scope)}`).withEn(`Unknown scope: ${JSON.stringify(scope)}`);
 }
 
 export function indexFileFor(scope) {
@@ -60,7 +60,7 @@ function isIndexFile(name) {
 
 function assertMemoryRef(ref) {
   const scope = scopeOfRef(ref);
-  invariant(scope && /\.md$/i.test(ref) && !isIndexFile(path.posix.basename(ref)), `不是記憶檔：${ref}`);
+  invariant(scope && /\.md$/i.test(ref) && !isIndexFile(path.posix.basename(ref)), `不是記憶檔：${ref}`, undefined, { message: `Not a memory file: ${ref}` });
   return scope;
 }
 
@@ -128,7 +128,7 @@ export async function readMemory(ctx, ref, { withHistory = false } = {}) {
   assertMemoryRef(ref);
   const abs = fromRef(ctx.vault, ref);
   const raw = await readText(abs);
-  if (raw === null) throw new EngramError(E.NOT_FOUND, `找不到記憶：${ref}`);
+  if (raw === null) throw new EngramError(E.NOT_FOUND, `找不到記憶：${ref}`).withEn(`Memory not found: ${ref}`);
   const parsed = parseMemoryFile(raw);
   const s = summarize(ref, raw, { mtime: mtimeMs(abs) });
   const mem = { ref, scope: s.scope, frontmatter: parsed.data, body: parsed.body, raw, path: abs, updatedAt: s.updatedAt };
@@ -158,10 +158,10 @@ export async function refreshIndex(ctx, scope) {
 async function ensureScopeExists(ctx, scope) {
   if (scope.kind === 'project') {
     const p = await readProject(ctx.vault, scope.pid);
-    if (!p) throw new EngramError(E.NOT_FOUND, `找不到專案：${scope.pid}`);
+    if (!p) throw new EngramError(E.NOT_FOUND, `找不到專案：${scope.pid}`).withEn(`Project not found: ${scope.pid}`);
   }
   if (scope.kind === 'machine' && !exists(machineDir(ctx.vault, scope.mid))) {
-    throw new EngramError(E.NOT_FOUND, `找不到電腦：${scope.mid}`);
+    throw new EngramError(E.NOT_FOUND, `找不到電腦：${scope.mid}`).withEn(`Computer not found: ${scope.mid}`);
   }
   await fsp.mkdir(scopeDir(ctx.vault, scope), { recursive: true });
 }
@@ -178,11 +178,11 @@ async function headText(ctx, ref) {
 
 /** 新增一筆記憶（engram remember 的實作，R-05）。 */
 export async function createMemory(ctx, { scope, name, type, description, body = '', project, allowSecrets = false }) {
-  invariant(scope && ['global', 'project', 'machine'].includes(scope.kind), '請指定範圍：global、project 或 machine');
-  invariant(name && String(name).trim(), '請提供 name');
-  invariant(MEMORY_TYPES.includes(type), `type 必須是 ${MEMORY_TYPES.join('、')} 之一`);
-  invariant(description && String(description).trim(), '請提供 description（一行摘要）');
-  if (project !== undefined && project !== null) invariant(ID_RE.test(String(project)), '不合法的專案 id');
+  invariant(scope && ['global', 'project', 'machine'].includes(scope.kind), '請指定範圍：global、project 或 machine', undefined, { message: 'Specify a scope: global, project, or machine' });
+  invariant(name && String(name).trim(), '請提供 name', undefined, { message: 'Provide a name' });
+  invariant(MEMORY_TYPES.includes(type), `type 必須是 ${MEMORY_TYPES.join('、')} 之一`, undefined, { message: `type must be one of ${MEMORY_TYPES.join(', ')}` });
+  invariant(description && String(description).trim(), '請提供 description（一行摘要）', undefined, { message: 'Provide a description (a one-line summary)' });
+  if (project !== undefined && project !== null) invariant(ID_RE.test(String(project)), '不合法的專案 id', undefined, { message: 'Invalid project id' });
   const sc = normalizeScope(scope, ctx.mid);
   return ctx.locked('memories.create', async () => {
     await ensureScopeExists(ctx, sc);
@@ -208,14 +208,15 @@ export async function writeMemory(ctx, ref, input) {
   return ctx.locked('memories.write', async () => {
     const abs = fromRef(ctx.vault, ref);
     const cur = await readText(abs);
-    if (cur === null) throw new EngramError(E.NOT_FOUND, `找不到記憶：${ref}`);
+    if (cur === null) throw new EngramError(E.NOT_FOUND, `找不到記憶：${ref}`).withEn(`Memory not found: ${ref}`);
     let next;
     if (typeof input?.text === 'string') next = input.text;
     else {
       next = cur;
       if (input?.frontmatter && Object.keys(input.frontmatter).length) {
         try { next = setFields(next, input.frontmatter); } catch (err) {
-          throw new EngramError(E.INVALID, '這筆記憶的 frontmatter 格式有誤，無法只修改欄位', '請改用原始碼模式編輯整份內容（frontmatter 修正後即可）', { cause: err.message });
+          throw new EngramError(E.INVALID, '這筆記憶的 frontmatter 格式有誤，無法只修改欄位', '請改用原始碼模式編輯整份內容（frontmatter 修正後即可）', { cause: err.message })
+            .withEn("This memory's frontmatter is malformed, so individual fields cannot be changed", 'Edit the whole content in raw mode instead (fix the frontmatter there)');
         }
       }
       if (typeof input?.body === 'string') {
@@ -227,7 +228,7 @@ export async function writeMemory(ctx, ref, input) {
     if (next === cur) return { ok: true };
     const allowed = await assertNoNewSecrets(ctx.local, ref, next, { before: cur, allowSecrets: !!input?.allowSecrets });
     const ok = await safeWrite(abs, next, { expectHash: sha1(cur) });
-    if (!ok) throw new EngramError(E.CONFLICT, '這筆記憶剛被其他程式修改，已放棄這次寫入', '重新讀取後再試一次');
+    if (!ok) throw new EngramError(E.CONFLICT, '這筆記憶剛被其他程式修改，已放棄這次寫入', '重新讀取後再試一次').withEn('This memory was just modified by another program, so this write was abandoned', 'Reload it and try again');
     const idx = await refreshIndex(ctx, scope);
     const commit = await commitPaths(ctx.vault, [ref, ...idx, ...allowed], `edit ${ref}`, { action: 'edit', refs: [ref], mid: ctx.mid });
     return result(commit);
@@ -241,7 +242,7 @@ export async function moveMemory(ctx, ref, toScope) {
   return ctx.locked('memories.move', async () => {
     await ensureScopeExists(ctx, to);
     const src = fromRef(ctx.vault, ref);
-    if (!exists(src)) throw new EngramError(E.NOT_FOUND, `找不到記憶：${ref}`);
+    if (!exists(src)) throw new EngramError(E.NOT_FOUND, `找不到記憶：${ref}`).withEn(`Memory not found: ${ref}`);
     await assertNotHeld(ctx.local, ref, await readText(src), '移動', { removable: false });
     const destDir = scopeDir(ctx.vault, to);
     const file = uniqueFileName(path.basename(src), (f) => exists(path.join(destDir, f)));
@@ -260,8 +261,8 @@ export async function moveMemory(ctx, ref, toScope) {
  * text 沒有 frontmatter 時（介面的合併對話框只送內文）沿用目標檔的 frontmatter，只換內文。
  */
 export async function mergeMemories(ctx, refs, { into, text }) {
-  invariant(Array.isArray(refs) && refs.length >= 2, '至少要兩筆記憶才能合併');
-  invariant(typeof text === 'string' && text.trim(), '請提供合併後的內容');
+  invariant(Array.isArray(refs) && refs.length >= 2, '至少要兩筆記憶才能合併', undefined, { message: 'At least two memories are needed to merge' });
+  invariant(typeof text === 'string' && text.trim(), '請提供合併後的內容', undefined, { message: 'Provide the merged content' });
   const target = into ?? refs[0];
   assertMemoryRef(target);
   refs.forEach(assertMemoryRef);
@@ -272,17 +273,20 @@ export async function mergeMemories(ctx, refs, { into, text }) {
     let full = text;
     if (!parseMemoryFile(text).hasFrontmatter) {
       const cur = await readText(targetAbs);
-      if (cur === null) throw new EngramError(E.INVALID, '合併後的內容沒有 frontmatter，目標記憶也不存在', '請提供含 name、description、metadata.type 的完整內容，或合併到其中一筆既有的記憶');
+      if (cur === null) throw new EngramError(E.INVALID, '合併後的內容沒有 frontmatter，目標記憶也不存在', '請提供含 name、description、metadata.type 的完整內容，或合併到其中一筆既有的記憶')
+        .withEn('The merged content has no frontmatter, and the target memory does not exist', 'Provide complete content with name, description and metadata.type, or merge into one of the existing memories');
       full = replaceBody(cur, text.replace(/\r\n/g, '\n').replace(/\n*$/, '\n'));
     }
     await fsp.mkdir(path.dirname(targetAbs), { recursive: true });
     let merged;
     try { merged = setFields(full, { 'metadata.engram.supersedes': others }); } catch (err) {
-      throw new EngramError(E.INVALID, '合併後內容的 frontmatter 格式有誤', '請修正 frontmatter 後再合併', { cause: err.message });
+      throw new EngramError(E.INVALID, '合併後內容的 frontmatter 格式有誤', '請修正 frontmatter 後再合併', { cause: err.message })
+        .withEn('The merged content has malformed frontmatter', 'Fix the frontmatter and merge again');
     }
     await assertNoNewSecrets(ctx.local, target, merged, { what: '合併後的內容' });
     // 目標寫入失敗（檔案被占用、剛被改過）時不可以刪掉其他筆
-    if (!(await safeWrite(targetAbs, merged))) throw new EngramError(E.CONFLICT, `無法寫入 ${target}，合併已取消`, '檔案可能被其他程式占用或剛被修改；稍後再試一次');
+    if (!(await safeWrite(targetAbs, merged))) throw new EngramError(E.CONFLICT, `無法寫入 ${target}，合併已取消`, '檔案可能被其他程式占用或剛被修改；稍後再試一次')
+      .withEn(`Could not write ${target}; the merge was canceled`, 'The file may be in use by another program or was just modified; try again in a moment');
     for (const r of others) await fsp.rm(fromRef(ctx.vault, r), { force: true });
     const scopes = new Map();
     for (const r of [target, ...others]) { const s = scopeOfRef(r); scopes.set(JSON.stringify(s), s); }
@@ -298,7 +302,7 @@ export async function removeMemory(ctx, ref) {
   const scope = assertMemoryRef(ref);
   return ctx.locked('memories.remove', async () => {
     const abs = fromRef(ctx.vault, ref);
-    if (!exists(abs)) throw new EngramError(E.NOT_FOUND, `找不到記憶：${ref}`);
+    if (!exists(abs)) throw new EngramError(E.NOT_FOUND, `找不到記憶：${ref}`).withEn(`Memory not found: ${ref}`);
     await assertNotHeld(ctx.local, ref, await readText(abs), '封存', { headRaw: await headText(ctx, ref) });
     await fsp.rm(abs, { force: true });
     const idx = await refreshIndex(ctx, scope);
@@ -311,17 +315,17 @@ export async function removeMemory(ctx, ref) {
 export async function restoreMemory(ctx, ref, { rev } = {}) {
   const scope = assertMemoryRef(ref);
   // R-45：rev 會交給 git，只接受 commit sha（可加 ^ 或 ~N），避免被當成選項
-  if (rev !== undefined && rev !== null) invariant(/^[0-9a-f]{7,40}(\^+|~\d{1,4})?$/i.test(String(rev)), `不合法的版本：${String(rev).slice(0, 60)}`);
+  if (rev !== undefined && rev !== null) invariant(/^[0-9a-f]{7,40}(\^+|~\d{1,4})?$/i.test(String(rev)), `不合法的版本：${String(rev).slice(0, 60)}`, undefined, { message: `Invalid version: ${String(rev).slice(0, 60)}` });
   return ctx.locked('memories.restore', async () => {
     let at = rev;
     if (!at) {
       const r = await git(['log', '-1', '--format=%H', '--diff-filter=D', '--', ref], { cwd: ctx.vault });
       const sha = r.stdout.trim();
-      if (!sha) throw new EngramError(E.NOT_FOUND, `歷史中找不到被刪除的 ${ref}`);
+      if (!sha) throw new EngramError(E.NOT_FOUND, `歷史中找不到被刪除的 ${ref}`).withEn(`No deleted ${ref} found in the history`);
       at = `${sha}^`;
     }
     const show = await git(['show', `${at}:${ref}`], { cwd: ctx.vault, allowFail: true });
-    if (show.code !== 0) throw new EngramError(E.NOT_FOUND, `版本 ${at} 中沒有 ${ref}`);
+    if (show.code !== 0) throw new EngramError(E.NOT_FOUND, `版本 ${at} 中沒有 ${ref}`).withEn(`${ref} does not exist in version ${at}`);
     const abs = fromRef(ctx.vault, ref);
     await fsp.mkdir(path.dirname(abs), { recursive: true });
     await safeWrite(abs, show.stdout);

@@ -417,6 +417,9 @@ test('R-28：結構性錯誤時 setFields 丟出 E_INVALID 且附上錯誤清單
   const t = '---\nmetadata:\n\ttype: user\n---\n';
   assert.throws(() => setFields(t, { 'metadata.type': 'x' }), (err) => err.code === 'E_INVALID' && Array.isArray(err.details?.errors) && err.details.errors.length > 0);
   assert.throws(() => setFields('---\nname: x\n', { name: 'y' }), (err) => err.code === 'E_INVALID', '沒有結尾分隔行時不可在前面再加一個 frontmatter');
+  // 管理介面英文模式：錯誤清單的診斷訊息一併翻成英文
+  assert.throws(() => setFields(t, { 'metadata.type': 'x' }), (err) => err.en?.message === 'The frontmatter is malformed, so the change was refused: Line 2 is indented with a tab' && /raw mode/.test(err.en.hint));
+  assert.throws(() => setFields('---\nname: x\n', { name: 'y' }), (err) => /closing --- line/.test(err.en?.message) && !/[一-鿿]/.test(err.en.message));
 });
 
 test('重複的鍵只是提醒：讀取與修改都以最後一個為準', () => {

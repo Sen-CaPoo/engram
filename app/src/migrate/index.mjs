@@ -113,9 +113,13 @@ export async function applyImport(eg, { edits } = {}) {
     await writeRecord(eg, {
       tag, at: startedAt, machine: eg.machine.id, before, edits: clean, totals: plan.totals, copied: 0, skipped: 0,
       restorePoint, commits: [], bound: [], deferred: held, backupOnly: [],
-      failed: { code: err.code ?? null, message: String(err.message ?? err) },
+      failed: { code: err.code ?? null, message: String(err.message ?? err), ...(err.en?.message ? { en: { message: String(err.en.message) } } : {}) },
     });
-    throw Object.assign(err, { tag, hint: `已完成的部分可以還原：在管理介面的「匯入既有記憶」按「還原到匯入前」，或執行 engram import undo ${tag}。` });
+    throw Object.assign(err, {
+      tag,
+      hint: `已完成的部分可以還原：在管理介面的「匯入既有記憶」按「還原到匯入前」，或執行 engram import undo ${tag}。`,
+      en: { ...err.en, hint: `The completed part can be restored: in the dashboard, open "Import memories" and click "Restore to before the import", or run engram import undo ${tag}.` },
+    });
   }
   const rec = {
     tag, at: new Date().toISOString(), machine: eg.machine.id, before, edits: clean,
@@ -135,7 +139,13 @@ export async function applyImport(eg, { edits } = {}) {
 /** 還原：解除這次匯入建立的綁定（junction 換回實體資料夾），再依序 revert 匯入的 commit。 */
 export async function undoImport(eg, { tag } = {}) {
   const rec = (await readRecords(eg)).find((r) => r.tag === tag && !r.undoneAt);
-  if (!rec) throw Object.assign(new Error('找不到這次匯入的紀錄，或已經還原過'), { code: 'E_NOT_FOUND', hint: '在「匯入既有記憶」頁面重新整理，確認目前的匯入狀態。' });
+  if (!rec) {
+    throw Object.assign(new Error('找不到這次匯入的紀錄，或已經還原過'), {
+      code: 'E_NOT_FOUND',
+      hint: '在「匯入既有記憶」頁面重新整理，確認目前的匯入狀態。',
+      en: { message: 'Could not find a record of this import, or it was already restored', hint: 'Reload the "Import memories" page to check the current import status.' },
+    });
+  }
   // 引擎的一鍵還原會先保存匯入後新寫的記憶，再把備份放回、移除綁定與設定，只 revert 這次匯入的 commit
   if (rec.restorePoint && eg.rollbackImport) {
     const r = await eg.rollbackImport(rec.restorePoint);

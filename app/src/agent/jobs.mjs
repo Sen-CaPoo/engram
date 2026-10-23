@@ -4,10 +4,11 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { CliError, toErrorInfo } from '../cli/errors.mjs';
+import { CliError, toErrorInfoI18n } from '../cli/errors.mjs';
 import { readJsonSync, writeJsonAtomic } from '../cli/fsutil.mjs';
+import { CONTRACTS } from '../cli/probe/contracts.mjs';
 import { pausedFrom, userPermissionMode } from '../cli/probe/index.mjs';
-import { isLocked, summarizeSync, syncFailure } from '../cli/syncresult.mjs';
+import { isLocked, summarizeSync, summarizeSyncEn, syncFailure } from '../cli/syncresult.mjs';
 import { createPendingBinder, pendingBindings } from './pending.mjs';
 
 export const TICK_MS = 60_000;
@@ -20,13 +21,13 @@ const LOCK_RETRY_MS = 60_000;
 const SYNC_ALERT_MS = DAY;
 
 export const JOB_DEFS = Object.freeze({
-  sync: { label: '網路同步', schedule: '每 10 分鐘；啟動、睡眠恢復、對話結束時', enabled: true },
-  watch: { label: '本機存檔', schedule: 'vault 有變更且安靜 30 秒後', enabled: true },
-  health: { label: '健康檢查', schedule: '每天 09:30；錯過時於啟動後補跑', enabled: true },
-  probe: { label: '相容性探測', schedule: 'Claude Code 改版時；會用你的 Claude 額度跑 6 次 Haiku 小測試（約 3 萬 token／次）', enabled: true },
-  bind: { label: '背景綁定', schedule: '待切換的專案在對話結束 30 分鐘後；權限模式或探測結果改變時重新對齊', enabled: true },
-  rename: { label: '撞名資料夾改名', schedule: '每小時；設定為自動時，依命名規則改名沒有對話在使用的撞名資料夾', enabled: true },
-  curate: { label: '每週整理', schedule: '每週一次（第二階段）', enabled: false },
+  sync: { label: '網路同步', schedule: '每 10 分鐘；啟動、睡眠恢復、對話結束時', enabled: true, en: { label: 'Network sync', schedule: 'Every 10 minutes; also at startup, after waking from sleep, and when a conversation ends' } },
+  watch: { label: '本機存檔', schedule: 'vault 有變更且安靜 30 秒後', enabled: true, en: { label: 'Local save', schedule: 'After the vault changes and stays quiet for 30 seconds' } },
+  health: { label: '健康檢查', schedule: '每天 09:30；錯過時於啟動後補跑', enabled: true, en: { label: 'Health check', schedule: 'Every day at 09:30; runs after startup if it was missed' } },
+  probe: { label: '相容性探測', schedule: 'Claude Code 改版時；會用你的 Claude 額度跑 6 次 Haiku 小測試（約 3 萬 token／次）', enabled: true, en: { label: 'Compatibility probe', schedule: 'When Claude Code is updated; runs 6 small Haiku tests on your Claude quota (about 30k tokens each)' } },
+  bind: { label: '背景綁定', schedule: '待切換的專案在對話結束 30 分鐘後；權限模式或探測結果改變時重新對齊', enabled: true, en: { label: 'Background binding', schedule: 'For projects waiting to switch, 30 minutes after the conversation ends; realigns when the permission mode or probe result changes' } },
+  rename: { label: '撞名資料夾改名', schedule: '每小時；設定為自動時，依命名規則改名沒有對話在使用的撞名資料夾', enabled: true, en: { label: 'Colliding folder rename', schedule: 'Every hour; when set to automatic, renames colliding folders that no conversation is using, by the naming rule' } },
+  curate: { label: '每週整理', schedule: '每週一次（第二階段）', enabled: false, en: { label: 'Weekly tidy-up', schedule: 'Once a week (phase 2)' } },
 });
 
 export const JUMP_THRESHOLD_MS = 90_000;
@@ -52,6 +53,19 @@ export function nextDailySlot(now, hm = HEALTH_AT) {
 }
 
 const iso = (t) => new Date(t).toISOString();
+
+/** 1.0.0 存下的探測結果沒有英文：依契約 id 補上英文名稱（detail 是當時的原始輸出，原樣保留）。 */
+function withProbeEn(probe) {
+  if (!probe?.checks) return probe;
+  return {
+    ...probe,
+    checks: probe.checks.map((c) => {
+      if (c.en) return c;
+      const label = CONTRACTS.find((k) => k.id === c.id)?.en?.label;
+      return label ? { ...c, en: { label } } : c;
+    }),
+  };
+}
 
 function loadState(file) {
   const saved = readJsonSync(file, {}) ?? {};
@@ -143,7 +157,7 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
   function info(id) {
     const st = state.jobs[id];
     const def = JOB_DEFS[id];
-    return { id, label: def.label, schedule: def.schedule, enabled: st.enabled, nextRunAt: nextRunAt(id), lastRunAt: st.lastRunAt, lastResult: st.lastResult, running: running.has(id) };
+    return { id, label: def.label, schedule: def.schedule, en: def.en, enabled: st.enabled, nextRunAt: nextRunAt(id), lastRunAt: st.lastRunAt, lastResult: st.lastResult, running: running.has(id) };
   }
 
   const emitJob = (id) => events.emit('job', info(id));
@@ -160,43 +174,46 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     }
   }
 
+  /** 失敗的備註；錯誤沒有英文訊息時不附 en，介面會退回中文 */
+  const failNote = (f) => ({ note: `${f.code}：${f.message}`, ...(f.en?.message ? { en: { note: `${f.code}: ${f.en.message}` } } : {}) });
+
   const RUNNERS = {
     async sync(reason) {
-      if (userPaused()) return { ok: true, note: '已暫停（設定）' };
+      if (userPaused()) return { ok: true, note: '已暫停（設定）', en: { note: 'Paused (setting)' } };
       events.emit('sync', { state: 'start', reason, at: iso(now()) });
       let res;
       try {
         res = await eg.sync(syncOptions(true));
       } catch (err) {
-        res = { ok: false, state: 'error', error: toErrorInfo(err) };
+        res = { ok: false, state: 'error', error: toErrorInfoI18n(err) };
       }
       const failure = syncFailure(res);
       events.emit('sync', { state: 'end', ok: !failure, reason, at: iso(now()), result: res ?? null, ...(failure ? { error: failure } : {}) });
       if (isLocked(res)) {
         syncRetryAt = now() + LOCK_RETRY_MS;
-        return { ok: true, note: '另一個同步正在進行，1 分鐘後重試' };
+        return { ok: true, note: '另一個同步正在進行，1 分鐘後重試', en: { note: 'Another sync is in progress, retrying in 1 minute' } };
       }
       emitStatus();
       if (failure) {
         onSyncFailed(failure);
-        return { ok: false, note: `${failure.code}：${failure.message}` };
+        return { ok: false, ...failNote(failure) };
       }
       state.syncFailingSince = null;
-      return { ok: true, note: summarizeSync(res).join(' ') };
+      return { ok: true, note: summarizeSync(res).join(' '), en: { note: summarizeSyncEn(res).join(' ') } };
     },
 
     async watch() {
-      if (userPaused()) return { ok: true, note: '已暫停（設定）' };
+      if (userPaused()) return { ok: true, note: '已暫停（設定）', en: { note: 'Paused (setting)' } };
       const startedAt = now();
       const res = await eg.sync(syncOptions(false));
       if (isLocked(res)) {
         scheduleWatch(QUIET_MS);
-        return { ok: true, note: '另一個同步正在進行，30 秒後重試' };
+        return { ok: true, note: '另一個同步正在進行，30 秒後重試', en: { note: 'Another sync is in progress, retrying in 30 seconds' } };
       }
       const failure = syncFailure(res);
-      if (failure) return { ok: false, note: `${failure.code}：${failure.message}` };
+      if (failure) return { ok: false, ...failNote(failure) };
       await clearDirtyFlags(startedAt);
-      return { ok: true, note: summarizeSync(res, { network: false }).join(' ') };
+      return { ok: true, note: summarizeSync(res, { network: false }).join(' '), en: { note: summarizeSyncEn(res, { network: false }).join(' ') } };
     },
 
     async health() {
@@ -208,7 +225,7 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
         const key = `health:${high.map((f) => f.id ?? f.code).sort().join(',')}`;
         notifier.notify({ key, title: 'Engram 憶跡', body: `有 ${high.length} 項需要你處理：${high[0].title ?? high[0].code}`, page: 'inbox' });
       }
-      return { ok: true, note: `${findings.length} 項發現，其中高 ${high.length} 項` };
+      return { ok: true, note: `${findings.length} 項發現，其中高 ${high.length} 項`, en: { note: `${findings.length} ${findings.length === 1 ? 'finding' : 'findings'}, ${high.length} High` } };
     },
 
     async probe() {
@@ -222,14 +239,18 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
         log.warn('probe', `契約未通過：${failed.join('、')}；暫停：${paused().join('、') || '無'}`);
         notifier.notify({ key: `probe:${failed.join(',')}`, title: 'Engram 憶跡', body: `Claude Code ${result.claudeVersion ?? ''} 的相容性探測有 ${failed.length} 項未通過，部分自動化已暫停。`, page: 'schedule' });
       }
-      return { ok: result.ok, note: failed.length ? `未通過：${failed.join('、')}` : `${result.checks.length} 項全部通過` };
+      return {
+        ok: result.ok,
+        note: failed.length ? `未通過：${failed.join('、')}` : `${result.checks.length} 項全部通過`,
+        en: { note: failed.length ? `Failed: ${failed.join(', ')}` : `All ${result.checks.length} passed` },
+      };
     },
 
     async bind() {
       const mode = bindingMode();
       if (userPaused() || paused().includes('bind')) {
         state.binding = { mode, deferred: 0, at: iso(now()) };
-        return { ok: true, note: userPaused() ? '已暫停（設定）' : '已暫停（相容性探測未通過）' };
+        return { ok: true, note: userPaused() ? '已暫停（設定）' : '已暫停（相容性探測未通過）', en: { note: userPaused() ? 'Paused (setting)' : 'Paused (compatibility probe failed)' } };
       }
       // 先依目前的權限模式對齊既有綁定（補上或拆掉 junction；設定檔綁定一律保留），再處理待切換的綁定
       const rc = eg.identity.reconcile ? await eg.identity.reconcile() : { changed: [], deferred: [] };
@@ -241,15 +262,17 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
       const r = await binder.run({ now: now() });
       if (r.done.length) events.emit('change', { at: iso(now()), kind: 'bind', items: r.done });
       const aligned = rc.changed?.length ? `重新對齊 ${rc.changed.length}、` : '';
-      return { ok: r.failed.length === 0, note: `${aligned}完成 ${r.done.length}、等待 ${r.waiting.length + (rc.deferred?.length ?? 0)}、失敗 ${r.failed.length}` };
+      const waiting = r.waiting.length + (rc.deferred?.length ?? 0);
+      const alignedEn = rc.changed?.length ? `Realigned ${rc.changed.length}, done` : 'Done';
+      return { ok: r.failed.length === 0, note: `${aligned}完成 ${r.done.length}、等待 ${waiting}、失敗 ${r.failed.length}`, en: { note: `${alignedEn} ${r.done.length}, waiting ${waiting}, failed ${r.failed.length}` } };
     },
 
     /** 撞名資料夾依命名規則改名（SW-4）。只在設定為自動時；改名會重新綁定，所以背景綁定被暫停時也一併暫停 */
     async rename() {
-      if (userPaused() || paused().includes('bind')) return { ok: true, note: userPaused() ? '已暫停（設定）' : '已暫停（相容性探測未通過）' };
-      if (!eg.collisions) return { ok: true, note: '引擎不支援' };
+      if (userPaused() || paused().includes('bind')) return { ok: true, note: userPaused() ? '已暫停（設定）' : '已暫停（相容性探測未通過）', en: { note: userPaused() ? 'Paused (setting)' : 'Paused (compatibility probe failed)' } };
+      if (!eg.collisions) return { ok: true, note: '引擎不支援', en: { note: 'Not supported by the engine' } };
       const mode = (await eg.settings?.get?.())?.collisionRename ?? 'ask';
-      if (mode !== 'auto') return { ok: true, note: mode === 'ask' ? '設定為詢問：在收件匣一鍵改名' : '已關閉（設定）' };
+      if (mode !== 'auto') return { ok: true, note: mode === 'ask' ? '設定為詢問：在收件匣一鍵改名' : '已關閉（設定）', en: { note: mode === 'ask' ? 'Set to ask: rename in one click from the inbox' : 'Turned off (setting)' } };
       const r = await eg.collisions.apply({});
       if (r.renamed.length) {
         const list = r.renamed.map((x) => `${path.basename(x.from)} → ${path.basename(x.to)}`).join('、');
@@ -257,12 +280,14 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
         events.emit('change', { at: iso(now()), kind: 'rename', items: r.renamed });
         notifier.notify({ key: `rename:${r.id}`, title: 'Engram 憶跡', body: `已依命名規則改名 ${r.renamed.length} 個撞名的資料夾：${list}。可在「裝置與同步」的變更紀錄整批還原。`, page: 'devices' });
       }
-      const waiting = r.skipped.length ? `、暫不改名 ${r.skipped.length}（${[...new Set(r.skipped.map((s) => s.reason))].join('、')}）` : '';
-      return { ok: true, note: `改名 ${r.renamed.length}${waiting}` };
+      const reasons = [...new Set(r.skipped.map((s) => s.reason))];
+      const waiting = r.skipped.length ? `、暫不改名 ${r.skipped.length}（${reasons.join('、')}）` : '';
+      const waitingEn = r.skipped.length ? `, skipped ${r.skipped.length} (${reasons.join(', ')})` : '';
+      return { ok: true, note: `改名 ${r.renamed.length}${waiting}`, en: { note: `Renamed ${r.renamed.length}${waitingEn}` } };
     },
 
     async curate() {
-      return { ok: true, note: '每週整理尚未實作（第二階段）' };
+      return { ok: true, note: '每週整理尚未實作（第二階段）', en: { note: 'Weekly tidy-up is not implemented yet (phase 2)' } };
     },
   };
 
@@ -270,7 +295,7 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
 
   /** 執行工作。同一個工作不會同時跑兩份；sync／watch 執行中又被觸發時，結束後再補跑一次。 */
   function runJob(id, reason = 'manual') {
-    if (!JOB_DEFS[id]) throw new CliError('E_NOT_FOUND', `沒有這個工作：${id}`);
+    if (!JOB_DEFS[id]) throw new CliError('E_NOT_FOUND', `沒有這個工作：${id}`).withEn(`No such job: ${id}`);
     if (running.has(id)) {
       if (id === 'sync' || id === 'watch') again.add(id);
       return running.get(id);
@@ -295,10 +320,9 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     let result;
     try {
       const r = await RUNNERS[id](reason);
-      result = { ok: r?.ok !== false, ms: now() - t0, note: r?.note ?? '' };
+      result = { ok: r?.ok !== false, ms: now() - t0, note: r?.note ?? '', ...(r?.en ? { en: r.en } : {}) };
     } catch (err) {
-      const e = toErrorInfo(err);
-      result = { ok: false, ms: now() - t0, note: `${e.code}：${e.message}` };
+      result = { ok: false, ms: now() - t0, ...failNote(toErrorInfoI18n(err)) };
     }
     Object.assign(state.jobs[id], { lastRunAt: iso(t0), lastResult: result });
     save();
@@ -415,7 +439,7 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     },
     run: runJob,
     toggle(id, on) {
-      if (!JOB_DEFS[id]) throw new CliError('E_NOT_FOUND', `沒有這個工作：${id}`);
+      if (!JOB_DEFS[id]) throw new CliError('E_NOT_FOUND', `沒有這個工作：${id}`).withEn(`No such job: ${id}`);
       state.jobs[id].enabled = !!on;
       if (id === 'watch' && !on) {
         clearTimeout(watchTimer);
@@ -429,7 +453,7 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     tick,
     onVaultChange,
     paused,
-    probe: () => state.probe,
+    probe: () => withProbeEn(state.probe),
     claudeVersion: () => state.claudeVersion,
     lastSyncAt: () => state.jobs.sync.lastRunAt,
     flush: () => saving,

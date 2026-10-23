@@ -66,7 +66,7 @@ export function git(args, { cwd, timeoutMs = 30_000, env, input, allowFail = fal
     child.stderr.on('data', (d) => err.push(d));
     child.on('error', (e) => {
       clearTimeout(timer);
-      reject(new EngramError(E.GIT, '找不到 git 執行檔', '請安裝 Git for Windows（https://git-scm.com）', { cause: e.message }));
+      reject(new EngramError(E.GIT, '找不到 git 執行檔', '請安裝 Git for Windows（https://git-scm.com）', { cause: e.message }).withEn('Could not find the git executable', 'Install Git for Windows (https://git-scm.com)'));
     });
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -89,30 +89,30 @@ export function classifyGitError(res, args = []) {
   const cmd = `git ${args.join(' ')}`.slice(0, 200);
   const details = { command: cmd, exitCode: res.code, stderr: res.stderr.slice(-2000) };
   if (/index\.lock': File exists|Unable to create .*index\.lock/i.test(s)) {
-    return new EngramError(E.LOCKED, 'vault 的 git 正被其他程序使用（index.lock）', '稍後會自動重試；殘留過久時 Engram 會自動清除', details);
+    return new EngramError(E.LOCKED, 'vault 的 git 正被其他程序使用（index.lock）', '稍後會自動重試；殘留過久時 Engram 會自動清除', details).withEn("The vault's git is being used by another process (index.lock)", 'Engram will retry shortly; if the lock file stays too long, Engram removes it automatically');
   }
   if (/GH013|push protection|secret scanning|Push cannot contain secrets/i.test(s)) {
-    return new EngramError(E.PUSH_PROTECTED, 'GitHub 推送保護擋下了這次同步：有檔案疑似含有金鑰', '到管理介面的收件匣處理 H13 卡片，移除金鑰後再同步', details);
+    return new EngramError(E.PUSH_PROTECTED, 'GitHub 推送保護擋下了這次同步：有檔案疑似含有金鑰', '到管理介面的收件匣處理 H13 卡片，移除金鑰後再同步', details).withEn('GitHub push protection blocked this sync: some files appear to contain secrets', 'Open the H13 card in the dashboard inbox, remove the secrets, then sync again');
   }
   if (/逾時|timed out|Operation timed out|Connection timed out/i.test(s) || res.code === -1) {
-    return new EngramError(E.OFFLINE, '連線逾時，暫時無法同步', '網路恢復後會自動重試', details);
+    return new EngramError(E.OFFLINE, '連線逾時，暫時無法同步', '網路恢復後會自動重試', details).withEn('The connection timed out, so sync is unavailable for now', 'Engram will retry automatically once the network is back');
   }
   if (/proxy|407 Proxy Authentication/i.test(s)) {
-    return new EngramError(E.PROXY, '代理伺服器拒絕連線', '確認 git 的 http.proxy 設定，或在公司網路外再試一次', details);
+    return new EngramError(E.PROXY, '代理伺服器拒絕連線', '確認 git 的 http.proxy 設定，或在公司網路外再試一次', details).withEn('The proxy server refused the connection', "Check git's http.proxy setting, or try again from outside the company network");
   }
   if (/SSL|certificate|schannel/i.test(s)) {
-    return new EngramError(E.PROXY, 'TLS 憑證驗證失敗（可能是公司網路的 TLS 檢查）', '執行 git config --global http.sslBackend schannel 讓 git 信任 Windows 憑證存放區', details);
+    return new EngramError(E.PROXY, 'TLS 憑證驗證失敗（可能是公司網路的 TLS 檢查）', '執行 git config --global http.sslBackend schannel 讓 git 信任 Windows 憑證存放區', details).withEn('TLS certificate verification failed (possibly TLS inspection on the company network)', 'Run git config --global http.sslBackend schannel so git trusts the Windows certificate store');
   }
   if (/Authentication failed|could not read Username|terminal prompts disabled|403|401|Permission denied|access denied|not authorized/i.test(s)) {
-    return new EngramError(E.AUTH, 'GitHub 認證失敗或沒有權限', '執行 gh auth login 重新登入 GitHub；如果 git 的認證沒有交給 GitHub CLI，改在 PowerShell 或 Git Bash 執行 git -C "$HOME/.engram/vault" fetch，依提示在瀏覽器登入；也請確認權杖有這個 repo 的權限', details);
+    return new EngramError(E.AUTH, 'GitHub 認證失敗或沒有權限', '執行 gh auth login 重新登入 GitHub；如果 git 的認證沒有交給 GitHub CLI，改在 PowerShell 或 Git Bash 執行 git -C "$HOME/.engram/vault" fetch，依提示在瀏覽器登入；也請確認權杖有這個 repo 的權限', details).withEn('GitHub authentication failed or you do not have access', 'Run gh auth login to sign in to GitHub again. If git does not use GitHub CLI for credentials, run git -C "$HOME/.engram/vault" fetch in PowerShell or Git Bash instead and sign in through the browser when prompted. Also make sure your token has access to this repo');
   }
   if (/Could not resolve host|unable to access|Failed to connect|Network is unreachable|Connection refused|Connection reset/i.test(s)) {
-    return new EngramError(E.OFFLINE, '目前無法連線到遠端', '網路恢復後會自動重試', details);
+    return new EngramError(E.OFFLINE, '目前無法連線到遠端', '網路恢復後會自動重試', details).withEn('Cannot reach the remote right now', 'Engram will retry automatically once the network is back');
   }
   if (/\[rejected\]|non-fast-forward|fetch first/i.test(s)) {
-    return new EngramError(E.CONFLICT, '遠端有較新的變更', '重新同步即可', details);
+    return new EngramError(E.CONFLICT, '遠端有較新的變更', '重新同步即可', details).withEn('The remote has newer changes', 'Just sync again');
   }
-  return new EngramError(E.GIT, 'git 指令執行失敗', '查看日誌中的 git 輸出', details);
+  return new EngramError(E.GIT, 'git 指令執行失敗', '查看日誌中的 git 輸出', details).withEn('A git command failed', 'Check the git output in the logs');
 }
 
 /** 解析 git status --porcelain=v1 -z 的輸出。 */

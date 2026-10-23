@@ -21,5 +21,12 @@ test('綁定還原自我測試：全部通過，只寫入沙盒', async (t) => {
   const r = await bindingSelfTest({ engine, sandbox });
   assert.equal(r.ok, true, JSON.stringify(r.checks.filter((c) => !c.ok), null, 2));
   assert.ok(r.checks.length >= 12);
+  // 每項檢查都附英文名稱與說明（管理介面切到英文時顯示）
+  for (const c of r.checks) {
+    assert.deepEqual(Object.keys(c), ['name', 'ok', 'detail', 'en']);
+    assert.deepEqual(Object.keys(c.en), ['name', 'detail']);
+    assert.ok(c.en.name && !/[一-鿿]/.test(c.en.name), c.name);
+    assert.doesNotMatch(c.en.detail, /[一-鿿]/, c.name);
+  }
   assert.deepEqual(snapshot(), before, '真實的 ~/.claude 不能被改動');
 });

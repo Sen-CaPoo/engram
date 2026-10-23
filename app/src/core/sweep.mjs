@@ -122,6 +122,12 @@ const CANDIDATE_REASON = {
   'root-commit': '與既有專案有相同的第一個 commit（fork 或換了組織）',
   'name+entries': '名稱與資料夾內容和既有專案相近',
 };
+// CANDIDATE_REASON 的英文版（鍵相同）
+const CANDIDATE_REASON_EN = {
+  remote: 'Same git remote as an existing project',
+  'root-commit': 'Same first commit as an existing project (a fork, or moved to another organization)',
+  'name+entries': 'Name and folder contents are similar to an existing project',
+};
 
 /**
  * 編碼名稱的尾段（中文字被換成連字號之後，最後一段通常還是英數的專案名稱）。
@@ -276,11 +282,15 @@ export async function planSweep(ctx, { encoded: only } = {}) {
     }
     g.target = { pid: null, name: uniqueName(path.basename(g.resolvedPath), g.resolvedPath), isNew: true, archived: false };
     // 身分解析只有中等信心的候選、或名稱與既有專案（含另一台電腦匯入的「未歸屬（X）」封存專案）相同：只建議，不自動連結
-    for (const c of res.candidates ?? []) g.suggestions.push({ kind: 'project', pid: c.pid, name: c.name, reason: CANDIDATE_REASON[c.reason] ?? c.reason });
+    for (const c of res.candidates ?? []) g.suggestions.push({ kind: 'project', pid: c.pid, name: c.name, reason: CANDIDATE_REASON[c.reason] ?? c.reason, en: { reason: CANDIDATE_REASON_EN[c.reason] ?? c.reason } });
     const ln = looseName(path.basename(g.resolvedPath));
     for (const p of projects) {
       if (!ln || g.suggestions.some((x) => x.pid === p.id) || !nameKeys(p).includes(ln)) continue;
-      g.suggestions.push({ kind: 'project', pid: p.id, name: p.name, reason: p.archived ? `名稱與封存專案「${p.name}」相同（可能是另一台電腦匯入時找不到資料夾）` : `名稱與既有專案「${p.name}」相同` });
+      g.suggestions.push({
+        kind: 'project', pid: p.id, name: p.name,
+        reason: p.archived ? `名稱與封存專案「${p.name}」相同（可能是另一台電腦匯入時找不到資料夾）` : `名稱與既有專案「${p.name}」相同`,
+        en: { reason: p.archived ? `Same name as the archived project "${p.name}" (the other computer may not have found the folder when importing)` : `Same name as the existing project "${p.name}"` },
+      });
     }
   }
   const liveSources = list.filter((g) => g.exists);
@@ -297,17 +307,18 @@ export async function planSweep(ctx, { encoded: only } = {}) {
     } else {
       g.target = { pid: null, name: g.resolvedPath ? uniqueName(base, g.resolvedPath) : `未歸屬（${base ?? g.encoded}）`, isNew: true, archived: true };
       // 只建議、不自動連結
-      if (proj) g.suggestions.push({ kind: 'project', pid: proj.id, name: proj.name, reason: `名稱與既有專案「${proj.name}」相同` });
+      if (proj) g.suggestions.push({ kind: 'project', pid: proj.id, name: proj.name, reason: `名稱與既有專案「${proj.name}」相同`, en: { reason: `Same name as the existing project "${proj.name}"` } });
       // 另一台電腦匯入同一個編碼資料夾時建立的封存專案（名稱只有編碼，無法用名稱比對）
       const sameOrigin = !g.resolvedPath && !proj ? projects.find((p) => p.name === `未歸屬（${g.encoded}）`) : null;
-      if (sameOrigin) g.suggestions.push({ kind: 'project', pid: sameOrigin.id, name: sameOrigin.name, reason: '另一台電腦匯入同一個編碼資料夾時建立的封存專案' });
-      if (sibling) g.suggestions.push({ kind: 'source', sameAs: sourceKey(sibling.encoded, sibling.resolvedPath), name: sibling.target.name, path: sibling.resolvedPath, reason: `名稱與這次匯入的 ${sibling.resolvedPath} 相同` });
+      if (sameOrigin) g.suggestions.push({ kind: 'project', pid: sameOrigin.id, name: sameOrigin.name, reason: '另一台電腦匯入同一個編碼資料夾時建立的封存專案', en: { reason: 'Archived project created when the other computer imported the same encoded folder' } });
+      if (sibling) g.suggestions.push({ kind: 'source', sameAs: sourceKey(sibling.encoded, sibling.resolvedPath), name: sibling.target.name, path: sibling.resolvedPath, reason: `名稱與這次匯入的 ${sibling.resolvedPath} 相同`, en: { reason: `Same name as ${sibling.resolvedPath} in this import` } });
       if (ln && !sibling) {
         // 原路徑已知（內文或對話紀錄）但不在了：同名的資料夾可能就是搬過去的新位置
         const reason = g.resolvedPath ? `原資料夾 ${g.resolvedPath} 已不存在；這裡有同名的資料夾，可能是搬過來的` : '資料夾名稱與編碼尾段相符';
+        const reasonEn = g.resolvedPath ? `The original folder ${g.resolvedPath} no longer exists; a folder with the same name is here and may have been moved` : 'The folder name matches the end of the encoded name';
         for (const dir of allDirs()) {
           if (g.suggestions.length >= 5) break;
-          if (looseName(path.basename(dir)) === ln && !samePath(dir, g.resolvedPath)) g.suggestions.push({ kind: 'path', path: normalizeFsPath(dir), reason });
+          if (looseName(path.basename(dir)) === ln && !samePath(dir, g.resolvedPath)) g.suggestions.push({ kind: 'path', path: normalizeFsPath(dir), reason, en: { reason: reasonEn } });
         }
       }
     }
@@ -348,15 +359,16 @@ export async function planSweep(ctx, { encoded: only } = {}) {
       const newer = sameName.filter((x) => x.modified > f.modified).sort((a, b) => b.modified - a.modified)[0];
       let action = 'copy';
       let reason = sug.reason;
+      let reasonEn = sug.en.reason;
       let dupOf;
-      if (vaultByKey.has(f.key)) { action = 'skip-same'; dupOf = vaultByKey.get(f.key); reason = 'vault 裡已有相同內容'; }
-      else if (plannedKeys.has(f.key)) { action = 'skip-same'; dupOf = plannedKeys.get(f.key); reason = '這次匯入的其他來源已有相同內容'; }
-      else if (newer) { action = 'superseded'; dupOf = newer.where; reason = '較舊版本，內容保留在原處'; }
-      else if (sameName.some((x) => x.inVault)) { action = 'merge-candidate'; dupOf = sameName.find((x) => x.inVault).where; reason = 'vault 裡有同名但較舊的版本，建議合併'; }
-      else if (destDir && exists(path.join(destDir, f.file))) { action = 'rename'; reason = '目標專案已有同名檔案'; }
+      if (vaultByKey.has(f.key)) { action = 'skip-same'; dupOf = vaultByKey.get(f.key); reason = 'vault 裡已有相同內容'; reasonEn = 'The vault already has the same content'; }
+      else if (plannedKeys.has(f.key)) { action = 'skip-same'; dupOf = plannedKeys.get(f.key); reason = '這次匯入的其他來源已有相同內容'; reasonEn = 'Another source in this import has the same content'; }
+      else if (newer) { action = 'superseded'; dupOf = newer.where; reason = '較舊版本，內容保留在原處'; reasonEn = 'Older version; its content stays in the original location'; }
+      else if (sameName.some((x) => x.inVault)) { action = 'merge-candidate'; dupOf = sameName.find((x) => x.inVault).where; reason = 'vault 裡有同名但較舊的版本，建議合併'; reasonEn = 'The vault has an older version with the same name; merging is suggested'; }
+      else if (destDir && exists(path.join(destDir, f.file))) { action = 'rename'; reason = '目標專案已有同名檔案'; reasonEn = 'The target project already has a file with the same name'; }
       if (action !== 'skip-same' && action !== 'superseded') plannedKeys.set(f.key, where);
       const desc = String(f.parsed.data?.description ?? '').replace(/\s+/g, ' ').trim();
-      items.push({ file: f.file, name: f.name, type, description: desc.length > 120 ? `${desc.slice(0, 119)}…` : desc, action, scope: sug.scope, reason, ...(dupOf ? { dupOf } : {}) });
+      items.push({ file: f.file, name: f.name, type, description: desc.length > 120 ? `${desc.slice(0, 119)}…` : desc, action, scope: sug.scope, reason, en: { reason: reasonEn }, ...(dupOf ? { dupOf } : {}) });
     }
     sources.push({
       encoded: g.encoded,
@@ -588,7 +600,7 @@ export async function rollbackImport(ctx, tag) {
   return ctx.locked('sweep.rollback', async () => {
     const log = (await readJson(path.join(ctx.local, 'sweep.json'), {})) ?? {};
     const record = (log._imports ?? []).find((r) => r.tag === tag);
-    if (!record) throw new EngramError(E.NOT_FOUND, `找不到匯入紀錄：${tag}`);
+    if (!record) throw new EngramError(E.NOT_FOUND, `找不到匯入紀錄：${tag}`).withEn(`Import record not found: ${tag}`);
     const restored = [];
     const updated = [];
     const { readBindings, writeBindings, allBindingViews } = await import('./vault.mjs');

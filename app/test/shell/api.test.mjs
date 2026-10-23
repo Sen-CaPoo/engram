@@ -277,7 +277,31 @@ describe('常駐程式、工作、日誌、載入記錄', () => {
     assert.deepEqual(keys(r.json), ['claudeVersion', 'jobs', 'logonTask', 'pausedAutomations', 'paused', 'pid', 'port', 'probe', 'startedAt', 'version'].sort());
     assert.deepEqual(keys(r.json.logonTask), ['installed', 'lastResult', 'lastRunAt', 'launcher', 'state']);
     assert.deepEqual(r.json.jobs.map((j) => j.id), ['sync', 'watch', 'health', 'probe', 'bind', 'rename', 'curate']);
-    for (const j of r.json.jobs) assert.deepEqual(keys(j), ['enabled', 'id', 'label', 'lastResult', 'lastRunAt', 'nextRunAt', 'running', 'schedule']);
+    for (const j of r.json.jobs) assert.deepEqual(keys(j), ['en', 'enabled', 'id', 'label', 'lastResult', 'lastRunAt', 'nextRunAt', 'running', 'schedule']);
+    // 每個工作都有英文名稱與排程說明（管理介面切到英文時顯示）
+    for (const j of r.json.jobs) assert.deepEqual(keys(j.en), ['label', 'schedule'], j.id);
+    assert.equal(r.json.jobs.find((j) => j.id === 'sync').en.label, 'Network sync');
+  });
+
+  test('GET /api/agent：探測結果的每一項都附英文名稱', async () => {
+    const probe = { at: new Date().toISOString(), claudeVersion: '2.1.306', ok: true, checks: [{ id: 'C1', label: '中文', ok: true, detail: '', en: { label: 'English', detail: '' } }] };
+    const original = jobs.probe;
+    jobs.probe = () => probe;
+    try {
+      const r = await call('GET', '/api/agent');
+      assert.equal(r.json.probe.checks[0].en.label, 'English');
+    } finally {
+      jobs.probe = original;
+    }
+  });
+
+  test('找不到的端點與缺少參數：錯誤附英文版', async () => {
+    const missing = await call('GET', '/api/nope');
+    assert.equal(missing.status, 404);
+    assert.equal(missing.json.error.en.message, 'No such endpoint: GET /api/nope');
+    const need = await call('POST', '/api/import/undo', {});
+    assert.equal(need.status, 400);
+    assert.equal(need.json.error.en.message, 'Missing tag');
   });
 
   test('POST /api/jobs/run 與 /api/jobs/toggle（啟用狀態寫入 agent-jobs.json）', async () => {
@@ -352,7 +376,8 @@ describe('審查修正後新增的端點', () => {
     const u = await api2.handle('POST', '/api/collisions/undo', new URLSearchParams(), { id: 'rn-1' });
     assert.equal(u.ok, true);
     const api3 = createApi({ eg: { ...eg, collisions: undefined }, jobs, paths, info: { statusSummary: () => ({}) } });
-    await assert.rejects(api3.handle('GET', '/api/collisions', new URLSearchParams(), {}), (err) => err.status === 501);
+    await assert.rejects(api3.handle('GET', '/api/collisions', new URLSearchParams(), {}), (err) => err.status === 501
+      && err.en.message === 'This version of the engine does not support the colliding folder scan yet' && err.en.hint === 'Update Engram and try again.');
   });
 
   test('GET／PUT /api/settings：本機設定由常駐程式保存，名稱與自動綁定交給引擎', async () => {
@@ -372,5 +397,6 @@ describe('審查修正後新增的端點', () => {
     const pausedFile = JSON.parse(fs.readFileSync(path.join(paths.local, 'paused.json'), 'utf8'));
     assert.deepEqual(pausedFile, { user: true, junction: true, normalize: true });
     await assert.rejects(() => api2.handle('PUT', '/api/settings', new URLSearchParams(), { syncIntervalMin: 7 }), /5、10、15 或 30/);
+    await assert.rejects(() => api2.handle('PUT', '/api/settings', new URLSearchParams(), { syncIntervalMin: 7 }), (err) => err.status === 400 && err.en.message === 'The sync interval must be 5, 10, 15 or 30 minutes');
   });
 });

@@ -46,12 +46,12 @@ export function guidelines(ctx) {
   async function adopt() {
     return ctx.locked('guidelines.adopt', async () => {
       const text = await readText(claudeMd);
-      if (text === null) throw new EngramError(E.NOT_FOUND, '找不到 ~/.claude/CLAUDE.md');
+      if (text === null) throw new EngramError(E.NOT_FOUND, '找不到 ~/.claude/CLAUDE.md').withEn('Could not find ~/.claude/CLAUDE.md');
       const { block, rest } = split(text);
-      if (!block) throw new EngramError(E.INVALID, '~/.claude/CLAUDE.md 還沒有 Engram 區塊', '先完成安裝');
-      if (!rest.trim()) throw new EngramError(E.INVALID, '沒有可以搬移的工作準則');
+      if (!block) throw new EngramError(E.INVALID, '~/.claude/CLAUDE.md 還沒有 Engram 區塊', '先完成安裝').withEn('~/.claude/CLAUDE.md does not have an Engram block yet', 'Finish the installation first');
+      if (!rest.trim()) throw new EngramError(E.INVALID, '沒有可以搬移的工作準則').withEn('There are no working guidelines to move');
       const core = (await readText(corePath)) ?? '';
-      if (core.includes(MARK_BEGIN)) throw new EngramError(E.INVALID, '工作準則已經同步過了');
+      if (core.includes(MARK_BEGIN)) throw new EngramError(E.INVALID, '工作準則已經同步過了').withEn('The working guidelines are already synced');
       // 1. 備份原檔（逐位元）並記進安裝清單，uninstall 與 revert 依此還原
       const dir = path.join(ctx.homes.local, 'backups', 'claude-md');
       await fsp.mkdir(dir, { recursive: true });
@@ -70,7 +70,7 @@ export function guidelines(ctx) {
       if (!ok) {
         await safeWrite(corePath, core);
         fs.rmSync(rulesPath, { force: true });
-        throw new EngramError(E.CONFLICT, '~/.claude/CLAUDE.md 剛好被修改，已取消', '稍後再試');
+        throw new EngramError(E.CONFLICT, '~/.claude/CLAUDE.md 剛好被修改，已取消', '稍後再試').withEn('~/.claude/CLAUDE.md was modified just now, so the operation was canceled', 'Try again in a moment');
       }
       const manifest = (await readJson(manifestPath(ctx.homes), null)) ?? {};
       manifest.guidelines = { adoptedAt: new Date().toISOString(), backup, originalSha1: sha1(text), mid: ctx.mid };
@@ -84,7 +84,7 @@ export function guidelines(ctx) {
     return ctx.locked('guidelines.revert', async () => {
       const manifest = (await readJson(manifestPath(ctx.homes), null)) ?? {};
       const g = manifest.guidelines;
-      if (!g?.backup || !fs.existsSync(g.backup)) throw new EngramError(E.NOT_FOUND, '找不到採用前的備份');
+      if (!g?.backup || !fs.existsSync(g.backup)) throw new EngramError(E.NOT_FOUND, '找不到採用前的備份').withEn('Could not find the backup from before the guidelines were adopted');
       const original = await readText(g.backup);
       // 還原本機 CLAUDE.md：原檔逐位元；若使用者之後又改了 Engram 區塊以外的地方，保留現況並把原內容附在前面
       const cur = (await readText(claudeMd)) ?? '';

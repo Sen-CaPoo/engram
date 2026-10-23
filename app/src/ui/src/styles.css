@@ -103,6 +103,8 @@ p { margin: 0; }
 .brand .word { display: grid; line-height: 1.1; }
 .brand .word b { color: var(--text); font: 650 15px/1.15 var(--font-display); letter-spacing: 0.01em; }
 .brand .word small { color: var(--text-3); font-size: 12px; letter-spacing: 0.04em; }
+/* 英文介面：字距是為中文設計的，英文標語不加字距、不換行 */
+html[lang="en"] .brand .word small { letter-spacing: 0; white-space: nowrap; }
 
 .nav { display: grid; gap: 2px; }
 .nav-label { font-size: 12px; letter-spacing: 0.08em; color: var(--text-3); padding: 14px 10px 6px; }
@@ -156,7 +158,7 @@ p { margin: 0; }
 }
 .sync-pill:hover { border-color: var(--border-strong); }
 .sync-pill .led { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
-.sync-pill.syncing .led { background: var(--brand); animation: pulse 1.2s var(--ease) infinite; }
+.sync-pill.syncing .led, .sync-pill.busy .led { background: var(--brand); animation: pulse 1.2s var(--ease) infinite; }
 .sync-pill.offline .led, .sync-pill.auth .led { background: var(--warn); }
 .sync-pill.error .led { background: var(--danger); }
 .sync-pill.never .led { background: var(--text-3); }
@@ -363,6 +365,8 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.6; resize: vert
 .banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: 12px 16px; border-radius: var(--r-lg); border: 1px solid; font-size: var(--fs-sm); }
 .banner svg { width: 18px; height: 18px; }
 .banner b { font-weight: 600; }
+/* 英文介面：標題接在內文前面讀起來像同一句，改成獨立一行 */
+html[lang="en"] .banner > div > b:first-child { display: block; margin-bottom: 2px; }
 .banner.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 35%, transparent); color: var(--text); }
 .banner.warn > svg { color: var(--warn); }
 .banner.bad { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
@@ -415,6 +419,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.6; resize: vert
 .steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; list-style: none; margin: 0; padding: 0; counter-reset: st; }
 .steps li { counter-increment: st; border-top: 3px solid var(--border); padding: 10px 4px 0 0; font-size: var(--fs-sm); color: var(--text-3); display: grid; gap: 2px; }
 .steps li::before { content: "步驟 " counter(st); font: 500 11px/1.4 var(--font-mono); }
+html[lang="en"] .steps li::before { content: "Step " counter(st); }
 .steps li b { color: var(--text-2); }
 .steps li.done { border-top-color: var(--brand); }
 .steps li.now { border-top-color: var(--dot); color: var(--text); }
@@ -533,6 +538,13 @@ dialog.dialog[open] { display: flex; }
   .topbar { flex-wrap: wrap; row-gap: 8px; }
   .searchbox { order: 3; width: 100%; flex: 1 1 100%; }
 }
+
+/* 英文的底部導覽標籤比中文長：拉開間距，可以左右捲動 */
+@media (max-width: 560px) { html[lang="en"] .nav { gap: 10px; } html[lang="en"] .nav a .short { font-size: 11.5px; } }
+
+/* 介面語言切換：窄螢幕只留地球圖示 */
+.lang-switch { white-space: nowrap; }
+@media (max-width: 960px) { .lang-switch .txt { display: none; } }
 
 /* 常駐程式連不上 */
 .agent-down { max-width: 640px; margin: 48px auto; display: grid; gap: 16px; }

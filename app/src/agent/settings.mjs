@@ -36,11 +36,11 @@ export function createSettings(paths) {
       const next = { ...cur };
       if (patch.syncIntervalMin !== undefined) {
         const n = Number(patch.syncIntervalMin);
-        if (!INTERVALS.has(n)) throw Object.assign(new Error('同步間隔只能是 5、10、15 或 30 分鐘'), { code: 'E_INVALID' });
+        if (!INTERVALS.has(n)) throw Object.assign(new Error('同步間隔只能是 5、10、15 或 30 分鐘'), { code: 'E_INVALID', en: { message: 'The sync interval must be 5, 10, 15 or 30 minutes' } });
         next.syncIntervalMin = n;
       }
       if (patch.healthTime !== undefined) {
-        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(patch.healthTime))) throw Object.assign(new Error('時間格式為 HH:MM'), { code: 'E_INVALID' });
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(patch.healthTime))) throw Object.assign(new Error('時間格式為 HH:MM'), { code: 'E_INVALID', en: { message: 'The time format is HH:MM' } });
         next.healthTime = String(patch.healthTime);
       }
       if (patch.paused !== undefined) next.paused = !!patch.paused;

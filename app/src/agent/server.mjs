@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
-import { toErrorInfo } from '../cli/errors.mjs';
+import { toErrorInfoI18n } from '../cli/errors.mjs';
 import { APP_DIR } from '../cli/paths.mjs';
 
 export const DEFAULT_UI_DIR = path.join(APP_DIR, 'src', 'ui', 'dist');
@@ -45,6 +45,9 @@ const MISSING_UI_PAGE = `<!doctype html>
 <h1 style="color:#0072CE;margin-bottom:.5rem">Engram 憶跡</h1>
 <p>常駐程式正在執行，但找不到管理介面的檔案（app/src/ui/dist/）。</p>
 <p>管理介面需要先建置；建置完成後重新整理這一頁即可。在這之前，命令列仍可正常使用，例如 <code>engram status</code>、<code>engram search</code>。</p>
+<hr style="border:0;border-top:1px solid #d1d5db;margin:1.5rem 0">
+<p lang="en">The agent is running, but the dashboard files (app/src/ui/dist/) were not found.</p>
+<p lang="en">The dashboard has to be built first. Once it is built, reload this page. Until then the command line still works, for example <code>engram status</code> and <code>engram search</code>.</p>
 </body>
 </html>
 `;
@@ -55,6 +58,12 @@ export class HttpError extends Error {
     this.status = status;
     this.code = code;
     this.hint = hint;
+  }
+
+  /** 附上英文版（管理介面切到英文時顯示）；回傳自己。 */
+  withEn(message, hint = '') {
+    this.en = { message, ...(hint ? { hint } : {}) };
+    return this;
   }
 }
 
@@ -72,7 +81,7 @@ function sendError(res, err) {
     res.end();
     return;
   }
-  const info = toErrorInfo(err);
+  const info = toErrorInfoI18n(err);
   sendJson(res, err?.status ?? STATUS_BY_CODE[info.code] ?? 500, { error: info });
 }
 
@@ -83,7 +92,7 @@ function readJsonBody(req) {
     req.on('data', (c) => {
       size += c.length;
       if (size > MAX_BODY_BYTES) {
-        reject(new HttpError(413, 'E_TOO_LARGE', '請求本文超過 1 MB'));
+        reject(new HttpError(413, 'E_TOO_LARGE', '請求本文超過 1 MB').withEn('The request body is larger than 1 MB'));
         req.destroy();
         return;
       }
@@ -95,7 +104,7 @@ function readJsonBody(req) {
       try {
         resolve(JSON.parse(text));
       } catch {
-        reject(new HttpError(400, 'E_INVALID', '請求本文不是有效的 JSON'));
+        reject(new HttpError(400, 'E_INVALID', '請求本文不是有效的 JSON').withEn('The request body is not valid JSON'));
       }
     });
     req.on('error', reject);
@@ -130,11 +139,11 @@ export function createAgentServer({ token, api, events, uiDir = DEFAULT_UI_DIR, 
   async function handle(req, res) {
     const hosts = allowedHosts();
     if (!hosts.includes(req.headers.host)) {
-      throw new HttpError(403, 'E_FORBIDDEN', '不接受這個 Host', '請用 http://127.0.0.1:4777/ 開啟管理介面。');
+      throw new HttpError(403, 'E_FORBIDDEN', '不接受這個 Host', '請用 http://127.0.0.1:4777/ 開啟管理介面。').withEn('This Host is not accepted', 'Open the dashboard at http://127.0.0.1:4777/.');
     }
     const url = new URL(req.url, `http://${req.headers.host}`);
     // 跨站而來的請求一律拒絕：包含被其他網站嵌入或導向的頁面（R-44、R-46）
-    if (req.headers['sec-fetch-site'] === 'cross-site') throw new HttpError(403, 'E_FORBIDDEN', '拒絕跨站請求');
+    if (req.headers['sec-fetch-site'] === 'cross-site') throw new HttpError(403, 'E_FORBIDDEN', '拒絕跨站請求').withEn('Cross-site requests are rejected');
     if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url.pathname);
 
     checkOrigin(req, hosts);
@@ -150,7 +159,7 @@ export function createAgentServer({ token, api, events, uiDir = DEFAULT_UI_DIR, 
   }
 
   async function serveStatic(req, res, pathname) {
-    if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'E_METHOD', `不支援 ${req.method}`);
+    if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'E_METHOD', `不支援 ${req.method}`).withEn(`${req.method} is not supported`);
     const root = path.resolve(uiDir);
     const indexFile = path.join(root, 'index.html');
     if (!fs.existsSync(indexFile)) return send(res, 200, MISSING_UI_PAGE, { 'Content-Type': MIME['.html'] });
@@ -159,12 +168,12 @@ export function createAgentServer({ token, api, events, uiDir = DEFAULT_UI_DIR, 
     try {
       rel = decodeURIComponent(pathname);
     } catch {
-      throw new HttpError(400, 'E_INVALID', '網址格式不正確');
+      throw new HttpError(400, 'E_INVALID', '網址格式不正確').withEn('The URL is malformed');
     }
-    if (rel.includes(':')) throw new HttpError(404, 'E_NOT_FOUND', '找不到檔案');
+    if (rel.includes(':')) throw new HttpError(404, 'E_NOT_FOUND', '找不到檔案').withEn('File not found');
     // 沒有副檔名的路徑都交給前端路由（單頁應用）
     const file = path.extname(rel) ? path.resolve(root, `.${rel}`) : indexFile;
-    if (file !== indexFile && !file.startsWith(root + path.sep)) throw new HttpError(404, 'E_NOT_FOUND', '找不到檔案');
+    if (file !== indexFile && !file.startsWith(root + path.sep)) throw new HttpError(404, 'E_NOT_FOUND', '找不到檔案').withEn('File not found');
     if (file === indexFile) {
       const html = (await fsp.readFile(indexFile, 'utf8')).replace(
         /(<meta\s+name=["']engram-token["']\s+content=)["'][^"']*["']/i,
@@ -173,7 +182,7 @@ export function createAgentServer({ token, api, events, uiDir = DEFAULT_UI_DIR, 
       return send(res, 200, req.method === 'HEAD' ? undefined : html, { 'Content-Type': MIME['.html'] });
     }
     const data = await fsp.readFile(file).catch(() => null);
-    if (!data) throw new HttpError(404, 'E_NOT_FOUND', '找不到檔案');
+    if (!data) throw new HttpError(404, 'E_NOT_FOUND', '找不到檔案').withEn('File not found');
     send(res, 200, req.method === 'HEAD' ? undefined : data, {
       'Content-Type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
       'Cache-Control': 'no-cache',
@@ -184,21 +193,21 @@ export function createAgentServer({ token, api, events, uiDir = DEFAULT_UI_DIR, 
 }
 
 function unauthorized() {
-  return new HttpError(401, 'E_UNAUTHORIZED', '缺少或錯誤的存取權杖', '重新整理管理介面；常駐程式每次啟動都會換新的權杖。');
+  return new HttpError(401, 'E_UNAUTHORIZED', '缺少或錯誤的存取權杖', '重新整理管理介面；常駐程式每次啟動都會換新的權杖。').withEn('The access token is missing or invalid', 'Reload the dashboard. The agent issues a new token every time it starts.');
 }
 
 /** 所有 /api 請求：只允許同源（或沒有 Origin，例如 hooks 與 CLI）。 */
 function checkOrigin(req, hosts) {
   const origin = req.headers.origin;
   if (origin !== undefined && !hosts.some((h) => origin === `http://${h}`)) {
-    throw new HttpError(403, 'E_FORBIDDEN', '拒絕跨來源的請求');
+    throw new HttpError(403, 'E_FORBIDDEN', '拒絕跨來源的請求').withEn('Cross-origin requests are rejected');
   }
 }
 
 /** 寫入請求：另外限定方法與 Content-Type（只收 JSON）。 */
 function checkWriteRequest(req, hosts) {
-  if (req.method !== 'POST' && req.method !== 'PUT') throw new HttpError(405, 'E_METHOD', `不支援 ${req.method}`);
+  if (req.method !== 'POST' && req.method !== 'PUT') throw new HttpError(405, 'E_METHOD', `不支援 ${req.method}`).withEn(`${req.method} is not supported`);
   checkOrigin(req, hosts);
   const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new HttpError(415, 'E_MEDIA_TYPE', '只接受 Content-Type: application/json');
+  if (type !== 'application/json') throw new HttpError(415, 'E_MEDIA_TYPE', '只接受 Content-Type: application/json').withEn('Only Content-Type: application/json is accepted');
 }

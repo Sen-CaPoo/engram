@@ -12,7 +12,7 @@ import { makeMid, makeVaultId } from './ids.mjs';
 import { normalizeFsPath, toTildePath } from './paths.mjs';
 
 export const SCHEMA_VERSION = 1;
-export const ENGINE_VERSION = '1.0.0';
+export const ENGINE_VERSION = '1.1.0';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const TEMPLATES_DIR = path.join(HERE, 'templates');
@@ -48,8 +48,9 @@ export function layout(vaultDir) {
 
 // R-45：pid／mid 會被用來組路徑，所有 *Dir helper 都在這裡統一驗證（防止 ..、路徑分隔字元等）
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const KIND_EN = { '專案 id': 'project id', '電腦 id': 'machine id' }; // assertId 的 kind 是中文詞，英文訊息用這張表對照
 export function assertId(kind, id) {
-  if (typeof id !== 'string' || !ID_RE.test(id)) throw new EngramError(E.INVALID, `不合法的${kind}：${String(id).slice(0, 80)}`);
+  if (typeof id !== 'string' || !ID_RE.test(id)) throw new EngramError(E.INVALID, `不合法的${kind}：${String(id).slice(0, 80)}`).withEn(`Invalid ${KIND_EN[kind] ?? kind}: ${String(id).slice(0, 80)}`);
   return id;
 }
 export function projectDir(vaultDir, pid) { return path.join(vaultDir, 'projects', assertId('專案 id', pid)); }
@@ -121,7 +122,7 @@ export async function initVault({ homes, remote, machineLabel, userName, cli }) 
 
   if (!exists(path.join(vault, '.git'))) {
     if (exists(vault) && fs.readdirSync(vault).length > 0) {
-      throw new EngramError(E.INVALID, `vault 位置已有其他檔案：${vault}`, '請清空該資料夾或指定其他 home');
+      throw new EngramError(E.INVALID, `vault 位置已有其他檔案：${vault}`, '請清空該資料夾或指定其他 home').withEn(`The vault location already contains other files: ${vault}`, 'Empty that folder or specify a different home');
     }
     let cloned = false;
     if (remote) {

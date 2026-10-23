@@ -1,6 +1,6 @@
 // 相容性探測（R-11）：給 `engram doctor --probe` 與常駐程式的 probe 工作使用。
 // 一律在 os.tmpdir() 的暫存資料夾執行，不碰真實專案；結束時只刪除本次建立的暫存資料夾與對應的編碼資料夾。
-// 回傳格式同 api.js 的 AgentInfo.probe：{ at, claudeVersion, ok, checks: [{ id, label, ok, detail }] }。
+// 回傳格式同 api.js 的 AgentInfo.probe：{ at, claudeVersion, ok, checks: [{ id, label, ok, detail, en: { label, detail } }] }。
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -175,9 +175,9 @@ export async function runProbe({ runner = createClaudeRunner(), claudeHome = def
       try {
         r = await c.run(t);
       } catch (err) {
-        r = { ok: false, detail: `錯誤：${err.message}` };
+        r = { ok: false, detail: `錯誤：${err.message}`, en: { detail: `Error: ${err.message}` } };
       }
-      checks.push({ id: c.id, label: c.label, ok: !!r.ok, detail: r.detail ?? '' });
+      checks.push({ id: c.id, label: c.label, ok: !!r.ok, detail: r.detail ?? '', en: { label: c.en.label, detail: r.en?.detail ?? r.detail ?? '' } });
     }
   } finally {
     if (!keep) cleanup(root, claudeHome, created);

@@ -1,3 +1,5 @@
+**繁體中文** · [English](INSTALL-WITH-AI.md)
+
 # AI 幫你快速安裝 Engram
 
 <p align="center">
@@ -58,7 +60,7 @@ node "$HOME/.engram/app/current/bin/engram.mjs" status
 
 | 項目 | 通過條件 | 不通過時 |
 | --- | --- | --- |
-| 作業系統 | 第一行顯示 Windows 11 | **停止**。Engram 1.0 只支援 Windows 11，請告訴使用者 |
+| 作業系統 | 第一行顯示 Windows 11 | **停止**。Engram 只支援 Windows 11，請告訴使用者 |
 | Claude Code | `claude --version` 有版本號 | **停止**。請使用者先安裝並登入 Claude Code |
 | Git | 有版本號 | 步驟 3 安裝 |
 | Node.js | `v22` 以上 | 步驟 3 安裝或升級 |
@@ -134,7 +136,7 @@ node "$HOME/engram/app/bin/engram.mjs" install --dry-run --label "<電腦名稱>
 請：
 
 1. 把計畫逐行翻成白話告訴使用者，可以參考[附錄 A](#附錄-a安裝會改動哪些地方)；
-2. 特別說明提醒事項。最常見的是「預設權限模式不是 auto」：意思是從專案根目錄開 Claude Code 完全正常，只有從子資料夾開啟時用不到 Engram 的記憶。**不要自行修改使用者的 Claude Code 設定**，使用者主動要求才協助；
+2. 特別說明提醒事項。最常見的是以 `你的 Claude Code 預設權限模式是「…」` 開頭的提醒：意思是從專案根目錄開 Claude Code 完全正常，只有從子資料夾開啟時用不到 Engram 的記憶。**不要自行修改使用者的 Claude Code 設定**，使用者主動要求才協助；
 3. 問使用者：「要照這個計畫安裝嗎？」
 
 ## 步驟 7：正式安裝（需要明確同意）

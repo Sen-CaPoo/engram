@@ -5,7 +5,8 @@
 // 共通規則
 // - 所有端點都在 /api 底下，只接受 JSON 本文；回應一律 JSON。
 // - 每個請求帶 X-Engram-Token（常駐程式啟動時產生，注入在 index.html 的 <meta name="engram-token">）。
-// - 錯誤回應：HTTP 4xx/5xx，本文 { error: { code, message, hint } }，code 沿用 EngramError（E_LOCKED、E_AUTH…）。
+// - 錯誤回應：HTTP 4xx/5xx，本文 { error: { code, message, hint, en?: { message, hint } } }，code 沿用 EngramError（E_LOCKED、E_AUTH…）。
+// - 多語系：給人看的文字是正體中文；有英文版時附在同一個物件的 en 欄位（例如 finding.en.title），介面依語言挑選。
 // - SSE：GET /api/events?t=<token>，事件名稱 status | sync | change | finding | job | probe，data 為 JSON。
 //
 // 端點一覽（方法 路徑 → 回傳）
@@ -82,6 +83,7 @@ class ApiError extends Error {
     this.status = status;
     this.code = body?.error?.code || 'E_HTTP';
     this.hint = body?.error?.hint || '';
+    if (body?.error?.en) this.en = body.error.en;
   }
 }
 
@@ -94,7 +96,10 @@ async function request(method, path, body) {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new ApiError(0, { error: { code: 'E_AGENT_DOWN', message: '連不到 Engram 常駐程式', hint: '在終端機執行 engram agent，或重新登入 Windows 讓它自動啟動。' } });
+    throw new ApiError(0, { error: {
+      code: 'E_AGENT_DOWN', message: '連不到 Engram 常駐程式', hint: '在終端機執行 engram agent，或重新登入 Windows 讓它自動啟動。', // i18n-ignore
+      en: { message: 'Cannot reach the Engram agent', hint: 'Run engram agent in a terminal, or sign in to Windows again so it starts automatically.' },
+    } });
   }
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;

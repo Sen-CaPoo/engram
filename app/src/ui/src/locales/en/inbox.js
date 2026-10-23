@@ -1,0 +1,108 @@
+// 英文對照：收件匣（views/inbox.jsx）。鍵是中文原文，見 ../README.md。
+const plural = (n, one, many) => (Number(n) === 1 ? one : many);
+
+export default {
+  // ── 篩選與標題列
+  '需要處理': 'Needs attention',
+  '同步衝突': 'Sync conflicts',
+  'tab::建議': 'Suggestions',
+  '篩選': 'Filter',
+  '「需要處理」＝衝突＋高＋中；「建議」不急，可以忽略。健康檢查每天 09:30 執行，判斷全部依規則。': '"Needs attention" = conflicts + High + Medium. "Suggestions" are not urgent and can be dismissed. The health check runs every day at 09:30, and every judgment is rule-based.',
+  '交給 Claude 整理': 'Ask Claude to tidy up',
+  '交給 Claude 整理收件匣': 'Ask Claude to tidy the inbox',
+  '規則只能找出候選，要不要升級全域、是不是真的重複、還有沒有用，需要讀內容才能判斷。Claude 會逐張讀過 {n} 張卡片，列出每一張的判斷與建議處理方式。': ({ n }) => plural(n,
+    'Rules can only find candidates. Deciding whether to promote a memory to global, whether it is really a duplicate, or whether it is still useful takes reading the content. Claude will read the card and list its judgment and suggested action.',
+    'Rules can only find candidates. Deciding whether to promote a memory to global, whether it is really a duplicate, or whether it is still useful takes reading the content. Claude will read each of the {n} cards in turn and list its judgment and suggested action for every one.'),
+  '逐項確認（建議）': 'Confirm each item (recommended)',
+  'Claude 列出計畫表後停下來，你選擇要執行哪些項目。': 'Claude lists its plan in a table, then stops so you can choose which items to run.',
+  '自動處理': 'Handle automatically',
+  '/engram:inbox 自動': '/engram:inbox auto',
+  'Claude 列出計畫表後直接處理有把握的項目（升級全域、搬到單機、合併重複、修正格式、精簡、忽略）；疑似金鑰、資料夾改名與綁定、大量刪除、封存、同步衝突與沒有把握的項目一律留給你決定。每一項都附復原指令。': 'Claude lists its plan, then handles the items it is confident about (promote to global, move to machine, merge duplicates, fix formatting, trim, dismiss). Possible secrets, folder renames and bindings, mass deletions, archiving, sync conflicts, and anything it is unsure about are always left for you to decide. Every step comes with an undo command.',
+  '沒有建議': 'No suggestions',
+  '沒有需要處理的事': 'Nothing needs attention',
+  '另有 {n} 項不急的建議，可以有空再看。': ({ n }) => plural(n, 'There is 1 more non-urgent suggestion. Look at it when you have time.', 'There are {n} more non-urgent suggestions. Look at them when you have time.'),
+  '新的衝突或健康檢查發現會出現在這裡。': 'New conflicts and health check findings will show up here.',
+
+  // ── 衝突卡片
+  '目前檔案保留這台的版本，對方的版本暫存在衝突區，Claude 不會讀到衝突標記。': 'The current file keeps this computer\'s version. The other computer\'s version is held in the conflict area, so Claude never sees conflict markers.',
+  '比對並決定': 'Compare and decide',
+  '交給 Claude 合併': 'Ask Claude to merge',
+  '交給 Claude 合併：{name}': 'Ask Claude to merge: {name}',
+  'Claude 會比對兩台電腦的版本與修改前的共同版本，說明兩邊各改了什麼，提出合併後的內容讓你確認。': 'Claude compares the versions from both computers with the common version from before the changes, explains what each side changed, and proposes merged content for you to confirm.',
+
+  // ── 發現卡片
+  '交給 Claude：{title}': 'Ask Claude: {title}',
+  'Claude 會讀這張卡片相關的記憶內容，說明判斷的依據，建議要套用修正、改寫、合併還是忽略。': 'Claude reads the memories related to this card, explains the reasoning, and recommends whether to apply the fix, rewrite, merge, or dismiss.',
+  '在記憶庫開啟': 'Open in Library',
+  '七天後再提醒': 'You will be reminded in 7 days',
+  '七天後提醒': 'Remind in 7 days',
+  '已忽略這項，之後不再提醒': 'Dismissed. You will not be reminded again',
+  '忽略': 'Dismiss',
+  '已{label}': '{label}: done',
+  '{label}？': '{label}?',
+
+  // ── 執行前的確認說明（CONFIRM）
+  '把被刪除的記憶從歷史中還原到目前的版本。': 'Restore the deleted memories from history into the current version.',
+  '確認這些刪除是你要的，之後不再提醒；檔案仍可從歷史還原。': 'Confirm that you meant to delete these. You will not be reminded again, and the files can still be restored from history.',
+  '重新建立這個資料夾的記憶連結（junction），原本的記憶資料夾會先備份。': 'Recreate this folder\'s memory link (junction). The existing memory folder is backed up first.',
+  '把這筆記憶移到歷史（封存）；之後仍可從歷史還原。': 'Move this memory to history (archive). You can still restore it from history later.',
+  '移除這台電腦上已失效的綁定紀錄；記憶本身不受影響。': 'Remove the stale binding record on this computer. The memories themselves are not affected.',
+  '在你的使用者設定中加入這個記憶資料夾，讓 Claude 讀取時不再跳出權限詢問。': 'Add this memory folder to your user settings so Claude no longer shows a permission prompt when reading it.',
+  '依這台電腦目前的權限模式重新設定資料夾綁定：auto 模式補上 junction，其他模式改用專案根目錄的設定檔，避免讀寫記憶時跳出權限詢問。記憶本身不受影響。': 'Reset folder bindings to match this computer\'s current permission mode: in auto mode, add the junction; in other modes, use a settings file in the project root instead, so reading and writing memories does not trigger permission prompts. The memories themselves are not affected.',
+  '依命名規則在資料夾原名後面加 4 碼代號（例如「照片優化-66ca」），讓它們在 Claude Code 裡不再共用同一份紀錄。改名後重新綁定，這台電腦寫的記憶裡的舊路徑一併更新；已收編完的共用舊記憶資料夾移到備份。改名前的對話不會出現在 /resume 清單。完成後可以按「復原」整批還原。': 'Following the naming rule, append a 4-character code to each folder\'s original name (for example "照片優化-66ca") so they no longer share one history in Claude Code. After renaming, the folders are rebound and old paths in memories written on this computer are updated. The shared old memory folder, once fully adopted, is moved to a backup. Conversations from before the rename will not appear in the /resume list. When it is done, you can press "Undo" to revert the whole batch.',
+
+  // ── 同步衝突對話框
+  '衝突的合併結果': 'Conflict merge result',
+  '已保留這台的版本': 'Kept this computer\'s version',
+  '已改用對方的版本': 'Switched to the other computer\'s version',
+  '兩個版本都已保留': 'Kept both versions',
+  '已儲存合併結果': 'Saved the merge result',
+  '另一台': 'the other computer',
+  '改刪衝突：{name}': 'Modify/delete conflict: {name}',
+  '接受刪除': 'Accept deletion',
+  '保留這筆記憶': 'Keep this memory',
+  '一台電腦修改了這筆記憶，另一台把它刪除了。Engram 先保留了修改後的版本：': 'One computer modified this memory and the other deleted it. Engram kept the modified version for now:',
+  '兩邊各自改名：{name}': 'Both computers renamed it: {name}',
+  '兩個檔名都保留': 'Keep both file names',
+  '用這台的檔名': 'Use this computer\'s file name',
+  '兩台電腦把同一筆記憶改成不同的檔名。保留兩者時，會在收件匣出現「可能重複」卡片，之後可以合併。': 'The two computers renamed the same memory to different file names. If you keep both, a "possible duplicate" card appears in the inbox so you can merge them later.',
+  '同步衝突：{name}': 'Sync conflict: {name}',
+  '「兩者都保留」會把{other}的版本另存成 {file}': '"Keep both" saves the version from {other} as {file}',
+  '兩者都保留': 'Keep both',
+  '改用{other}的版本': 'Use the version from {other}',
+  '保留這台的版本': 'Keep this computer\'s version',
+  '儲存左邊的合併結果': 'Save the merged result on the left',
+  '右邊顯示': 'Right pane shows',
+  '右邊：{other}的版本': 'Right: version from {other}',
+  '右邊：修改前的共同版本': 'Right: common version before the changes',
+  '這台的版本（可直接編輯；點中間的箭頭把右邊的段落搬過來）': 'This computer\'s version (editable; click the arrows in the middle to move paragraphs over from the right)',
+  '兩邊修改前的共同版本': 'Common version before either side changed',
+  '{other}的版本': 'Version from {other}',
+
+  // ── 合併重複記憶對話框
+  '合併中的記憶': 'Memory merge in progress',
+  '已合併 {n} 筆記憶': ({ n }) => plural(n, 'Merged 1 memory', 'Merged {n} memories'),
+  '合併 {n} 筆記憶': ({ n }) => plural(n, 'Merge 1 memory', 'Merge {n} memories'),
+  '上方並排列出 {n} 筆的內容；下方是合併後的內文，請刪掉重複的段落，再選擇要保留哪個檔名。其他檔案會移到歷史中，隨時可以還原。': ({ n }) => plural(n,
+    'The memory is shown above. Below is the merged body: delete any duplicate paragraphs, then choose which file name to keep. The other files move to history and can be restored at any time.',
+    'The {n} memories are shown side by side above. Below is the merged body: delete any duplicate paragraphs, then choose which file name to keep. The other files move to history and can be restored at any time.'),
+  '合併': 'Merge',
+  '合併後的內文': 'Merged body',
+
+  // ── 疑似金鑰對話框
+  '遮蔽在這台電腦上完成，不會把內容送到 Claude 或任何網路服務。遮蔽後檔案會恢復同步；之後仍可從歷史復原。': 'Redaction happens on this computer. Nothing is sent to Claude or any network service. After redaction the file resumes syncing, and you can still undo it from history.',
+  '稍後再處理': 'Handle later',
+  '這不是金鑰': 'Not a secret',
+  '已標記為不是金鑰': 'Marked as not a secret',
+  '遮蔽並恢復同步': 'Redact and resume sync',
+  '已遮蔽，檔案會恢復同步': 'Redacted. The file will resume syncing',
+  '找到 {n} 處：{list}。遮蔽後的內容：': ({ n }) => plural(n, 'Found 1 match: {list}. Content after redaction:', 'Found {n} matches: {list}. Content after redaction:'),
+  '第 {line} 行（{kind}）': 'line {line} ({kind})',
+  '建議把金鑰本身存在 Windows 認證管理員或密碼管理工具，記憶裡只寫「存放在哪裡、怎麼取得」。': 'Store the secret itself in Windows Credential Manager or a password manager, and write only "where it is stored and how to get it" in the memory.',
+
+  // ── 交給 Claude 改寫的指引對話框
+  '請協助把下列中文資料夾改成英文名稱：先確認沒有進行中的 Claude Code 對話，改名後執行 engram bind 重新綁定。資料夾：{roots}': 'Please help me rename these folders, which have Chinese names, to English names. First make sure no Claude Code conversation is in progress. After renaming, run engram bind to rebind them. Folders: {roots}',
+  '這件事需要改寫內容，交給 Claude 在對話中處理最安全。複製下面的指示，貼到任何一個 Claude Code 對話即可。': 'This needs the content rewritten, and it is safest to let Claude do it in a conversation. Copy the instructions below and paste them into any Claude Code conversation.',
+  '已複製': 'Copied',
+  '複製指示': 'Copy instructions',
+};

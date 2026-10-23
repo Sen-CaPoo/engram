@@ -6,6 +6,7 @@ import path from 'node:path';
 import { init, open, E } from '../../src/core/index.mjs';
 import { encodeProjectPath } from '../../src/core/paths.mjs';
 import { isLink, linkTarget, sha1 } from '../../src/core/fsx.mjs';
+import { classifyGitError } from '../../src/core/git.mjs';
 import { addTranscript, age, ageTree, machinePaths, makeRepo, memoryText, mkTmp, rmTmp, writeDriverCli, git } from './helpers.mjs';
 
 let root;
@@ -33,7 +34,7 @@ function plant(ref, text) {
 describe('初始化', () => {
   test('open() 在尚未初始化時丟 E_NOT_FOUND', async () => {
     const other = machinePaths(root, 'nobody');
-    await assert.rejects(open(other), (e) => e.code === E.NOT_FOUND);
+    await assert.rejects(open(other), (e) => e.code === E.NOT_FOUND && e.en?.message === 'Engram has not been set up on this computer yet' && /engram install/.test(e.en?.hint));
   });
 
   test('建立 vault 骨架、CORE.md、本機登記與首次 commit', async () => {
@@ -211,7 +212,7 @@ describe('記憶 CRUD 與索引', () => {
     const token = `ghp_${'Lk9Jh7Gf5D'.repeat(4)}`;
     const held = plant('global/held-note.md', memoryText({ name: 'held-note', description: '被扣住的記憶', type: 'reference', body: `權杖：${token}` }));
     const other = await eg.memories.create({ scope: { kind: 'global' }, name: 'held-other', type: 'reference', description: '另一筆', body: '沒有金鑰' });
-    await assert.rejects(eg.memories.remove(held.ref), (e) => e.code === E.SECRET && /先在收件匣遮蔽金鑰/.test(e.hint));
+    await assert.rejects(eg.memories.remove(held.ref), (e) => e.code === E.SECRET && /先在收件匣遮蔽金鑰/.test(e.hint) && /Redact the secret in the inbox first/.test(e.en?.hint) && /archived/.test(e.en?.message));
     await assert.rejects(eg.memories.move(held.ref, { kind: 'machine' }), (e) => e.code === E.SECRET);
     await assert.rejects(eg.memories.merge([other.ref, held.ref], { into: other.ref, text: '合併' }), (e) => e.code === E.SECRET);
     await assert.rejects(eg.memories.merge([other.ref, held.ref], { into: held.ref, text: '合併' }), (e) => e.code === E.SECRET);
@@ -236,14 +237,14 @@ describe('記憶 CRUD 與索引', () => {
     const ref = plant('global/old-flagged.md', memoryText({ name: 'old-flagged', description: '規則更新前就同步的', type: 'reference', body: `舊內容：${token}` })).ref;
     git(eg.paths.vault, 'add', ref);
     git(eg.paths.vault, '-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-q', '-m', 'legacy commit');
-    await assert.rejects(eg.memories.move(ref, { kind: 'machine' }), (e) => e.code === E.SECRET && /不會同步/.test(e.message));
+    await assert.rejects(eg.memories.move(ref, { kind: 'machine' }), (e) => e.code === E.SECRET && /不會同步/.test(e.message) && /not synced/.test(e.en?.message) && !/[一-鿿]/.test(e.en.message));
     await eg.memories.remove(ref);
     assert.equal(fs.existsSync(path.join(eg.paths.vault, ref)), false);
     await eg.memories.restore(ref);
     assert.ok(fs.readFileSync(path.join(eg.paths.vault, ref), 'utf8').includes(token), '從歷史還原');
     // 工作目錄改過、和 HEAD 不同時（新內容沒進過歷史）仍然拒絕封存
     fs.appendFileSync(path.join(eg.paths.vault, ref), '新加的一行\n');
-    await assert.rejects(eg.memories.remove(ref), (e) => e.code === E.SECRET && /還沒進同步歷史/.test(e.message));
+    await assert.rejects(eg.memories.remove(ref), (e) => e.code === E.SECRET && /還沒進同步歷史/.test(e.message) && /sync history/.test(e.en?.message));
     fs.rmSync(path.join(eg.paths.vault, ref));
   });
 
@@ -397,6 +398,8 @@ describe('綁定與 SessionStart', () => {
     const findings = await eg.health();
     const h19 = findings.find((f) => f.code === 'H19' && f.refs.includes(ref));
     assert.ok(h19, '應提示 H19');
+    assert.equal(h19.en.title, '"misplaced" may belong to another folder');
+    assert.match(h19.fix.en.label, /^Move to /);
     const res = await eg.apply(h19.fix);
     assert.ok(res.ref && !res.ref.includes(pid), '已移到另一個專案');
     const bindB = await eg.identity.resolve(b);
@@ -499,7 +502,11 @@ describe('健康檢查', () => {
     fs.mkdirSync(memDir);
     const findings = await eg.health();
     assert.ok(findings.some((f) => f.code === 'H17' && f.severity === 'high'));
-    const fix = findings.find((f) => f.code === 'H17' && f.severity === 'high').fix;
+    const h17 = findings.find((f) => f.code === 'H17' && f.severity === 'high');
+    assert.match(h17.en.title, /^The memory link for ".+" is broken$/);
+    assert.match(h17.en.detail, /^The status of Claude Code's memory folder is \S+\./);
+    assert.equal(h17.fix.en.label, 'Recreate link');
+    const fix = h17.fix;
     await eg.apply(fix);
     assert.ok(isLink(memDir));
   });
@@ -523,6 +530,91 @@ describe('健康檢查', () => {
       fs.rmSync(remote, { force: true });
       if (original === null) fs.rmSync(file, { force: true }); else fs.writeFileSync(file, original);
     }
+  });
+
+  test('英文版：每筆發現都有 en.title／en.detail，每個修正都有 fix.en.label，英文裡沒有中文樣板', async () => {
+    const han = /\p{Script=Han}/u;
+    const pid = (await eg.projects.list()).find((p) => p.name === '示範閘道').pid;
+    const indexFile = path.join(eg.paths.vault, 'projects', pid, 'memory', 'MEMORY.md');
+    const coreFile = path.join(eg.paths.vault, 'core', 'CORE.md');
+    const savedIndex = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, 'utf8') : null;
+    const savedCore = fs.readFileSync(coreFile, 'utf8');
+    const planted = [];
+    const put = (ref, text) => { planted.push(plant(ref, text).ref); };
+    const cfDirs = ['cf_en_test', 'cf_bare_test'].map((id) => path.join(eg.paths.vault, 'conflicts', id));
+    let findings;
+    try {
+      // 補上前面沒觸發的發現；結束後清掉，不影響後面的測試
+      put('global/en-this-pc.md', memoryText({ name: 'en-this-pc', description: 'Notes', type: 'reference', body: '這台電腦的網路設定。' }));
+      put('global/en-disk.md', memoryText({ name: 'en-disk', description: 'Disk notes', type: 'reference', body: 'C 槽空間不足。' }));
+      put('global/en-host.md', memoryText({ name: 'en-host', description: 'Host notes', type: 'reference', body: `Written on ${eg.machine.hostname}.` }));
+      put('global/en-big.md', memoryText({ name: 'en-big', description: 'Big note', type: 'reference', body: 'x'.repeat(21 * 1024) }));
+      put('global/en-fat.md', memoryText({ name: 'en-fat', description: 'Fat note', type: 'reference', body: 'x'.repeat(9 * 1024) }));
+      put('global/en-broken.md', '---\nname: en-broken\ndescription: "unclosed\n---\nbody\n');
+      put('global/en-incomplete.md', '---\nname: en-incomplete\n---\nbody\n');
+      fs.mkdirSync(cfDirs[0], { recursive: true });
+      fs.writeFileSync(path.join(cfDirs[0], 'meta.json'), JSON.stringify({ ref: 'global/en-conflict.md', summary: '兩台電腦都改了', en: { summary: 'Both computers edited it' } }));
+      fs.mkdirSync(cfDirs[1], { recursive: true });
+      fs.writeFileSync(coreFile, `${savedCore}${'extra line\n'.repeat(210)}`);
+      fs.writeFileSync(indexFile, `${Array.from({ length: 210 }, (_, i) => `- [m${i}](m${i}.md) — note`).join('\n')}\n`);
+      findings = await eg.health();
+    } finally {
+      for (const ref of planted) fs.rmSync(path.join(eg.paths.vault, ...ref.split('/')), { force: true });
+      for (const d of cfDirs) fs.rmSync(d, { recursive: true, force: true });
+      fs.writeFileSync(coreFile, savedCore);
+      if (savedIndex === null) fs.rmSync(indexFile, { force: true }); else fs.writeFileSync(indexFile, savedIndex);
+    }
+
+    const codes = new Set(findings.map((f) => f.code));
+    for (const c of ['H01', 'H03', 'H06', 'H07', 'H08', 'H09', 'H10', 'H12', 'H13', 'H15', 'H16']) assert.ok(codes.has(c), `應有 ${c}`);
+    // 英文裡允許出現的中文只有帶入的使用者資料：專案名稱、記憶名稱、電腦名稱、資料夾名稱（路徑）。先把這些拿掉，剩下的就是樣板，不可有中文
+    const tokens = new Set([eg.machine.label, ...(await eg.projects.list()).map((p) => p.name)]);
+    for (const rel of fs.readdirSync(root, { recursive: true })) for (const part of String(rel).split(path.sep)) tokens.add(part);
+    const data = [...tokens].filter((t) => han.test(t)).sort((a, b) => b.length - a.length);
+    const bare = (s) => data.reduce((acc, t) => acc.split(t).join(''), s);
+
+    for (const f of findings) {
+      assert.equal(typeof f.en?.title, 'string', `${f.code} 缺 en.title`);
+      assert.equal(typeof f.en?.detail, 'string', `${f.code} 缺 en.detail`);
+      assert.ok(f.en.title && f.en.detail, `${f.code} 的英文不可為空`);
+      assert.notEqual(f.en.title, f.title, `${f.code} 的 en.title 不是中文原文`);
+      assert.doesNotMatch(bare(f.en.title), han, `${f.code} 的 en.title 含中文樣板：${f.en.title}`);
+      assert.doesNotMatch(bare(f.en.detail), han, `${f.code} 的 en.detail 含中文樣板：${f.en.detail}`);
+      if (f.fix) {
+        assert.equal(typeof f.fix.en?.label, 'string', `${f.code} 的修正缺 en.label`);
+        assert.doesNotMatch(bare(f.fix.en.label), han, `${f.code} 的 fix.en.label 含中文樣板：${f.fix.en.label}`);
+        assert.notEqual(f.fix.en.label, f.fix.label);
+      }
+    }
+
+    // 代表性的內容：英文帶入的值與中文相同，中文欄位與 id 不受影響
+    const h13 = findings.find((f) => f.code === 'H13' && f.refs.some((r) => r.endsWith('token-note.md')));
+    assert.equal(h13.title, '「token-note」疑似含有金鑰或密碼');
+    assert.equal(h13.en.title, '"token-note" may contain a secret or password');
+    assert.match(h13.en.detail, /^line \d+ github-token \(/);
+    assert.equal(h13.fix.en.label, 'Remove secret');
+    const h08 = (ref) => findings.find((f) => f.code === 'H08' && f.refs[0] === ref);
+    assert.match(h08('global/en-this-pc.md').en.detail, /^Detected: mentions this computer\./);
+    assert.match(h08('global/en-disk.md').en.detail, /^Detected: describes disk status\./);
+    if (eg.machine.hostname.length >= 4) assert.match(h08('global/en-host.md').en.detail, new RegExp(`^Detected: mentions the host name ${eg.machine.hostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.`, 'i'));
+    assert.match(findings.find((f) => f.code === 'H10' && f.refs[0] === 'global/en-big.md').en.title, /is too large$/);
+    assert.match(findings.find((f) => f.code === 'H10' && f.refs[0] === 'global/en-fat.md').en.title, /is fairly large$/);
+    assert.match(findings.find((f) => f.code === 'H12' && f.refs[0] === 'global/en-broken.md').en.detail, /^Line \d+\b.+\. Engram will not rewrite/);
+    assert.match(findings.find((f) => f.code === 'H12' && f.refs[0] === 'global/en-incomplete.md').en.title, /is incomplete$/);
+    assert.equal(findings.find((f) => f.code === 'H15' && f.refs[0] === 'global/en-conflict.md').en.detail, 'Both computers edited it', '衝突紀錄有英文摘要就用英文');
+    assert.equal(findings.find((f) => f.code === 'H15' && f.refs[0] === 'cf_bare_test').en.detail, 'Two computers changed the same memory at the same time.');
+    assert.match(findings.find((f) => f.code === 'H03').en.title, /^\d+ memor(y is|ies are) not in the index$/);
+    assert.equal(new Set(findings.map((f) => f.id)).size, findings.length, 'finding id 不可重複');
+  });
+
+  test('原始碼檢查：health.mjs 的每個 finding(...) 都帶 en，每個 fix 都帶 en.label（有些發現測試環境觸發不了）', () => {
+    const src = fs.readFileSync(new URL('../../src/core/health.mjs', import.meta.url), 'utf8');
+    const calls = src.match(/finding\('H\d+'/g).length;
+    assert.ok(calls >= 27, '找得到 finding 呼叫');
+    assert.equal(src.match(/en: \{\s*title:/g).length, calls, '每個 finding 一份 en.title／en.detail');
+    const fixes = src.match(/fix: \{ action:/g).length;
+    assert.ok(fixes >= 24);
+    assert.equal(src.match(/en: \{ label:/g).length, fixes, '每個 fix 一份 en.label');
   });
 });
 
@@ -588,6 +680,7 @@ describe('介面需要的引擎能力', () => {
     assert.equal(JSON.parse(fs.readFileSync(path.join(eg.paths.vault, 'machines', eg.machine.id, 'machine.json'), 'utf8')).label, '辦公室桌機');
     assert.deepEqual(await eg.settings.get(), { bindAuto: 'confident', collisionRename: 'ask' });
     await assert.rejects(eg.settings.set({ collisionRename: 'sometimes' }), /collisionRename/);
+    await assert.rejects(eg.settings.set({ collisionRename: 'sometimes' }), (e) => e.en?.message === "collisionRename must be 'auto', 'ask' or 'off'", 'invariant 也附英文版');
     await eg.settings.set({ bindAuto: 'ask' });
     const clone = makeRepo(path.join(root, 'ask', 'gateway-ask'), { remote: 'https://github.com/example-org/demo-gateway' });
     const t = addTranscript(m.claudeHome, clone, { ageMs: 0 });
@@ -612,6 +705,7 @@ describe('介面需要的引擎能力', () => {
     await assert.rejects(eg.memories.move(ref, { kind: 'project', pid: '../../evil' }), (e) => e.code === 'E_INVALID');
     await assert.rejects(eg.memories.move(ref, { kind: 'machine', mid: 'a/../b' }), (e) => e.code === 'E_INVALID');
     await assert.rejects(eg.projects.rename('../x', 'y'), (e) => e.code === 'E_INVALID');
+    await assert.rejects(eg.projects.rename('../x', 'y'), (e) => e.en?.message === 'Invalid project id: ../x', 'assertId 的錯誤也附英文版');
     await assert.rejects(eg.apply({ action: 'allow-read', args: { path: 'C:\\' } }), (e) => e.code === 'E_INVALID');
     await assert.rejects(eg.memories.restore(ref, { rev: '--output=x' }), (e) => e.code === 'E_INVALID');
     await assert.rejects(eg.apply({ action: 'reassign', args: { ref, root: 'C:\\Windows' } }), (e) => e.code === 'E_INVALID');
@@ -625,6 +719,21 @@ describe('介面需要的引擎能力', () => {
     const b = h.find((c) => c.action === 'bind');
     assert.equal(b.undoable, false);
     await assert.rejects(eg.undo(b.sha));
+    await assert.rejects(eg.undo(b.sha), (e) => typeof e.en?.message === 'string' && !/[一-鿿]/.test(e.en.message), '英文版訊息不含中文');
+  });
+});
+
+describe('git 錯誤分類附英文版', () => {
+  test('每一類都有 en.message 與 en.hint，且英文裡沒有中文', () => {
+    const samples = ["fatal: Unable to create '.git/index.lock': File exists.", 'remote: GH013: push protection', 'Operation timed out', 'proxy 407 Proxy Authentication', 'schannel: certificate', 'fatal: Authentication failed', 'Could not resolve host', '! [rejected] main -> main (non-fast-forward)', 'something else'];
+    const codes = new Set();
+    for (const stderr of samples) {
+      const e = classifyGitError({ code: 1, stderr, stdout: '' }, ['push']);
+      codes.add(e.code);
+      assert.ok(e.en?.message && e.en?.hint, `${e.code} 缺英文版：${stderr}`);
+      assert.equal(/[一-鿿]/.test(e.en.message + e.en.hint), false, `${e.code} 的英文版含中文`);
+    }
+    assert.ok(codes.size >= 7);
   });
 });
 

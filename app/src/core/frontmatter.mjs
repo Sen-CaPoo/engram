@@ -751,8 +751,35 @@ function deepSet(obj, parts, value) {
   return root;
 }
 
+// 解析診斷訊息（errors 裡的中文字串）的英文對照；認不得的訊息原樣保留。順序有意義：「第 N 行：」的通用規則放最後。
+const DIAG_EN = [
+  [/^frontmatter 沒有結尾的 --- 分隔行，整份視為內文$/, () => 'frontmatter has no closing --- line, so the whole file is treated as body'],
+  [/^流式結構的引號沒有閉合：(.*)$/s, (m) => `Unclosed quote in flow structure: ${m[1]}`],
+  [/^無法解析的流式結構：(.*)$/s, (m) => `Unparseable flow structure: ${m[1]}`],
+  [/^流式結構沒有閉合：(.*)$/s, (m) => `Unclosed flow structure: ${m[1]}`],
+  [/^第 (\d+) 行使用 tab 縮排$/, (m) => `Line ${m[1]} is indented with a tab`],
+  [/^第 (\d+) 行的引號字串沒有閉合$/, (m) => `Line ${m[1]} has an unclosed quoted string`],
+  [/^第 (\d+) 行引號字串之後有多餘內容：(.*)$/s, (m) => `Line ${m[1]} has extra content after the quoted string: ${m[2]}`],
+  [/^第 (\d+) 行流式結構之後有多餘內容：(.*)$/s, (m) => `Line ${m[1]} has extra content after the flow structure: ${m[2]}`],
+  [/^第 (\d+) 行：純量之後出現縮排更深的結構，格式不明確$/, (m) => `Line ${m[1]}: a more deeply indented structure follows a scalar, which is ambiguous`],
+  [/^第 (\d+) 行縮排不符$/, (m) => `Line ${m[1]} has mismatched indentation`],
+  [/^第 (\d+) 行無法解析：(.*)$/s, (m) => `Line ${m[1]} cannot be parsed: ${m[2]}`],
+  [/^第 (\d+) 行的巢狀行內列表不支援，視為字串$/, (m) => `Line ${m[1]}: nested inline lists are not supported and are treated as a string`],
+  [/^frontmatter 頂層必須是鍵值對$/, () => 'The top level of frontmatter must be key-value pairs'],
+  [/^解析失敗：(.*)$/s, (m) => `Parse failed: ${m[1]}`],
+  [/^第 (\d+) 行：(.*)$/s, (m) => `Line ${m[1]}: ${diagEn(m[2])}`],
+];
+/** 解析診斷訊息的英文版（健康檢查 H12 也用它）。 */
+export function diagEn(msg) {
+  for (const [re, fn] of DIAG_EN) {
+    const m = re.exec(msg);
+    if (m) return fn(m);
+  }
+  return msg;
+}
+
 function invalidError(errors) {
-  return new EngramError(E.INVALID, `frontmatter 格式有誤，拒絕修改：${errors.join('；')}`, '請先修正 frontmatter，或以原始碼模式編輯整份內容', { errors });
+  return new EngramError(E.INVALID, `frontmatter 格式有誤，拒絕修改：${errors.join('；')}`, '請先修正 frontmatter，或以原始碼模式編輯整份內容', { errors }).withEn(`The frontmatter is malformed, so the change was refused: ${errors.map(diagEn).join('; ')}`, 'Fix the frontmatter first, or edit the whole content in raw mode');
 }
 
 /** 對已切割的文件套用單一更新，直接修改 doc.fmLines。 */

@@ -93,13 +93,34 @@ describe('兩台電腦同步', () => {
     const c = list.find((x) => x.ref === ref);
     assert.ok(c, '衝突紀錄應同步到公司電腦');
     assert.ok(c.ours && c.theirs);
+    assert.match(c.summary, /在兩台電腦都被修改/);
+    assert.match(c.en.summary, /^"same-line" was modified on both computers \(body\)\. /, '衝突摘要附英文版（合併器產生）');
     const findings = await A.health();
-    assert.ok(findings.some((f) => f.code === 'H15'));
+    const h15 = findings.find((f) => f.code === 'H15');
+    assert.ok(h15);
+    assert.equal(h15.en.title, `Conflict needs attention: ${ref}`);
+    assert.ok(h15.en.detail && !/\p{Script=Han}/u.test(h15.en.detail), '衝突的英文說明用 meta.en.summary，沒有中文');
+    assert.equal(h15.fix.en.label, 'Resolve conflict');
     // 處理：改用對方版本
     await A.conflicts.resolve(c.id, { choice: c.theirs.includes('方案甲') ? 'theirs' : 'ours' });
     await syncBoth();
     assert.equal((await B.conflicts.list()).filter((x) => x.ref === ref).length, 0);
     assert.match(read(B, ref), /方案甲/);
+  });
+
+  test('一邊修改、一邊刪除 → 保留修改後的版本，衝突摘要附英文版（同步引擎產生）', async () => {
+    const ref = 'global/modify-delete.md';
+    write(A, ref, memoryText({ name: 'modify-delete', description: '修改與刪除', body: '原文。' }));
+    await syncBoth();
+    write(A, ref, read(A, ref).replace('原文。', '公司改過。'));
+    fs.rmSync(vaultFile(B, ref));
+    await syncBoth();
+    const c = (await A.conflicts.list()).find((x) => x.ref === ref);
+    assert.ok(c, '衝突紀錄應同步到公司電腦');
+    assert.equal(c.kind, 'modify-delete');
+    assert.match(c.summary, /刪除了這筆記憶/);
+    assert.equal(c.en.summary, 'This computer deleted this memory, but the other computer modified it, so the modified version was kept');
+    for (const eg of [A, B]) assert.match(read(eg, ref), /公司改過。/);
   });
 
   test('只有 modified／originSessionId 不同 → 乾淨合併', async () => {
@@ -155,6 +176,9 @@ describe('兩台電腦同步', () => {
     const findings = await A.health();
     const h18 = findings.find((f) => f.code === 'H18');
     assert.ok(h18);
+    assert.equal(h18.en.title, 'Mass deletion detected: mass');
+    assert.equal(h18.en.detail, '3 memories were deleted in the same round. Syncing those deletions is on hold.');
+    assert.equal(h18.fix.en.label, 'Restore');
     await A.apply(h18.fix);
     assert.ok(fs.existsSync(path.join(dir, 'a.md')));
   });

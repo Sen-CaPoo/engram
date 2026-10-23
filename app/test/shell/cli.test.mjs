@@ -90,9 +90,9 @@ describe('分派與錯誤格式', () => {
   test('version', async () => {
     const r = await engram(['version']);
     assert.equal(r.code, 0);
-    assert.match(r.out, /^engram 1\.0\.0（Node v\d+/);
+    assert.match(r.out, /^engram 1\.1\.0（Node v\d+/);
     const j = await engram(['version', '--json']);
-    assert.equal(JSON.parse(j.out).version, '1.0.0');
+    assert.equal(JSON.parse(j.out).version, '1.1.0');
   });
 
   test('沒有這個指令 → exit 2，印出錯誤與建議', async () => {

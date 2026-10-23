@@ -61,6 +61,7 @@ describe('Host 白名單', () => {
       const r = await request(port, { path: '/api/status', headers: { ...auth, Host: host } });
       assert.equal(r.status, 403, host);
       assert.equal(r.json.error.code, 'E_FORBIDDEN');
+      assert.equal(r.json.error.en.message, 'This Host is not accepted');
     }
   });
 
@@ -80,6 +81,9 @@ describe('token', () => {
     assert.equal(r.status, 401);
     assert.equal(r.json.error.code, 'E_UNAUTHORIZED');
     assert.ok(r.json.error.hint);
+    // 管理介面切到英文時顯示 en（HttpError.withEn）
+    assert.equal(r.json.error.en.message, 'The access token is missing or invalid');
+    assert.ok(r.json.error.en.hint);
   });
 
   test('錯的 token（含長度不同）→ 401', async () => {
@@ -137,12 +141,13 @@ describe('寫入請求', () => {
 });
 
 describe('錯誤格式與狀態碼', () => {
-  test('E_NOT_FOUND→404、E_LOCKED→409、E_INVALID→400、其他→500，本文 { error: { code, message, hint } }', async () => {
+  test('E_NOT_FOUND→404、E_LOCKED→409、E_INVALID→400、其他→500，本文 { error: { code, message, hint, en? } }', async () => {
     const cases = [['/api/fail/not-found', 404, 'E_NOT_FOUND'], ['/api/fail/locked', 409, 'E_LOCKED'], ['/api/fail/invalid', 400, 'E_INVALID'], ['/api/fail/boom', 500, 'E_INTERNAL']];
     for (const [p, status, code] of cases) {
       const r = await request(port, { path: p, headers: auth });
       assert.equal(r.status, status, p);
-      assert.deepEqual(Object.keys(r.json.error).sort(), ['code', 'hint', 'message']);
+      assert.deepEqual(Object.keys(r.json.error).filter((k) => k !== 'en').sort(), ['code', 'hint', 'message']);
+      if (r.json.error.en) assert.deepEqual(Object.keys(r.json.error.en).filter((k) => !['message', 'hint'].includes(k)), [], '英文版只有 message、hint');
       assert.equal(r.json.error.code, code);
     }
   });
@@ -192,6 +197,9 @@ describe('安全標頭與靜態檔', () => {
     const r = await request(p, { path: '/' });
     assert.equal(r.status, 200);
     assert.match(r.text, /找不到管理介面的檔案/);
+    // 中文在前、英文在後
+    assert.match(r.text, /dashboard files \(app\/src\/ui\/dist\/\) were not found/);
+    assert.ok(r.text.indexOf('找不到管理介面的檔案') < r.text.indexOf('were not found'));
     assert.match(r.headers['content-type'], /^text\/html/);
     s.close();
   });

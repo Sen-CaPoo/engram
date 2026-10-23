@@ -109,7 +109,7 @@ export function stableJson(value) {
 
 export async function writeJson(p, value) {
   const r = await safeWriteResult(p, stableJson(value));
-  if (!r.ok) throw new EngramError(E.LOCKED, `檔案暫時無法寫入：${path.basename(p)}`, '稍後會自動重試', { path: p, reason: r.reason });
+  if (!r.ok) throw new EngramError(E.LOCKED, `檔案暫時無法寫入：${path.basename(p)}`, '稍後會自動重試', { path: p, reason: r.reason }).withEn(`The file cannot be written right now: ${path.basename(p)}`, 'Engram will retry shortly');
 }
 
 /** 列出資料夾內的 .md 檔名（不含子資料夾）。 */

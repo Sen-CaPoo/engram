@@ -99,6 +99,9 @@ describe('R-52 混合綁定', () => {
     setMode('acceptEdits');
     const f = (await eg.health()).find((x) => x.code === 'H17' && x.fix?.action === 'reconcile-bindings');
     assert.ok(f, '健康檢查提醒並附上修正');
+    assert.equal(f.en.title, 'Reading and writing memory will trigger permission prompts');
+    assert.match(f.en.detail, /default permission mode is acceptEdits\. In this mode/);
+    assert.equal(f.fix.en.label, 'Use settings-file links');
     const rc = await eg.apply(f.fix);
     assert.ok(rc.changed.some((c) => c.pid === r.pid && c.from === 'junction' && c.to === 'settings'));
     assert.equal(isLink(memDirOf(repo)), false);
@@ -293,6 +296,8 @@ describe('R-54 從 git 子資料夾啟動', () => {
 
     const f = (await eg.health()).find((x) => x.code === 'H17' && x.severity === 'high' && x.pid === r.pid);
     assert.match(f?.title ?? '', /建在錯誤的位置/);
+    assert.match(f.en.title, /^The memory link for ".+" is in the wrong place$/);
+    assert.equal(f.fix.en.label, 'Fix link location');
     const rc = await eg.apply(f.fix);
     assert.ok(rc.changed.some((c) => c.pid === r.pid && c.encoded?.to === encodeProjectPath(repo)));
     assert.equal(fs.existsSync(memDirOf(sub)), false, '放錯位置的 junction 已移除');

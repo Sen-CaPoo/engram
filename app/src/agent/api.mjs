@@ -17,11 +17,11 @@ export function parseScope(value) {
   if (kind === 'global') return { kind };
   if (kind === 'project') return id ? { kind, pid: id } : { kind };
   if (kind === 'machine') return id ? { kind, mid: id } : { kind };
-  throw new HttpError(400, 'E_INVALID', `看不懂的範圍：${value}`, '範圍格式為 global、project:<pid> 或 machine:<mid>。');
+  throw new HttpError(400, 'E_INVALID', `看不懂的範圍：${value}`, '範圍格式為 global、project:<pid> 或 machine:<mid>。').withEn(`Unrecognized scope: ${value}`, 'The scope must be global, project:<pid> or machine:<mid>.');
 }
 
 function need(value, name) {
-  if (value === undefined || value === null || value === '') throw new HttpError(400, 'E_INVALID', `缺少 ${name}`);
+  if (value === undefined || value === null || value === '') throw new HttpError(400, 'E_INVALID', `缺少 ${name}`).withEn(`Missing ${name}`);
   return value;
 }
 
@@ -56,7 +56,7 @@ async function migrate(fn) {
   } catch {
     mod = null;
   }
-  if (typeof mod?.[fn] !== 'function') throw new HttpError(501, 'E_NOT_IMPLEMENTED', '匯入精靈尚未安裝', '等 app/src/migrate 完成後即可使用。');
+  if (typeof mod?.[fn] !== 'function') throw new HttpError(501, 'E_NOT_IMPLEMENTED', '匯入精靈尚未安裝', '等 app/src/migrate 完成後即可使用。').withEn('The import wizard is not installed', 'It will be available once app/src/migrate is complete.');
   return mod[fn];
 }
 
@@ -65,8 +65,8 @@ async function migrate(fn) {
  */
 export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaultClaudeHome() }) {
   /** 引擎較新的 API（設定、機器改名）可能還不存在：缺少時回 501，而不是讓整個請求失敗 */
-  const engineFn = (fn, what) => {
-    if (typeof fn !== 'function') throw new HttpError(501, 'E_NOT_IMPLEMENTED', `這個版本的引擎還不支援${what}`, '更新 Engram 後再試。');
+  const engineFn = (fn, what, whatEn) => {
+    if (typeof fn !== 'function') throw new HttpError(501, 'E_NOT_IMPLEMENTED', `這個版本的引擎還不支援${what}`, '更新 Engram 後再試。').withEn(`This version of the engine does not support ${whatEn} yet`, 'Update Engram and try again.');
     return fn;
   };
   const routes = {
@@ -115,8 +115,8 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     'GET /api/history': ({ q }) => eg.history(clean({ ref: q('ref'), limit: q('limit') ? toInt(q('limit'), 50) : undefined })),
     'POST /api/undo': async ({ body }) => done(await eg.undo(need(body.sha, 'sha'))),
     // 撞名資料夾依命名規則改名（SW-4）：盤點與改名紀錄；改名走 /api/apply 的 rename-collisions，還原走 /api/undo 或這裡
-    'GET /api/collisions': async () => ({ plan: await engineFn(eg.collisions?.plan, '撞名盤點')(), history: await engineFn(eg.collisions?.list, '改名紀錄')() }),
-    'POST /api/collisions/undo': async ({ body }) => done(await engineFn(eg.collisions?.undo, '還原改名')(need(body.id, 'id'))),
+    'GET /api/collisions': async () => ({ plan: await engineFn(eg.collisions?.plan, '撞名盤點', 'the colliding folder scan')(), history: await engineFn(eg.collisions?.list, '改名紀錄', 'the rename history')() }),
+    'POST /api/collisions/undo': async ({ body }) => done(await engineFn(eg.collisions?.undo, '還原改名', 'undoing a rename')(need(body.id, 'id'))),
 
     'GET /api/core': async () => {
       const core = await eg.core.read();
@@ -125,7 +125,7 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       return { text, lines: countLines(text), bytes: Buffer.byteLength(text), chain };
     },
     'PUT /api/core': async ({ body }) => {
-      if (typeof body.text !== 'string') throw new HttpError(400, 'E_INVALID', '缺少 text');
+      if (typeof body.text !== 'string') throw new HttpError(400, 'E_INVALID', '缺少 text').withEn('Missing text');
       return done(await eg.core.write(body.text, { allowSecrets: body.allowSecrets === true }));
     },
     // 41 號 §11：把 ~/.claude/CLAUDE.md 的工作準則搬進 vault，讓所有電腦共用
@@ -140,13 +140,16 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       return { machineLabel: st.machine?.label ?? eg.machine?.label, remote: st.vault?.remote ?? null, bindAuto: engineSettings.bindAuto ?? 'confident', collisionRename: engineSettings.collisionRename ?? 'ask', ...(settings?.get() ?? {}) };
     },
     'PUT /api/settings': async ({ body }) => {
-      if (body.machineLabel !== undefined) await engineFn(eg.machine?.rename, '電腦改名')(String(body.machineLabel).trim());
-      if (body.bindAuto !== undefined) await engineFn(eg.settings?.set, '自動綁定設定')({ bindAuto: body.bindAuto });
-      if (body.collisionRename !== undefined) await engineFn(eg.settings?.set, '撞名資料夾改名設定')({ collisionRename: body.collisionRename });
+      if (body.machineLabel !== undefined) await engineFn(eg.machine?.rename, '電腦改名', 'renaming this computer')(String(body.machineLabel).trim());
+      if (body.bindAuto !== undefined) await engineFn(eg.settings?.set, '自動綁定設定', 'the auto-bind setting')({ bindAuto: body.bindAuto });
+      if (body.collisionRename !== undefined) await engineFn(eg.settings?.set, '撞名資料夾改名設定', 'the colliding folder rename setting')({ collisionRename: body.collisionRename });
       const local = {};
       for (const k of ['syncIntervalMin', 'healthTime', 'paused']) if (body[k] !== undefined) local[k] = body[k];
       if (Object.keys(local).length) {
-        try { await settings.set(local); } catch (err) { throw new HttpError(400, err.code ?? 'E_INVALID', err.message); }
+        try { await settings.set(local); } catch (err) {
+          const e = new HttpError(400, err.code ?? 'E_INVALID', err.message);
+          throw err.en?.message ? e.withEn(err.en.message) : e;
+        }
         if (local.paused !== undefined) await settings.writePaused(jobs.paused());
       }
       return routes['GET /api/settings']();
@@ -183,7 +186,7 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     routes: Object.keys(routes),
     async handle(method, pathname, query, body) {
       const fn = routes[`${method} ${pathname}`];
-      if (!fn) throw new HttpError(404, 'E_NOT_FOUND', `沒有這個端點：${method} ${pathname}`);
+      if (!fn) throw new HttpError(404, 'E_NOT_FOUND', `沒有這個端點：${method} ${pathname}`).withEn(`No such endpoint: ${method} ${pathname}`);
       const q = (name) => query.get(name) ?? undefined;
       return fn({ q, body: body && typeof body === 'object' ? body : {} });
     },

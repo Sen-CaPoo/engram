@@ -10,7 +10,8 @@ import { markdownLanguage } from '@codemirror/lang-markdown';
 import { yamlFrontmatter } from '@codemirror/lang-yaml';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { MergeView } from '@codemirror/merge';
-import { tags as t } from '@lezer/highlight';
+import { tags } from '@lezer/highlight';
+import { t } from './i18n.js';
 
 const theme = EditorView.theme({
   '&': { backgroundColor: 'var(--panel)', color: 'var(--text)' },
@@ -24,15 +25,15 @@ const theme = EditorView.theme({
 });
 
 const highlight = HighlightStyle.define([
-  { tag: t.heading, fontWeight: '650', color: 'var(--text)' },
-  { tag: t.strong, fontWeight: '650' },
-  { tag: t.emphasis, fontStyle: 'normal', textDecoration: 'underline dotted' },
-  { tag: [t.link, t.url], color: 'var(--brand)' },
-  { tag: t.monospace, color: 'var(--t-feedback)' },
-  { tag: [t.propertyName, t.definition(t.propertyName)], color: 'var(--brand-ink)' },
-  { tag: [t.string, t.content], color: 'var(--text)' },
-  { tag: [t.meta, t.processingInstruction, t.punctuation, t.separator], color: 'var(--text-3)' },
-  { tag: t.quote, color: 'var(--text-2)' },
+  { tag: tags.heading, fontWeight: '650', color: 'var(--text)' },
+  { tag: tags.strong, fontWeight: '650' },
+  { tag: tags.emphasis, fontStyle: 'normal', textDecoration: 'underline dotted' },
+  { tag: [tags.link, tags.url], color: 'var(--brand)' },
+  { tag: tags.monospace, color: 'var(--t-feedback)' },
+  { tag: [tags.propertyName, tags.definition(tags.propertyName)], color: 'var(--brand-ink)' },
+  { tag: [tags.string, tags.content], color: 'var(--text)' },
+  { tag: [tags.meta, tags.processingInstruction, tags.punctuation, tags.separator], color: 'var(--text-3)' },
+  { tag: tags.quote, color: 'var(--text-2)' },
 ]);
 
 // 精簡設定：只留編輯 Markdown 需要的功能（不含自動完成、lint、HTML／JS 語法），打包小一半
@@ -47,7 +48,7 @@ const baseExtensions = () => [
   EditorView.contentAttributes.of({ spellcheck: 'false', lang: 'zh-Hant-TW' }),
 ];
 
-export function Editor({ value, onChange, label = '編輯內容' }) {
+export function Editor({ value, onChange, label = t('編輯內容') }) {
   const host = useRef(null);
   const view = useRef(null);
   const cb = useRef(onChange);
@@ -80,8 +81,8 @@ function revertButton() {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'merge-take';
-  b.title = '用右邊這段取代左邊';
-  b.setAttribute('aria-label', '用右邊這段取代左邊');
+  b.title = t('用右邊這段取代左邊');
+  b.setAttribute('aria-label', t('用右邊這段取代左邊'));
   b.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M13 8H3m4-4L3 8l4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   return b;
 }

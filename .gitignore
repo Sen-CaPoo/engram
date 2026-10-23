@@ -9,8 +9,9 @@ node_modules/
 *.log
 .cache/
 
-# 本機設定
+# 本機設定與 Claude Code 的暫存工作樹
 .claude/settings.local.json
+.claude/worktrees/
 
 # 系統檔
 Thumbs.db
@@ -18,5 +19,5 @@ desktop.ini
 .DS_Store
 
 # 介面展示版含有由記憶盤點產生的資料，可用 node app/tools/ui-build/build.mjs --demo 重新產生
-23_介面原型_展示版.html
+23_介面原型_展示版*.html
 app/tools/ui-build/demo-local.json

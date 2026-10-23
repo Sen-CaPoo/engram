@@ -1,7 +1,7 @@
 ---
 name: inbox
 description: 用 AI 整理 Engram 收件匣：逐張讀取健康檢查與同步衝突的內容，判斷該升級、合併、拆分、封存還是忽略，提出處理計畫，使用者同意後才執行。使用者說「整理收件匣」「處理 Engram 的待辦」，或輸入 /engram:inbox 時使用；使用者沒有要求時不要主動提起收件匣。
-argument-hint: "[卡片 id | 代碼，例如 H09 | 自動]"
+argument-hint: "[卡片 id | 代碼，例如 H09 | 自動（或 auto）]"
 allowed-tools: Bash(engram inbox) Bash(engram inbox *) Bash(engram memory *) Bash(engram core) Bash(engram core *) Bash(engram search *) Bash(engram remember *) Bash(engram undo *) Bash(engram status) Bash(engram projects) Bash(engram sync) Bash(engram sync *) PowerShell(engram inbox) PowerShell(engram inbox *) PowerShell(engram memory *) PowerShell(engram core) PowerShell(engram core *) PowerShell(engram search *) PowerShell(engram remember *) PowerShell(engram undo *) PowerShell(engram status) PowerShell(engram projects) PowerShell(engram sync) PowerShell(engram sync *) Edit(~/.engram/local/drafts/**)
 ---
 
@@ -13,7 +13,7 @@ Engram 的健康檢查只用規則判斷，卡片只是「候選」。你的工�
 - 卡片 id（例如 `H07:1a2b3c4d5e`、`cf_20261022T083015_k3p9`）→ 只處理這一張。
 - 代碼（例如 `H09`）→ 只處理這一類。
 - 空白 → 整個收件匣。
-- 含「自動」（例如 `自動`、`自動 H09`）→ 自動處理模式，見下方「自動處理」。
+- 含「自動」或 `auto`（例如 `自動`、`自動 H09`、`auto H09`；英文介面複製的指令用 `auto`）→ 自動處理模式，見下方「自動處理」。
 - 以「執行：」開頭（例如 `執行：全部`、`執行：1,3,5`）→ 使用者已經同意這個對話裡先前提出的計畫。不要重新規劃，直接從步驟 6 開始，只做列出的編號；寫入前仍要重新讀取，用最新的版本。對話裡還沒有提出過計畫時，當成一般的呼叫，從步驟 1 開始。
 
 用 **Bash** 工具執行所有 `engram` 指令；寫入內容用 heredoc（`<<'EOF'`）從標準輸入傳入。一次執行一個 `engram` 指令，不要用 `;`、`&&` 或管線把其他指令、分隔字串串在一起：預先允許只涵蓋 `engram` 指令本身，串接後 Claude Code 會要求逐一核准。
@@ -40,7 +40,7 @@ Engram 的健康檢查只用規則判斷，卡片只是「候選」。你的工�
 
 ## 自動處理
 
-使用者在參數裡寫了「自動」，就是事先同意你依判斷直接處理。照樣做步驟 1～4（研究、判斷、列出計畫表），但不等待，接著執行有把握的項目，最後照步驟 7 回報。以下一律**不自動執行**，在計畫表標成「請你決定」並留到最後請使用者處理：
+使用者在參數裡寫了「自動」（或 `auto`），就是事先同意你依判斷直接處理。照樣做步驟 1～4（研究、判斷、列出計畫表），但不等待，接著執行有把握的項目，最後照步驟 7 回報。以下一律**不自動執行**，在計畫表標成「請你決定」並留到最後請使用者處理：
 
 - H13 疑似金鑰（要使用者先把金鑰存好）
 - H06 資料夾改名、H18 大量刪除

@@ -1,3 +1,5 @@
+**繁體中文** · [English](#security-policy)
+
 # 安全政策
 
 ## 回報安全問題
@@ -14,7 +16,8 @@
 
 | 版本 | 安全性更新 |
 | --- | --- |
-| 1.0.x | 支援 |
+| 1.1.x | 支援 |
+| < 1.1 | 不支援（請更新到最新版） |
 
 ## Engram 如何處理你的資料
 
@@ -28,3 +31,39 @@
 | 改動範圍 | 安裝前列出所有會改動的位置並取得同意；每一項都記錄在安裝紀錄，`engram uninstall` 依紀錄逐項還原 |
 
 金鑰偵測涵蓋常見格式，但無法保證涵蓋所有寫法。請不要刻意把密碼、權杖、連線字串寫進記憶，改記「存放在哪裡、怎麼取得」。
+
+---
+
+[繁體中文](#安全政策) · **English**
+
+# Security policy
+
+## Reporting a security issue
+
+If you find a possible security vulnerability, **please don't open a public issue**. Go to **Security → Report a vulnerability** in this repository and tell us through GitHub's private vulnerability reporting. Please include:
+
+- The affected version (the output of `engram version`)
+- Steps to reproduce
+- The possible impact
+
+We'll confirm and reply as soon as we can, and note the fix in the [changelog](CHANGELOG.md) (in Traditional Chinese) once it's fixed. When you report, please use synthetic data only, and don't attach real memory contents or secrets.
+
+## Supported versions
+
+| Version | Security updates |
+| --- | --- |
+| 1.1.x | Supported |
+| < 1.1 | Not supported (please update to the latest version) |
+
+## How Engram handles your data
+
+| Topic | What Engram does |
+| --- | --- |
+| Data storage | Only on your computer (`%USERPROFILE%\.engram\`) and the git remote you choose (by default a private repo named `engram-vault` under your account). Engram has no server and collects no data or usage statistics |
+| What gets synced | Memory files, indexes, the core rules, and Engram's settings. Conversation transcripts are never synced |
+| Possible secrets | Scanned before every save and sync. A file containing a possible secret stays on your computer and is never pushed, and the inbox reminds you to redact it; the write API also refuses to take in new possible secrets |
+| AI calls | None in day-to-day operation. Your Claude quota is used only for the compatibility probe when Claude Code is updated (synthetic data only, and it can be turned off) and when you type an `/engram` command yourself; before anything is handed to Claude, detected secrets are redacted on your computer |
+| Dashboard | Listens only on `127.0.0.1:4777` on your computer, protects its API with a random token, and is not exposed externally |
+| Scope of changes | Before installing, Engram lists every location it will change and gets your approval; each one is recorded in the installation record, and `engram uninstall` reverts them one by one from that record |
+
+Secret detection covers common formats but can't promise to catch every way of writing one. Please don't deliberately write passwords, tokens, or connection strings into memories; record where they're stored and how to get them instead.
