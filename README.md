@@ -27,12 +27,16 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/overview.png" alt="Engram 管理介面總覽：待處理事項、裝置同步軌跡與記憶分布" width="900">
+  <img src="docs/assets/hero.webp" alt="Engram 管理介面總覽：待處理事項、裝置同步軌跡與記憶分布，周圍是多台裝置透過同步連在一起" width="960">
 </p>
 
 ## 為什麼需要 Engram
 
 Claude Code 會自動記下你的習慣、專案慣例與踩過的坑。但這些記憶只存在**一台電腦的一個資料夾**裡：
+
+<p align="center">
+  <img src="docs/assets/illustrations/problem.webp" alt="公司電腦：教過的都記得；家裡電腦：又要重教一次" width="880">
+</p>
 
 | 你遇到的狀況 | 結果 |
 | --- | --- |
@@ -44,30 +48,22 @@ Engram 把記憶變成**跟著你走、跟著專案走、隨時能復原**的資
 
 ## 功能
 
-| 功能 | 你得到什麼 |
-| --- | --- |
-| **多台電腦自動同步** | 背景自動同步（預設每 10 分鐘）。開 Claude Code 不用等網路，離線照常記憶，恢復連線後自動補上。 |
-| **專案用 ID 認，不用路徑認** | 資料夾搬家、改名，或在另一台電腦 clone 同一個 git repo，都認得是同一個專案。 |
-| **三種範圍各歸其位** | 個人偏好放「全域」，每個專案都看得到；安裝路徑、網路設定放「單機」，不會跑到別台電腦。 |
-| **什麼都能復原** | 每個變更都有歷史。匯入前先在複本上完整演練，套用後隨時一鍵還原；原始記憶檔一律保留。 |
-| **衝突不吵你** | 兩台改了不同段落就自動合併；改到同一段才請你並排比對，Claude 永遠不會讀到衝突標記。 |
-| **金鑰不外流** | 偵測到疑似密碼、權杖、連線字串的記憶，只留在本機、不會推送，並在收件匣提醒你遮蔽。 |
-| **交給 Claude 整理** | 在 Claude Code 輸入 `/engram:inbox`、`/engram:tidy`，Claude 讀過內容、先列計畫，你同意才動手。 |
-| **看得見的管理介面** | 總覽、記憶庫、收件匣、專案、裝置與同步，一個介面全部看清楚；支援深色模式，可安裝成桌面應用程式。 |
+| | 功能 | 你得到什麼 |
+| :---: | --- | --- |
+| <img src="docs/assets/icons/sync.webp" width="48" alt=""> | **多台電腦自動同步** | 背景自動同步（預設每 10 分鐘）。開 Claude Code 不用等網路，離線照常記憶，恢復連線後自動補上。 |
+| <img src="docs/assets/icons/project-id.webp" width="48" alt=""> | **專案用 ID 認，不用路徑認** | 資料夾搬家、改名，或在另一台電腦 clone 同一個 git repo，都認得是同一個專案。 |
+| <img src="docs/assets/icons/scopes.webp" width="48" alt=""> | **三種範圍各歸其位** | 個人偏好放「全域」，每個專案都看得到；安裝路徑、網路設定放「單機」，不會跑到別台電腦。 |
+| <img src="docs/assets/icons/restore.webp" width="48" alt=""> | **什麼都能復原** | 每個變更都有歷史。匯入前先在複本上完整演練，套用後隨時一鍵還原；原始記憶檔一律保留。 |
+| <img src="docs/assets/icons/merge.webp" width="48" alt=""> | **衝突不吵你** | 兩台改了不同段落就自動合併；改到同一段才請你並排比對，Claude 永遠不會讀到衝突標記。 |
+| <img src="docs/assets/icons/secrets.webp" width="48" alt=""> | **金鑰不外流** | 偵測到疑似密碼、權杖、連線字串的記憶，只留在本機、不會推送，並在收件匣提醒你遮蔽。 |
+| <img src="docs/assets/icons/ai-tidy.webp" width="48" alt=""> | **交給 Claude 整理** | 在 Claude Code 輸入 `/engram:inbox`、`/engram:tidy`，Claude 讀過內容、先列計畫，你同意才動手。 |
+| <img src="docs/assets/icons/dashboard.webp" width="48" alt=""> | **看得見的管理介面** | 總覽、記憶庫、收件匣、專案、裝置與同步，一個介面全部看清楚；支援深色模式，可安裝成桌面應用程式。 |
 
 ## 30 秒看懂運作方式
 
-```mermaid
-flowchart LR
-  subgraph office["公司電腦"]
-    ca["Claude Code"] <--> ea["Engram<br/>本機記憶庫"]
-  end
-  subgraph home["家裡電腦"]
-    cb["Claude Code"] <--> eb["Engram<br/>本機記憶庫"]
-  end
-  ea <-- "背景同步" --> gh[("你的 GitHub 私人 repo<br/>engram-vault")]
-  eb <-- "背景同步" --> gh
-```
+<p align="center">
+  <img src="docs/assets/illustrations/how-it-works.webp" alt="公司電腦、家裡電腦、筆電都透過背景同步，連到你的 GitHub 私人 repo engram-vault" width="880">
+</p>
 
 - Engram **不修改 Claude Code**，只使用官方提供的三種機制：記憶資料夾、`CLAUDE.md` 匯入與 hooks。
 - 記憶庫是一個 git repo，放在 `%USERPROFILE%\.engram\vault`，同步到**你自己帳號**底下的私人 repo。Engram 沒有伺服器，不蒐集任何資料。
@@ -78,6 +74,10 @@ flowchart LR
 需要：**Windows 11**、已登入的 **Claude Code**（官方安裝程式版本）、一個 **GitHub 帳號**。Node.js、Git、GitHub CLI 缺少的話會自動補齊。
 
 ### 方法一：交給 AI 安裝（推薦，約 10 分鐘）
+
+<p align="center">
+  <img src="docs/assets/illustrations/install-with-ai.webp" alt="三個步驟：1 複製一段話、2 貼給 Claude Code、3 完成，記憶開始同步" width="880">
+</p>
 
 打開 Claude Code，把下面這段話整段貼上：
 
@@ -134,6 +134,10 @@ Claude 會檢查環境、補齊工具、列出安裝計畫給你確認，再完�
 
 ## 隱私與安全
 
+<p align="center">
+  <img src="docs/assets/illustrations/privacy.webp" alt="資料只在你的電腦與你的 GitHub 私人 repo 之間流動；沒有第三方伺服器；疑似金鑰不推送" width="760">
+</p>
+
 - **你的資料只在兩個地方**：你的電腦，以及你自己 GitHub 帳號底下的私人 repo。對話紀錄（transcript）不會同步。
 - **不呼叫 AI**：只有兩種情況會用到你的 Claude 額度：Claude Code 改版時的相容性探測（只用合成資料，可在介面關閉），以及你主動輸入 `/engram` 指令時。
 - **金鑰保護**：疑似金鑰的記憶不會推送；交給 Claude 整理前，偵測到的金鑰會先在本機遮蔽。
@@ -165,6 +169,8 @@ Claude 會檢查環境、補齊工具、列出安裝計畫給你確認，再完�
 | [更新紀錄](CHANGELOG.md) | 每個版本的變更 |
 
 ## 關於名稱
+
+<img src="docs/assets/logo-3d.png" alt="Engram 標誌" width="96" align="right">
 
 **Engram**（記憶痕跡）是神經科學用語，指一段記憶在大腦裡留下的實體痕跡；中文名「憶跡」取其意。Logo 是一筆寫成的 e：連續的軌跡代表記憶，環形代表同步，開口處的紅點代表「現在，這台電腦」。
 

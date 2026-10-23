@@ -1,5 +1,9 @@
 # AI 幫你快速安裝 Engram
 
+<p align="center">
+  <img src="docs/assets/illustrations/install-with-ai.webp" alt="三個步驟：1 複製一段話、2 貼給 Claude Code、3 完成，記憶開始同步" width="880">
+</p>
+
 > **給使用者**：打開 Claude Code，把下面這段話整段貼上，Claude 就會照這份手冊幫你安裝。全程約 10 分鐘，每個會改動電腦的步驟都會先問過你。
 >
 > ```text
