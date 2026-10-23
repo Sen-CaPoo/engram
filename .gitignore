@@ -1,0 +1,22 @@
+# 設計階段文件（架構、規格、審查、協作紀錄）只留在本機，不進儲存庫
+內部文件/
+
+# 開發者的個人記憶盤點（不是產品內容）
+記憶清單_*.md
+
+# 相依與建置暫存
+node_modules/
+*.log
+.cache/
+
+# 本機設定
+.claude/settings.local.json
+
+# 系統檔
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 介面展示版含有由記憶盤點產生的資料，可用 node app/tools/ui-build/build.mjs --demo 重新產生
+23_介面原型_展示版.html
+app/tools/ui-build/demo-local.json

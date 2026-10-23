@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Engram 指令（外掛的 bin/ 會加進 Claude Code 的 Bash PATH）：依安裝清單找到 Engram 程式後交給 node 執行。
+home="${ENGRAM_HOME:-$HOME/.engram}"
+# 安裝程式另外寫一份純文字的 app-dir，這裡直接讀，不必為了解析 JSON 多啟動一次 node
+app_dir=""
+[ -f "$home/local/app-dir" ] && app_dir="$(cat "$home/local/app-dir")"
+if [ -z "$app_dir" ]; then
+  app_dir="$(node -e 'try{process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).appDir||"")}catch(e){}' "$home/local/install.json")"
+fi
+if [ -z "$app_dir" ]; then
+  echo "錯誤：找不到 Engram 的安裝清單（$home/local/install.json）。" >&2
+  echo "建議：重新執行 Engram 安裝程式。" >&2
+  exit 1
+fi
+exec node "$app_dir/bin/engram.mjs" "$@"

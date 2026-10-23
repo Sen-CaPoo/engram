@@ -1,0 +1,24 @@
+{
+  "name": "engram",
+  "version": "1.0.0",
+  "description": "Engram 憶跡：讓 Claude Code 在每一台電腦都記得你。記憶的跨裝置同步、整理與復原",
+  "license": "MIT",
+  "author": "Sen-CaPoo",
+  "homepage": "https://github.com/Sen-CaPoo/engram",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sen-CaPoo/engram.git"
+  },
+  "private": true,
+  "type": "module",
+  "bin": {
+    "engram": "bin/engram.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "test:shell": "node --test \"test/shell/**/*.test.mjs\""
+  }
+}

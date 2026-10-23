@@ -1,0 +1,10 @@
+{
+  "name": "engram",
+  "version": "1.0.0",
+  "description": "Engram 憶跡：讓 Claude Code 在每一台電腦都記得你。記憶的跨裝置同步、整理與復原",
+  "author": { "name": "Sen-CaPoo", "url": "https://github.com/Sen-CaPoo" },
+  "homepage": "https://github.com/Sen-CaPoo/engram",
+  "repository": "https://github.com/Sen-CaPoo/engram",
+  "license": "MIT",
+  "keywords": ["memory", "sync", "claude-code", "auto-memory", "multi-device"]
+}

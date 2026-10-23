@@ -1,0 +1,14 @@
+{
+  "name": "Engram 憶跡",
+  "short_name": "Engram",
+  "description": "讓 Claude Code 在每一台電腦都記得你：記憶的跨裝置同步、整理與復原",
+  "lang": "zh-Hant-TW",
+  "start_url": "/#/overview",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F4F7FB",
+  "theme_color": "#0072CE",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

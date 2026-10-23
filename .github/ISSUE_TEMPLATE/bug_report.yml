@@ -1,0 +1,38 @@
+name: 問題回報
+description: Engram 沒有照預期運作
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝回報！貼上任何輸出前，請確認裡面沒有個人資料、記憶內容或金鑰。
+        安全性問題請不要在這裡回報，改用 Security → Report a vulnerability。
+  - type: textarea
+    id: what
+    attributes:
+      label: 發生了什麼事
+      description: 你做了什麼、預期看到什麼、實際看到什麼。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重現步驟
+      placeholder: |
+        1. 
+        2. 
+        3. 
+  - type: textarea
+    id: doctor
+    attributes:
+      label: engram doctor 的輸出
+      description: 在終端機執行 engram doctor，把結果貼在這裡。
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: engram version 與 claude --version 的輸出
+      placeholder: engram 1.0.0（Node v24.x）· Claude Code 2.x
+    validations:
+      required: true
