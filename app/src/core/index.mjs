@@ -5,12 +5,12 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { E, EngramError, invariant } from './errors.mjs';
-import { exists, readJson, readText, safeWrite, setTempDir, writeJson } from './fsx.mjs';
+import { exists, isLink, linkTarget, readJson, readText, safeWrite, setTempDir, writeJson } from './fsx.mjs';
 import { git } from './git.mjs';
 import { runHealth } from './health.mjs';
 import { activity, history, undo } from './history.mjs';
 import { bind, memoryPathFor, reconcile, resolveIdentity, splitCollision, unbind, junctionState } from './identity.mjs';
-import { memoryRootFor } from './paths.mjs';
+import { memoryRootFor, normalizeFsPath } from './paths.mjs';
 import { withLock } from './lock.mjs';
 import {
   createMemory, mergeMemories, moveMemory, publicSummary, readMemory, refreshIndex, removeMemory, restoreMemory, scanAllMemories, scopeOfRef,
@@ -22,9 +22,10 @@ import { SearchIndex } from './search.mjs';
 import { sessionContext } from './session.mjs';
 import { executeSweep, planSweep, rollbackImport } from './sweep.mjs';
 import { listCollisionRenames, planCollisionRenames, renameCollisions, undoCollisionRenames } from './rename.mjs';
+import { relinkRetired, retireBinding } from './retired.mjs';
 import { confirmDeletions, restoreDeletions, sync } from './sync.mjs';
 import { listConflicts, resolveConflict } from './conflicts.mjs';
-import { allowJunctionRead, revokeAll } from './claudesettings.mjs';
+import { allowJunctionRead, revokeAll, revokeJunctionRead } from './claudesettings.mjs';
 import { addAllow, allowEntries, listAllowed, loadAllow, scanWithAllow } from './secretallow.mjs';
 import { redactSecrets, secretHash } from './secrets.mjs';
 import { guidelines } from './guidelines.mjs';
@@ -325,6 +326,8 @@ export async function open(opts = {}) {
           const relink = [];
           for (const [enc, b] of Object.entries(bindings)) if (b.pid === fromPid) { bindings[enc] = { ...b, pid: toPid }; relink.push(b.path); }
           await writeBindings(homes.vault, ctx.mid, bindings);
+          // 1.4.1：已移除的舊綁定（對話回顧用）也改到合併後的專案
+          await relinkRetired(ctx.local, fromPid, toPid);
           const commit = await commitPaths(homes.vault, [`projects/${fromPid}`, `projects/${toPid}`, `machines/${ctx.mid}/bindings.json`], `link ${fromPid} → ${toPid}`, { action: 'link', mid: ctx.mid });
           for (const p of relink) if (exists(p)) await bind(ctx, p, { pid: toPid }, { mode: 'safe', force: true }).catch(() => {});
           return { ok: true, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
@@ -676,7 +679,27 @@ export async function open(opts = {}) {
         }
         case 'sweep': {
           invariant(encodedOk(a.encoded) && exists(path.join(homes.claudeHome, 'projects', a.encoded)), '不合法的來源', undefined, { message: 'Invalid source' });
-          return eg.sweepLegacy({ dryRun: false, encoded: a.encoded });
+          const plan = await planSweep(ctx, { encoded: a.encoded });
+          // 1.4.1：一鍵收編（H05）沒有人看過計畫，記憶一律留在專案範圍。
+          // 匯入精靈的範圍建議（user 型→全域、提到主機名稱→單機）只是猜測；要不要升級或搬到單機交給收件匣的 H08／H09
+          for (const src of plan.sources) {
+            for (const it of src.items) {
+              if ((it.scope ?? 'project') === 'project') continue;
+              it.scope = 'project';
+              it.reason = '一鍵收編一律先放在專案，收件匣會建議是否升級全域或移到單機';
+              it.en = { reason: 'One-click adoption keeps memories in the project; the inbox will suggest whether to promote them or move them to a machine' };
+            }
+          }
+          if (a.pid !== undefined) {
+            // 收編到既有專案（H05 的候選）：只接受這個資料夾目前的候選，不接受任意專案
+            invariant(typeof a.pid === 'string', '不合法的專案', undefined, { message: 'Invalid project' });
+            invariant(plan.sources.length === 1, '這個記憶資料夾有好幾個資料夾在用，不能一鍵收編到既有專案', '改用管理介面的「匯入」逐一指定每個來源的專案', { message: 'Several folders share this memory folder, so it cannot be adopted into an existing project in one click', hint: 'Use Import in the dashboard to choose the project for each source' });
+            const src = plan.sources[0];
+            const cand = src.exists && src.target?.isNew ? src.suggestions.find((x) => x.kind === 'project' && x.pid === a.pid) : null;
+            invariant(cand, `「${a.pid}」不是這個資料夾的候選專案`, '重新整理收件匣', { message: `"${a.pid}" is not a candidate project for this folder`, hint: 'Refresh the inbox' });
+            src.target = { pid: a.pid, name: cand.name, isNew: false, archived: false };
+          }
+          return eg.sweepLegacy({ dryRun: false, plan });
         }
         case 'allow-read': {
           // 只允許「確實存在的 junction 綁定」的記憶資料夾；可傳 encoded（建議）或舊的 path
@@ -725,10 +748,30 @@ export async function open(opts = {}) {
         case 'forget-binding': return ctx.locked('forget-binding', async () => {
           const b = await readBindings(homes.vault, ctx.mid);
           invariant(typeof a.encoded === 'string' && Object.hasOwn(b, a.encoded), '找不到這個綁定', undefined, { message: 'Binding not found' });
+          // 1.4.1：舊資料夾的對話紀錄還在，記下來讓對話回顧（H20）仍能找到它們
+          const old = b[a.encoded];
+          await retireBinding(ctx.local, { key: a.encoded, pid: old?.pid, encoded: old?.encoded ?? a.encoded.split('@')[0], path: old?.path ?? null, boundAt: old?.boundAt ?? null }, { claudeHome: homes.claudeHome });
+          // 1.4.1：拆掉舊編碼位置的 junction（比照撞名改名）。留著的話，之後在同一個路徑或編碼相同的
+          // 另一個資料夾開 Claude Code，記憶會寫進這個已經不用的專案，重新綁定也會被拒絕。
+          // junction 綁定的 key 就是編碼，這個位置的連結屬於這筆綁定；仍只拆指向 vault 專案記憶資料夾的，
+          // 而且資料夾要確實不在了（介面送來的卡片可能過期，例如外接硬碟又接回來）
+          let linkRemoved = false;
+          if (old?.method === 'junction' && old.path && !exists(old.path)) {
+            const mp = memoryPathFor(homes, old.encoded ?? a.encoded);
+            try {
+              const t = isLink(mp) ? normalizeFsPath(linkTarget(mp)).toLowerCase() : null;
+              const projectsDir = normalizeFsPath(path.join(homes.vault, 'projects')).toLowerCase();
+              if (t && path.basename(t) === 'memory' && normalizeFsPath(path.dirname(path.dirname(t))).toLowerCase() === projectsDir) {
+                fs.rmdirSync(mp);
+                linkRemoved = true;
+                await revokeJunctionRead(homes, mp).catch(() => {});
+              }
+            } catch { /* 拆不掉不影響移除綁定 */ }
+          }
           delete b[a.encoded];
           await writeBindings(homes.vault, ctx.mid, b);
           const commit = await commitPaths(homes.vault, [`machines/${ctx.mid}/bindings.json`], `forget binding ${a.encoded}`, { action: 'unbind', mid: ctx.mid });
-          return { ok: true, commit: commit ?? undefined };
+          return { ok: true, commit: commit ?? undefined, linkRemoved };
         });
         default:
           // merge、edit、open-* 需要使用者在介面上操作

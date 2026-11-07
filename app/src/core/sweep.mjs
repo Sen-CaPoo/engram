@@ -117,13 +117,13 @@ function nameKeys(p) {
   }).map(looseName);
 }
 
-const CANDIDATE_REASON = {
+export const CANDIDATE_REASON = {
   remote: 'git remote 與既有專案相同',
   'root-commit': '與既有專案有相同的第一個 commit（fork 或換了組織）',
   'name+entries': '名稱與資料夾內容和既有專案相近',
 };
 // CANDIDATE_REASON 的英文版（鍵相同）
-const CANDIDATE_REASON_EN = {
+export const CANDIDATE_REASON_EN = {
   remote: 'Same git remote as an existing project',
   'root-commit': 'Same first commit as an existing project (a fork, or moved to another organization)',
   'name+entries': 'Name and folder contents are similar to an existing project',

@@ -6,8 +6,8 @@ import { createHash } from 'node:crypto';
 import { machineSpecific } from './classify.mjs';
 import { diagEn, semanticKey } from './frontmatter.mjs';
 import { exists, readJson, readText, sha1 } from './fsx.mjs';
-import { readSweepLog } from './sweep.mjs';
-import { JUNCTION_MODES, junctionState } from './identity.mjs';
+import { CANDIDATE_REASON, CANDIDATE_REASON_EN, readSweepLog } from './sweep.mjs';
+import { JUNCTION_MODES, junctionState, resolveIdentity } from './identity.mjs';
 import { defaultPermissionMode, isJunctionReadAllowed } from './claudesettings.mjs';
 import { indexStats, PROJECT_INDEX, SCOPE_INDEX } from './normalize.mjs';
 import { brokenLinks } from './links.mjs';
@@ -32,8 +32,30 @@ function fid(code, refs) {
  * key：refs 相同但對象不同時（例如每個綁定都指向 bindings.json），用來區分 id，避免「忽略」一張卡片連帶蓋掉別張。
  * en：英文版 { title, detail }（管理介面切到英文時顯示）；fix 的英文放在 fix.en.label。id 一律以中文標題計算。
  */
-function finding(code, severity, title, detail, { refs = [], pid, fix, key, en } = {}) {
-  return { id: fid(code, key ? [key] : refs.length ? refs : [title]), code, severity, title, detail, refs, ...(pid ? { pid } : {}), ...(fix ? { fix } : {}), ...(en ? { en } : {}) };
+function finding(code, severity, title, detail, { refs = [], pid, fix, fixes, key, en } = {}) {
+  return { id: fid(code, key ? [key] : refs.length ? refs : [title]), code, severity, title, detail, refs, ...(pid ? { pid } : {}), ...(fix ? { fix } : {}), ...(fixes?.length ? { fixes } : {}), ...(en ? { en } : {}) };
+}
+
+/**
+ * H05 的候選專案（1.4.1）：資料夾還在、身分判斷沒有確定的專案、但有中等信心的候選（remote、git 根 commit、名稱＋內容）。
+ * 確定的（設定檔、標記檔、唯一的 remote）收編時本來就會連到那個專案，不必另外選。最多兩個。
+ * liveHere：候選專案在這台電腦還有存在的資料夾（比較像另一份 clone 或 fork）。
+ */
+async function adoptCandidates(ctx, scan, bindings) {
+  // 同一個記憶資料夾有好幾個資料夾在用（撞名）時，收編會拆成多個來源，「收編到既有專案」一定會被拒絕：不提供
+  if (scan.roots?.length !== 1) return [];
+  const root = scan.roots[0];
+  if (!root || !exists(root)) return [];
+  let res;
+  try { res = await resolveIdentity(ctx, root); } catch { return []; }
+  if (res.pid || !res.candidates?.length) return [];
+  const views = allBindingViews(bindings);
+  const out = [];
+  for (const c of res.candidates.slice(0, 2)) {
+    const liveHere = views.some((v) => v.pid === c.pid && v.path && exists(v.path) && !samePath(v.path, root));
+    out.push({ pid: c.pid, name: c.name, reason: CANDIDATE_REASON[c.reason] ?? c.reason, reasonEn: CANDIDATE_REASON_EN[c.reason] ?? c.reason, liveHere });
+  }
+  return out;
 }
 
 /** 中英文都適用的雙字組集合（用於描述相似度）。 */
@@ -210,32 +232,50 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
   // H05：尚未納管的記憶（已收編且內容沒變的檔案不再回報）；H06：中文路徑碰撞
   const swept = await readSweepLog(ctx.local);
   const views = allBindingViews(bindings);
+  const unmanaged = [];
   for (const s of scans) {
     // 只有 junction 綁定（含等待切換）代表這個資料夾由 Engram 接管；設定檔備援的撞名資料夾仍可能有未納管的記憶
     const bound = views.some((v) => v.method === 'junction' && v.encoded.toLowerCase() === s.encoded.toLowerCase());
-    if (!s.memory.isJunction && !bound) {
-      const known = new Map((swept[s.encoded]?.files ?? []).map((f) => [f.file.toLowerCase(), f.sha1]));
-      const pending = [];
-      for (const f of s.memory.files.filter((n) => !/^MEMORY\.md$/i.test(n))) {
-        const prevHash = known.get(f.toLowerCase());
-        if (prevHash) {
-          const t = await readText(path.join(s.memory.path, f));
-          if (t !== null && sha1(t) === prevHash) continue;
-        }
-        pending.push(f);
+    if (s.memory.isJunction || bound) continue;
+    const known = new Map((swept[s.encoded]?.files ?? []).map((f) => [f.file.toLowerCase(), f.sha1]));
+    const pending = [];
+    for (const f of s.memory.files.filter((n) => !/^MEMORY\.md$/i.test(n))) {
+      const prevHash = known.get(f.toLowerCase());
+      if (prevHash) {
+        const t = await readText(path.join(s.memory.path, f));
+        if (t !== null && sha1(t) === prevHash) continue;
       }
-      if (pending.length) {
-        out.push(finding('H05', 'medium', `發現尚未納管的記憶：${s.roots[0] ?? s.encoded}`,
-          `${pending.length} 筆記憶還在 Claude Code 的本機資料夾，不會同步。`,
-          {
-            refs: [s.encoded], fix: { action: 'sweep', args: { encoded: s.encoded }, label: '收編到 Engram', en: { label: 'Adopt into Engram' } },
-            en: {
-              title: `Unmanaged memories found: ${s.roots[0] ?? s.encoded}`,
-              detail: `${pending.length === 1 ? '1 memory is' : `${pending.length} memories are`} still in Claude Code's local folder and will not sync.`,
-            },
-          }));
-      }
+      pending.push(f);
     }
+    if (pending.length) unmanaged.push({ s, pending });
+  }
+  // 1.4.1：資料夾可能就是既有的專案（例如 GitHub 改名後 remote 不同、但 git 根 commit 相同）。
+  // 身分判斷只有中等信心時不會自動連結（避免 fork 被當成同一個專案），這裡讓使用者或 Claude 在收件匣選。
+  // 每個資料夾都要跑 git：一次平行 6 個，健康檢查不會被一個慢的資料夾拖住，也不會同時開太多 git
+  const candsOf = [];
+  for (let i = 0; i < unmanaged.length; i += 6) {
+    candsOf.push(...await Promise.all(unmanaged.slice(i, i + 6).map(({ s }) => adoptCandidates(ctx, s, bindings))));
+  }
+  for (const [i, { s, pending }] of unmanaged.entries()) {
+    const cands = candsOf[i];
+    const many = cands.length > 0;
+    const plain = { action: 'sweep', args: { encoded: s.encoded }, label: '收編到 Engram', en: { label: 'Adopt into Engram' } };
+    const toExisting = cands.map((c) => ({ action: 'sweep', args: { encoded: s.encoded, pid: c.pid }, label: `收編到既有專案「${c.name}」`, en: { label: `Adopt into the existing project "${c.name}"` } }));
+    const asNew = { action: 'sweep', args: { encoded: s.encoded }, label: '收編成新專案', en: { label: 'Adopt as a new project' } };
+    // 候選專案在這台電腦還有存在的資料夾：比較像另一份 clone 或 fork，預設建新專案；否則多半是搬家或改名，預設收編到既有專案
+    const fixes = !many ? [plain] : cands.some((c) => c.liveHere) ? [asNew, ...toExisting] : [...toExisting, asNew];
+    // 說明候選專案的資料夾在這台電腦還在不在：使用者或 Claude 據此判斷是搬家／改名，還是另一份 clone
+    const hintZh = many ? `這個資料夾可能就是既有專案${cands.map((c) => `「${c.name}」（${c.reason}；${c.liveHere ? '那個專案在這台電腦的資料夾還在' : '那個專案在這台電腦沒有現存的資料夾'}）`).join('或')}；可以收編到那個專案，或收編成新專案。` : '';
+    const hintEn = many ? ` This folder may be the existing project ${cands.map((c) => `"${c.name}" (${c.reasonEn}; ${c.liveHere ? 'that project still has a folder on this computer' : 'that project has no existing folder on this computer'})`).join(' or ')}; adopt into that project, or as a new project.` : '';
+    out.push(finding('H05', 'medium', `發現尚未納管的記憶：${s.roots[0] ?? s.encoded}`,
+      `${pending.length} 筆記憶還在 Claude Code 的本機資料夾，不會同步。${hintZh}`,
+      {
+        refs: [s.encoded], fix: fixes[0], ...(many ? { fixes } : {}),
+        en: {
+          title: `Unmanaged memories found: ${s.roots[0] ?? s.encoded}`,
+          detail: `${pending.length === 1 ? '1 memory is' : `${pending.length} memories are`} still in Claude Code's local folder and will not sync.${hintEn}`,
+        },
+      }));
   }
   // H06：撞名（SW-4）。用過 Claude Code 的資料夾和現存的其他資料夾編碼相同；依命名規則「原名-4 碼代號」改名即可分開。
   // 兩個以上用過的資料夾共用同一份紀錄（記憶與對話已經在混）為高，其餘為中。refs 沿用編碼名稱，忽略的紀錄不受影響

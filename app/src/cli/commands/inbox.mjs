@@ -22,7 +22,7 @@ export const FIX_INFO = {
   'rename-collisions': '依命名規則在資料夾原名後加 4 碼代號並重新綁定，記憶裡的舊路徑一併更新；可以用 engram collisions undo 整批還原。改名前的對話不會出現在 /resume 清單，改名中的資料夾不能有進行中的 Claude Code 對話。',
   'restore-deletions': '把被刪除的記憶從歷史中還原到目前的版本。',
   'confirm-deletions': '確認這些刪除是你要的，之後不再提醒；檔案仍可從歷史還原。',
-  'forget-binding': '移除這台電腦上已失效的綁定紀錄；記憶本身不受影響。',
+  'forget-binding': '移除這台電腦上已失效的綁定紀錄，並拆掉舊位置的記憶連結；記憶本身不受影響，舊資料夾留下的對話紀錄仍可以用 /engram:dream 回顧。',
 };
 const SCOPE_WORDS = { global: '全域（所有專案都會讀到）', project: '專案', machine: '單機（只有那台電腦會讀到）' };
 function describeFix(fix) {
@@ -124,7 +124,7 @@ export async function cmdInbox(ctx) {
   if (!sub) return listInbox(ctx, eg);
   if (sub === 'show') return showItems(ctx, eg, rest);
   if (sub === 'apply') return applyItem(ctx, eg, rest[0]);
-  if (sub === 'dismiss') return dismissItem(ctx, eg, rest[0]);
+  if (sub === 'dismiss') return dismissItems(ctx, eg, rest);
   if (sub === 'resolve') return resolveItem(ctx, eg, rest[0]);
   throw new CliError('E_USAGE', `看不懂的子指令：${sub}`, '可用的子指令：show、apply、dismiss、resolve；不加子指令列出收件匣');
 }
@@ -211,13 +211,29 @@ async function applyItem(ctx, eg, id) {
   ctx.out.result(r ?? { ok: true }, [`已${fix.label}（${f.id}）。`, restoreHint(fix.action, r)]);
 }
 
-async function dismissItem(ctx, eg, id) {
-  const { conflict, finding: f } = await findItem(eg, id);
-  if (conflict) throw new CliError('E_USAGE', '衝突不能忽略，請用 engram inbox resolve 處理', `例如：engram inbox resolve ${id} --choice ours`);
+/**
+ * 忽略或延後一張或多張卡片（1.4.1 起可以一次多個 id）。
+ * 先確認每個 id 都找得到、都不是衝突，才開始處理：任何一個有問題就一張都不動，避免只處理了一部分。
+ */
+async function dismissItems(ctx, eg, ids) {
+  if (!ids.length) throw new CliError('E_USAGE', '請提供卡片 id（可以一次多個）', '例如：engram inbox dismiss H09:1a2b3c4d5e H09:6f7a8b9c0d');
+  const conflictId = ids.find((id) => /^cf_/.test(id));
+  if (conflictId) throw new CliError('E_USAGE', '衝突不能忽略，請用 engram inbox resolve 處理', `例如：engram inbox resolve ${conflictId} --choice ours`);
   const days = ctx.opts.days ? parsePositiveInt(ctx.opts.days, '--days', { max: 365 }) : null;
+  // 健康檢查只算一次（每張卡片各算一次會很慢）
+  const all = await eg.health({ includeDismissed: true });
+  const byId = new Map(all.map((f) => [f.id, f]));
+  const missing = ids.filter((id) => !byId.has(id));
+  if (missing.length) throw new CliError('E_NOT_FOUND', `找不到卡片：${missing.join('、')}（這次沒有忽略任何卡片）`, '問題可能已經解決；執行 engram inbox 重新列出');
   const until = days ? new Date(Date.now() + days * 864e5).toISOString() : undefined;
-  const r = await eg.findings.dismiss(f.id, until ? { until } : {});
-  ctx.out.result(r, days ? `已延後：${f.title}（${days} 天後再提醒）。` : `已忽略：${f.title}（之後不再提醒；engram doctor 仍會列出）。`);
+  const results = [];
+  const lines = [];
+  for (const id of [...new Set(ids)]) {
+    const f = safeFinding(byId.get(id));
+    results.push(await eg.findings.dismiss(f.id, until ? { until } : {}));
+    lines.push(days ? `已延後：${f.title}（${days} 天後再提醒）。` : `已忽略：${f.title}（之後不再提醒；engram doctor 仍會列出）。`);
+  }
+  ctx.out.result(results.length === 1 ? results[0] : results, lines);
 }
 
 async function resolveItem(ctx, eg, id) {

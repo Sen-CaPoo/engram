@@ -5,7 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { parseCommandArgs, parseDuration, parsePositiveInt } from '../../src/cli/args.mjs';
-import { COMMANDS, main } from '../../src/cli/main.mjs';
+import { COMMANDS, extraArgs, main } from '../../src/cli/main.mjs';
 import { capture, mkTmp, rmTmp, stdinFrom, useHomes } from './helpers.mjs';
 import { createFakeEngine } from './fake-engine.mjs';
 
@@ -84,15 +84,37 @@ describe('參數解析', () => {
       assert.match(COMMANDS[name].summary, /[一-鿿]/, `${name} 的說明應為中文`);
     }
   });
+
+  // 1.4.1：多出來的位置參數不能被默默丟掉；新加的指令忘了宣告就會在這裡失敗
+  test('每個指令都宣告位置參數上限（hook、merge-driver 除外）', () => {
+    for (const [name, c] of Object.entries(COMMANDS)) {
+      if (c.neverFail) continue;
+      assert.ok(typeof c.args === 'number' || (c.args && typeof c.args === 'object'), `${name} 沒有宣告 args`);
+    }
+  });
+
+  test('extraArgs：數字上限、子指令上限、不認得的子指令交給指令本身', () => {
+    assert.deepEqual(extraArgs(0, []), []);
+    assert.deepEqual(extraArgs(1, ['a', 'b', 'c']), ['b', 'c']);
+    assert.deepEqual(extraArgs(Infinity, ['a', 'b']), []);
+    const spec = { '': 0, show: Infinity, apply: 1 };
+    assert.deepEqual(extraArgs(spec, []), []);
+    assert.deepEqual(extraArgs(spec, ['apply', 'x']), []);
+    assert.deepEqual(extraArgs(spec, ['apply', 'x', 'y']), ['y']);
+    assert.deepEqual(extraArgs(spec, ['show', 'x', 'y', 'z']), []);
+    assert.deepEqual(extraArgs(spec, ['nope', 'x', 'y']), []);
+    assert.deepEqual(extraArgs(spec, ['toString', 'x']), [], '原型鏈上的名稱不能被當成子指令');
+    assert.deepEqual(extraArgs(undefined, ['a']), []);
+  });
 });
 
 describe('分派與錯誤格式', () => {
   test('version', async () => {
     const r = await engram(['version']);
     assert.equal(r.code, 0);
-    assert.match(r.out, /^engram 1\.4\.0（Node v\d+/);
+    assert.match(r.out, /^engram 1\.4\.1（Node v\d+/);
     const j = await engram(['version', '--json']);
-    assert.equal(JSON.parse(j.out).version, '1.4.0');
+    assert.equal(JSON.parse(j.out).version, '1.4.1');
   });
 
   test('沒有這個指令 → exit 2，印出錯誤與建議', async () => {

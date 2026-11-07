@@ -299,7 +299,7 @@ The core rules (`CORE.md`) are one document that's loaded in every conversation,
 2. Run `engram update`. It deploys the new version and restarts the agent.
 3. In a Claude Code conversation that's already open, run `/reload-plugins`; new conversations use the new version straight away.
 
-If the new version has problems, `engram update --rollback` switches back to the previous one. If you've moved the Engram folder elsewhere, use `engram update --from "<new location>\app"`.
+If the new version has problems, `engram update --rollback` switches back to the previous one. If you've moved the Engram folder elsewhere, use `engram update --from "<new location>\app"`; after a successful update it remembers the new location, so plain `engram update` works from then on.
 
 ## 12. Command cheat sheet
 

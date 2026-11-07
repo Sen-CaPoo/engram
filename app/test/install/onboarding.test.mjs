@@ -165,3 +165,28 @@ test('從部署的複本再執行 install（例如終端機的 engram install）
   assert.equal((await runUpdate({ home: m.home, restartAgent: false }, upd.io)).ok, false);
   assert.match(upd.lines.join('\n'), /--from/);
 });
+
+// 1.4.1：2026-11-07 原始程式資料夾搬到 Github 資料夾後，install.json 仍指向舊位置
+test('原始程式資料夾搬走：update 說明要用 --from；--from 成功後記住新位置', async (t) => {
+  const { root, m } = setup(t);
+  const env = { ENGRAM_HOME: process.env.ENGRAM_HOME, CLAUDE_HOME: process.env.CLAUDE_HOME };
+  process.env.ENGRAM_HOME = m.home; process.env.CLAUDE_HOME = m.claudeHome;
+  t.after(() => { for (const [k, v] of Object.entries(env)) if (v === undefined) delete process.env[k]; else process.env[k] = v; });
+  const infoFile = path.join(m.home, 'local', 'install.json');
+  await runInstall({ home: m.home, claudeHome: m.claudeHome, yes: true, schedule: false, plugin: false, label: '測試電腦', engine }, printer().io);
+  const before = JSON.parse(fs.readFileSync(infoFile, 'utf8'));
+  const gone = path.join(root, 'moved-away', 'app');
+  fs.writeFileSync(infoFile, JSON.stringify({ ...before, sourceDir: gone }));
+  const a = printer();
+  const r1 = await runUpdate({ home: m.home, restartAgent: false }, a.io);
+  assert.equal(r1.ok, false, '不能拋出 ENOENT');
+  assert.match(a.lines.join('\n'), /找不到 Engram 程式資料夾.*資料夾可能搬走了.*--from/s);
+  const b = printer();
+  const r2 = await runUpdate({ home: m.home, restartAgent: false, from: APP_DIR }, b.io);
+  assert.equal(r2.ok, true, b.lines.join('\n'));
+  assert.equal(JSON.parse(fs.readFileSync(infoFile, 'utf8')).sourceDir, path.resolve(APP_DIR), '記住新的原始程式位置');
+  const c = printer();
+  assert.equal((await runUpdate({ home: m.home, restartAgent: false, from: path.join(root, 'nope') }, c.io)).ok, false);
+  assert.doesNotMatch(c.lines.join('\n'), /安裝時記錄的位置/, '--from 指定錯的位置時不說是安裝時記錄的');
+  assert.equal(JSON.parse(fs.readFileSync(infoFile, 'utf8')).sourceDir, path.resolve(APP_DIR), '失敗時不改記錄');
+});
