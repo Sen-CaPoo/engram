@@ -4,6 +4,8 @@ import { t, N_, local, locale, getLang } from './i18n.js';
 // 標籤表的值是中文原文，顯示時一律經過 t()
 export const TYPE_LABEL = { user: N_('使用者'), feedback: N_('回饋'), project: N_('專案'), reference: N_('參考') };
 export const SEVERITY_LABEL = { high: N_('高'), medium: N_('中'), low: N_('低'), auto: N_('自動') };
+// 自動駕駛每一項變更的風險（程式依動作與範圍算出）
+export const RISK_LABEL = { low: N_('低風險'), medium: N_('中風險'), high: N_('高風險') };
 export const SYNC_LABEL = {
   ok: N_('已同步'), syncing: N_('同步中'), busy: N_('同步中'), offline: N_('離線'), auth: N_('需要登入 GitHub'), error: N_('同步失敗'), never: N_('尚未同步'),
 };

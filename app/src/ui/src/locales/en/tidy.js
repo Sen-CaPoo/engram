@@ -151,4 +151,7 @@ export default {
   "正在查看這台電腦的對話紀錄…": "Checking this computer's conversations…",
   "Claude Code 設定為不保留對話紀錄（cleanupPeriodDays 是 0），沒有可以回顧的對話。": "Claude Code is set not to keep conversations (cleanupPeriodDays is 0), so there is nothing to review.",
   "，最早的一個很快就會被 Claude Code 清除": ", and the oldest will be deleted by Claude Code soon",
+  // 1.5.0 自動駕駛建立的記錄
+  '這份記錄由自動駕駛建立並已自動執行，每一項都先經過審核員檢查；可以在下面逐項復原。': 'Autopilot created and carried out this record. Every item was checked by the reviewer first, and you can undo each one below.',
+  '查看這一輪': 'View this run',
 };

@@ -668,3 +668,69 @@ dialog.dialog[open] { display: flex; }
   .tidy-bar .counts { display: none; }
   .tidy-bar .save-state { margin-left: 0; flex: 1 1 auto; }
 }
+
+/* ── 自動駕駛（1.5.0） ───────────────────────────── */
+/* 開關：role="switch" 的按鈕 */
+.switch { position: relative; flex: none; width: 46px; height: 26px; padding: 0; border-radius: 999px; border: 1px solid var(--border-input); background: var(--panel-2); cursor: pointer; transition: background .15s, border-color .15s; }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--text-3); transition: transform .15s var(--ease), background .15s; }
+.switch[aria-checked="true"] { background: var(--brand-fill); border-color: var(--brand-fill); }
+.switch[aria-checked="true"] .knob { transform: translateX(20px); background: #fff; }
+.switch:disabled { opacity: .55; cursor: not-allowed; }
+.setting .switch { justify-self: end; }
+@media (max-width: 640px) { .setting .switch { justify-self: start; } }
+
+.ap-hero { display: grid; gap: var(--sp-3); padding: 18px 20px; }
+.ap-hero-top { display: flex; align-items: center; gap: var(--sp-3); }
+.ap-mark { width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--panel-2); color: var(--text-3); border: 1px solid var(--border); }
+.ap-hero.on .ap-mark { background: var(--brand-soft); color: var(--brand); border-color: transparent; }
+.ap-mark svg { width: 24px; height: 24px; }
+.ap-hero h2 { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font: 600 var(--fs-xl)/1.3 var(--font-display); }
+.ap-hero-text { color: var(--text-2); font-size: var(--fs-sm); max-width: 78ch; }
+.ap-hero-body { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: var(--sp-4) var(--sp-8); align-items: start; border-top: 1px solid var(--border); padding-top: var(--sp-4); }
+.ap-side { display: grid; gap: var(--sp-3); }
+.ap-facts dd { display: grid; gap: 2px; }
+.ap-facts .ap-host { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; }
+.ap-sub { font-size: var(--fs-xs); }
+.ap-budget { display: grid; gap: 10px; }
+.ap-cap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-2); }
+.ap-over { font-size: var(--fs-sm); color: var(--warn); }
+@media (max-width: 760px) { .ap-hero-body { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .ap-facts { grid-template-columns: 1fr; gap: 0; } .ap-facts dt { margin-top: 8px; } .ap-facts dt:first-child { margin-top: 0; } }
+
+.ap-runs .rows { max-height: min(70vh, 640px); overflow: auto; }
+.ap-runs .row .title { display: flex; align-items: baseline; gap: 8px; }
+.ap-reason { font-size: var(--fs-xs); font-weight: 400; }
+.ap-detail-wrap { min-width: 0; }
+.ap-detail { display: grid; gap: var(--sp-4); min-width: 0; }
+.ap-detail-body { display: grid; gap: var(--sp-3); }
+.ap-summary { font-weight: 600; }
+.ap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ap-chips .chip b { font-variant-numeric: tabular-nums; }
+.ap-cost { font-size: var(--fs-xs); }
+.ap-notes { font-size: var(--fs-xs); display: grid; gap: 2px; }
+.ap-notes ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.ap-label { font-weight: 600; }
+.ap-action { border-left: 4px solid var(--border-strong); }
+.ap-action.failed { border-left-color: var(--danger); }
+.ap-action.undone { opacity: .65; }
+.ap-action h3 { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+/* 空狀態的 svg 規則是給大圖示用的，按鈕裡的圖示維持小尺寸 */
+.empty .btn svg { width: 16px; height: 16px; color: inherit; }
+.ap-empty .empty { padding-bottom: 20px; }
+/* 窄螢幕：標籤排在上面一行，標題獨占一行 */
+@media (max-width: 560px) { .ap-action h3 { flex-basis: 100%; order: 5; } }
+.ap-reason-text { white-space: pre-wrap; }
+.ap-msg { color: var(--danger) !important; }
+.ap-review { display: flex; gap: 6px; align-items: start; background: var(--panel-2); border-radius: var(--r-sm); padding: 6px 10px; }
+.ap-review svg { width: 15px; height: 15px; flex: none; margin-top: 3px; color: var(--ok); }
+.ap-review.reject svg { color: var(--warn); }
+.ap-fold { padding: 12px 16px; }
+.ap-fold summary { cursor: pointer; font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); }
+.ap-fold-note { font-size: var(--fs-xs); margin-top: 8px; }
+.ap-reject-list { display: grid; margin-top: 6px; }
+.ap-reject { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--border); }
+.ap-reject:first-child { border-top: 0; }
+.ap-reject .head { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.ap-reject b { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.ap-reject .why { color: var(--text-2); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.ap-reject p.faint { font-size: var(--fs-xs); overflow-wrap: anywhere; }

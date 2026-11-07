@@ -10,6 +10,8 @@ import { CONTRACTS } from '../cli/probe/contracts.mjs';
 import { pausedFrom, userPermissionMode } from '../cli/probe/index.mjs';
 import { isLocked, summarizeSync, summarizeSyncEn, syncFailure } from '../cli/syncresult.mjs';
 import { createPendingBinder, pendingBindings } from './pending.mjs';
+import { runAutopilot as realRunAutopilot, summarize } from '../autopilot/run.mjs';
+import { setEnabledState } from '../autopilot/state.mjs';
 
 export const TICK_MS = 60_000;
 export const SYNC_EVERY_MS = 10 * 60_000;
@@ -19,6 +21,10 @@ const DAY = 24 * HOUR;
 const HEALTH_AT = { hour: 9, minute: 30 };
 const LOCK_RETRY_MS = 60_000;
 const SYNC_ALERT_MS = DAY;
+const AUTOPILOT_EVERY_MS = 20 * HOUR;
+const AUTOPILOT_IDLE_MS = 20 * 60_000;
+const AUTOPILOT_RETRY_MS = 30 * 60_000;
+const AUTOPILOT_FORCE_MS = 2 * DAY;
 
 export const JOB_DEFS = Object.freeze({
   sync: { label: '網路同步', schedule: '每 10 分鐘；啟動、睡眠恢復、對話結束時', enabled: true, en: { label: 'Network sync', schedule: 'Every 10 minutes; also at startup, after waking from sleep, and when a conversation ends' } },
@@ -27,7 +33,8 @@ export const JOB_DEFS = Object.freeze({
   probe: { label: '相容性探測', schedule: 'Claude Code 改版時；會用你的 Claude 額度跑 6 次 Haiku 小測試（約 3 萬 token／次）', enabled: true, en: { label: 'Compatibility probe', schedule: 'When Claude Code is updated; runs 6 small Haiku tests on your Claude quota (about 30k tokens each)' } },
   bind: { label: '背景綁定', schedule: '待切換的專案在對話結束 30 分鐘後；權限模式或探測結果改變時重新對齊', enabled: true, en: { label: 'Background binding', schedule: 'For projects waiting to switch, 30 minutes after the conversation ends; realigns when the permission mode or probe result changes' } },
   rename: { label: '撞名資料夾改名', schedule: '每小時；設定為自動時，依命名規則改名沒有對話在使用的撞名資料夾', enabled: true, en: { label: 'Colliding folder rename', schedule: 'Every hour; when set to automatic, renames colliding folders that no conversation is using, by the naming rule' } },
-  curate: { label: '每週整理', schedule: '每週一次（第二階段）', enabled: false, en: { label: 'Weekly tidy-up', schedule: 'Once a week (phase 2)' } },
+  // 1.5.0：原本預留的「每週整理」改成自動駕駛；啟用與否跟著設定的 autopilot（在設定或自動駕駛頁開關）
+  curate: { label: '自動駕駛', schedule: '開啟後每天一次，在電腦閒置 20 分鐘以上時執行（超過 2 天沒執行就直接執行）', enabled: false, en: { label: 'Autopilot', schedule: 'Once a day when turned on, while the computer has been idle for 20+ minutes (runs anyway if it has not run for 2 days)' } },
 });
 
 export const JUMP_THRESHOLD_MS = 90_000;
@@ -88,7 +95,7 @@ function loadState(file) {
  * @param {{ eg, paths, events, log, notifier: { notify: Function }, runProbe, detectVersion, settings?, now?: () => number }} deps
  *   settings：agent/settings.mjs；沒有時用預設值（測試）
  */
-export function createJobs({ eg, paths, events, log, notifier, runProbe, detectVersion, settings, now = Date.now }) {
+export function createJobs({ eg, paths, events, log, notifier, runProbe, detectVersion, settings, now = Date.now, runAutopilot = realRunAutopilot, isIdle = () => claudeIdle(eg?.paths?.claudeHome, now()) }) {
   const syncEvery = () => settings?.syncEveryMs() ?? SYNC_EVERY_MS;
   const healthAt = () => settings?.healthAt() ?? HEALTH_AT;
   const userPaused = () => settings?.paused() ?? false;
@@ -104,6 +111,8 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
   let watchTimer = null;
   let watchDueAt = null;
   let syncRetryAt = null;
+  let autopilotRetryAt = null;
+  let autopilotAbort = null;
   let changeTimer = null;
   const changed = new Set();
 
@@ -141,7 +150,7 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
         if (!state.claudeVersion || state.probe?.claudeVersion === state.claudeVersion) return null;
         return iso(Number.isFinite(last) && t - last < HOUR ? last + HOUR : t);
       case 'curate':
-        return iso(Number.isFinite(last) ? last + 7 * DAY : t);
+        return iso(autopilotRetryAt ?? (Number.isFinite(last) ? last + AUTOPILOT_EVERY_MS : t));
       case 'rename':
         return iso(Number.isFinite(last) ? last + HOUR : t);
       default:
@@ -293,8 +302,31 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
       return { ok: true, note: `改名 ${r.renamed.length}${waiting}`, en: { note: `Renamed ${r.renamed.length}${waitingEn}` } };
     },
 
-    async curate() {
-      return { ok: true, note: '每週整理尚未實作（第二階段）', en: { note: 'Weekly tidy-up is not implemented yet (phase 2)' } };
+    /** 自動駕駛（1.5.0）：AI 判斷並處理收件匣、整理、對話回顧。排程觸發時要電腦閒置，避免和使用者搶 Claude 的用量 */
+    async curate(reason) {
+      if (userPaused()) return { ok: true, note: '已暫停（設定）', en: { note: 'Paused (setting)' } };
+      const on = (await eg.settings?.get?.())?.autopilot === 'on';
+      if (!on) return { ok: true, note: '未開啟', en: { note: 'Turned off' } };
+      const last = Date.parse(state.jobs.curate.lastRunAt ?? '');
+      if (reason === 'schedule' && Number.isFinite(last) && now() - last < AUTOPILOT_FORCE_MS && !(await isIdle())) {
+        return { ok: true, defer: true, note: '電腦使用中，30 分鐘後再試', en: { note: 'The computer is in use; trying again in 30 minutes' } };
+      }
+      autopilotAbort = new AbortController();
+      try {
+        const r = await runAutopilot(eg, { notifier, log, reason, signal: autopilotAbort.signal, onProgress: (run) => events.emit('autopilot', { id: run.id, status: run.status, summary: summarize(run) }) });
+        if (r.skipped === 'busy') return { ok: true, note: '另一輪正在執行', en: { note: 'Another run is in progress' } };
+        if (r.skipped === 'off') return { ok: true, note: '未開啟', en: { note: 'Turned off' } };
+        const sm = r.run?.summary ?? { changes: 0, rejected: 0, costUsd: 0 };
+        events.emit('autopilot', { id: r.run?.id, status: r.run?.status, summary: sm });
+        emitStatus();
+        return {
+          ok: r.ok,
+          note: r.ok ? `處理 ${sm.changes} 項、不執行 ${sm.rejected} 項（約當 US$${sm.costUsd}）` : `失敗：${r.run?.error?.message ?? ''}`,
+          en: { note: r.ok ? `${sm.changes} handled, ${sm.rejected} not carried out (about US$${sm.costUsd})` : `Failed: ${r.run?.error?.message ?? ''}` },
+        };
+      } finally {
+        autopilotAbort = null;
+      }
     },
   };
 
@@ -325,13 +357,18 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
 
   async function execute(id, reason, t0) {
     let result;
+    let defer = false;
     try {
       const r = await RUNNERS[id](reason);
+      defer = !!r?.defer;
       result = { ok: r?.ok !== false, ms: now() - t0, note: r?.note ?? '', ...(r?.en ? { en: r.en } : {}) };
     } catch (err) {
       result = { ok: false, ms: now() - t0, ...failNote(toErrorInfoI18n(err)) };
     }
-    Object.assign(state.jobs[id], { lastRunAt: iso(t0), lastResult: result });
+    if (id === 'curate') autopilotRetryAt = defer ? now() + AUTOPILOT_RETRY_MS : null;
+    // 延後（例如電腦使用中）：不算執行過，保留上次執行時間，只記結果
+    if (defer) Object.assign(state.jobs[id], { lastResult: result });
+    else Object.assign(state.jobs[id], { lastRunAt: iso(t0), lastResult: result });
     save();
     log[result.ok ? 'info' : 'warn'](id, `${result.ok ? '完成' : '失敗'}（${reason}，${result.ms} ms）${result.note ? `：${result.note}` : ''}`);
     return result;
@@ -404,8 +441,21 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     return (await pendingBindings(eg).catch(() => [])).length > 0;
   }
 
+  /** 自動駕駛的啟用狀態跟著設定（設定檔可能被介面、CLI 或另一個程序改過） */
+  async function syncAutopilotEnabled() {
+    const on = (await eg?.settings?.get?.().catch(() => null))?.autopilot === 'on';
+    if (state.jobs.curate.enabled !== on) {
+      state.jobs.curate.enabled = on;
+      if (!on) autopilotRetryAt = null;
+      if (eg?.machine && eg?.paths?.vault) setEnabledState(eg, on).catch((err) => log.warn('autopilot', err));
+      save();
+      emitJob('curate');
+    }
+  }
+
   async function tick() {
     const t = now();
+    await syncAutopilotEnabled();
     if (lastTickAt !== null && detectClockJump(lastTickAt, t)) {
       log.info('clock', `偵測到時鐘跳躍 ${Math.round((t - lastTickAt) / 1000)} 秒（可能剛從睡眠恢復），立即同步`);
       syncRetryAt = null;
@@ -425,6 +475,7 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     /** 啟動：開始監看 vault 與計時器，並立即同步、補跑錯過的健康檢查與背景綁定。 */
     start() {
       lastTickAt = now();
+      syncAutopilotEnabled().catch(() => {});
       settings?.writePaused(paused()).catch((err) => log.warn('settings', err));
       startWatcher();
       tickTimer = setInterval(() => tick().catch((err) => log.error('tick', err)), TICK_MS);
@@ -435,6 +486,7 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     },
     /** 停止計時器與監看，等執行中的工作（例如同步）做完再返回，避免中途結束 git 操作 */
     async stop() {
+      autopilotAbort?.abort();
       clearInterval(tickTimer);
       clearTimeout(watchTimer);
       clearTimeout(changeTimer);
@@ -448,6 +500,14 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     toggle(id, on) {
       if (!JOB_DEFS[id]) throw new CliError('E_NOT_FOUND', `沒有這個工作：${id}`).withEn(`No such job: ${id}`);
       state.jobs[id].enabled = !!on;
+      // 自動駕駛的開關就是設定的 autopilot
+      if (id === 'curate') {
+        eg?.settings?.set?.({ autopilot: on ? 'on' : 'off' })
+          .then(() => (eg?.machine && eg?.paths?.vault ? setEnabledState(eg, !!on) : null))
+          .then(() => { if (on) runJob('curate', 'enable'); })
+          .catch((err) => log.warn('autopilot', err));
+      }
+      if (id === 'curate' && !on) autopilotAbort?.abort();
       if (id === 'watch' && !on) {
         clearTimeout(watchTimer);
         watchDueAt = null;
@@ -465,4 +525,19 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     lastSyncAt: () => state.jobs.sync.lastRunAt,
     flush: () => saving,
   };
+}
+
+/** 最近 AUTOPILOT_IDLE_MS 內沒有任何 Claude Code 對話紀錄被寫入（使用者沒有在用 Claude Code） */
+export async function claudeIdle(claudeHome, t = Date.now()) {
+  if (!claudeHome) return true;
+  const root = path.join(claudeHome, 'projects');
+  for (const d of await fsp.readdir(root, { withFileTypes: true }).catch(() => [])) {
+    if (!d.isDirectory()) continue;
+    for (const f of await fsp.readdir(path.join(root, d.name)).catch(() => [])) {
+      if (!f.endsWith('.jsonl')) continue;
+      const st = await fsp.stat(path.join(root, d.name, f)).catch(() => null);
+      if (st && t - st.mtimeMs < AUTOPILOT_IDLE_MS) return false;
+    }
+  }
+  return true;
 }

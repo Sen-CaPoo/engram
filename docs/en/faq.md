@@ -63,6 +63,18 @@ Your conversations aren't synced, and they aren't uploaded to GitHub. When you t
 
 One analysis subagent (Sonnet) reads each piece of conversation text in full (a very long conversation is split into several), so usage grows with how long and how many the conversations are. A run reviews 20 conversations by default (change it with `--sessions`, up to 100); when there are many or they're long, use `/engram:dream --sessions 5` to review the oldest few first and leave the rest for next time.
 
+### Could autopilot mess up my memories?
+
+Autopilot doesn't ask you to confirm each change, so code and a second AI review do the checking instead: the AI only returns decisions and can't write files; rewrites, merges, archives, and anything written to scopes loaded in every conversation need the reviewer's approval; anything that looks like injected instructions always goes to review; conversation review writes to global or machine scopes only with something you said yourself as evidence; at most 30 changes per run, and memories are archived, never deleted. Every change is backed up first and can be undone one by one or a whole run at a time on the **Autopilot** page; a kind of change you undo twice is paused automatically.
+
+### How much quota does autopilot use, and what does it send?
+
+It calls Claude with the Claude Code sign-in on your computer and sends the memories and conversation text being judged (possible secrets are masked on your computer first), just like when you type `/engram:tidy` or `/engram:dream` yourself. It doesn't load your CLAUDE.md or settings and doesn't save a transcript. There's no extra charge on a subscription, but it uses quota: the monthly cap defaults to about US$30 at API list prices (change it on the **Autopilot** page), up to US$5 per run, and it stops at Claude's usage limit. It runs only after the computer has been idle for 20+ minutes so it doesn't compete with you.
+
+### Where did autopilot move my secrets?
+
+To the local secret store on this computer, `~/.engram/local/secrets/`, encrypted with Windows DPAPI so only this Windows user on this computer can decrypt it. It is never synced. The memory now says where the secret is stored and how to get it: `engram secret get <name>` retrieves it and `engram secret list` lists them.
+
 ### Why does "Waiting for your review" appear in the inbox?
 
 Claude wrote to a global memory, a machine memory, or the core rules on its own. These load in every conversation and affect every project, so you're asked to look at the changes and confirm, edit, or go back. Anything you changed in the dashboard, accepted as suggested on the Tidy-up page, or agreed to write with `/engram:save` isn't asked about again; content Claude rewrote for an **Adjust per note** item is still listed for review. If you don't need it, you can turn it off on the Settings page.

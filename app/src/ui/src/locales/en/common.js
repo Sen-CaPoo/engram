@@ -129,4 +129,14 @@ export default {
   '整理': 'Tidy',
   '{n} 份整理記錄等你決定': ({ n }) => plural(n, '1 tidy-up record waiting for your decisions', '{n} tidy-up records waiting for your decisions'),
   '到「記憶整理」產生給 Claude 的指令': 'Go to Tidy-up to generate the command for Claude',
+  // 自動駕駛（導覽列、審核員意見、風險標籤）
+  '自動駕駛': 'Autopilot',
+  'nav::自動': 'Autopilot',
+  '低風險': 'Low risk',
+  '中風險': 'Medium risk',
+  '高風險': 'High risk',
+  '審核員同意：{reason}': 'Reviewer approved: {reason}',
+  '審核員同意': 'Reviewer approved',
+  '審核員不同意：{reason}': 'Reviewer disagreed: {reason}',
+  '審核員不同意': 'Reviewer disagreed',
 };

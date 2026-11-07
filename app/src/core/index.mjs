@@ -213,12 +213,17 @@ export async function open(opts = {}) {
           collisionRename: ['auto', 'ask', 'off'].includes(s.collisionRename) ? s.collisionRename : 'ask',
           // 1.4.0：Claude 寫入每次都會載入的內容（全域、單機、核心準則）時，在收件匣請你確認（H23）
           reviewWrites: s.reviewWrites === 'off' ? 'off' : 'on',
+          // 1.5.0：自動駕駛（AI 自主判斷並處理收件匣、整理、對話回顧）。autopilotBudget：每月上限（API 牌價的美元）
+          autopilot: s.autopilot === 'on' ? 'on' : 'off',
+          autopilotBudget: Number.isFinite(s.autopilotBudget) && s.autopilotBudget > 0 ? s.autopilotBudget : 30,
         };
       },
       async set(patch = {}) {
         if (patch.bindAuto !== undefined) invariant(['confident', 'ask', 'off'].includes(patch.bindAuto), "bindAuto 必須是 'confident'、'ask' 或 'off'", undefined, { message: "bindAuto must be 'confident', 'ask' or 'off'" });
         if (patch.collisionRename !== undefined) invariant(['auto', 'ask', 'off'].includes(patch.collisionRename), "collisionRename 必須是 'auto'、'ask' 或 'off'", undefined, { message: "collisionRename must be 'auto', 'ask' or 'off'" });
         if (patch.reviewWrites !== undefined) invariant(['on', 'off'].includes(patch.reviewWrites), "reviewWrites 必須是 'on' 或 'off'", undefined, { message: "reviewWrites must be 'on' or 'off'" });
+        if (patch.autopilot !== undefined) invariant(['on', 'off'].includes(patch.autopilot), "autopilot 必須是 'on' 或 'off'", undefined, { message: "autopilot must be 'on' or 'off'" });
+        if (patch.autopilotBudget !== undefined) invariant(Number.isFinite(patch.autopilotBudget) && patch.autopilotBudget >= 1 && patch.autopilotBudget <= 1000, 'autopilotBudget 必須是 1 到 1000 的數字（美元）', undefined, { message: 'autopilotBudget must be a number from 1 to 1000 (US dollars)' });
         const p = path.join(homes.local, 'settings.json');
         const next = { ...((await readJson(p, null)) ?? {}), ...patch };
         await writeJson(p, next);

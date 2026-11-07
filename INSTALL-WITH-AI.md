@@ -191,7 +191,7 @@ Report back in this format:
      (the status text Engram injects is in Traditional Chinese for now, so Claude may quote it as "專案：… · 已綁定")
   2. Memory pane: type /engram-memories in Claude Code (or select "◆ Engram" at the bottom) to see which memories this conversation read
   3. Dashboard: type engram ui in a terminal (Edge is recommended; from its menu choose "Apps › Install this site as an app")
-  4. Tidy-up: under Tidy-up in the dashboard, pick a scope and paste the copied command into Claude Code; after Claude makes suggestions, you decide each item on the page
+  4. Tidy-up: under Tidy-up in the dashboard, pick a scope and paste the copied command into Claude Code; after Claude makes suggestions, you decide each item on the page. To skip deciding item by item, turn on Autopilot and let AI tidy up every day on its own (you can undo anything afterwards)
   5. Second computer: paste the same message into Claude Code on that computer and give it a different name
   6. Please keep <Engram folder>; you'll need it for updates
 ```

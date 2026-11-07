@@ -4,6 +4,7 @@
 // 與常駐程式相同，給人看的文字附 en 欄位（finding.en.title 等），介面依語言挑選。
 import { setLang } from './i18n.js';
 import { buildTidySample, tidyCounts } from './demo-tidy.js';
+import { buildAutopilotSample, summarizeRun } from './demo-autopilot.js';
 
 /* global __DEMO_DATA__ */
 const RAW = typeof __DEMO_DATA__ !== 'undefined' && __DEMO_DATA__ ? __DEMO_DATA__ : fallbackData();
@@ -27,7 +28,10 @@ const TIDY_PID = 'order-system-x1y2z';
 if (!projects.some((p) => p.pid === TIDY_PID)) {
   projects.push({ pid: TIDY_PID, name: EN_DATA ? 'Order system' : '訂單系統', aliases: [], remotes: ['github.com/example/order-system'], paths: {}, counts: { memories: 3, findings: 0 }, lastActivityAt: new Date(NOW - 26 * 3600000).toISOString(), archived: false, index: { lines: 4, bytes: 320 } });
 }
-let tidyRecords = buildTidySample({ en: EN_DATA, pid: TIDY_PID, now: NOW });
+// 審查用的狀態變體：?autopilot=off（關閉，但有執行紀錄）、?autopilot=empty（關閉，從來沒執行過）
+const AP_VARIANT = (() => { try { return new URLSearchParams(location.search).get('autopilot'); } catch { return null; } })();
+const AP = buildAutopilotSample({ en: EN_DATA, pid: TIDY_PID, now: NOW, self });
+let tidyRecords = [...(AP_VARIANT === 'empty' ? [] : AP.tidyRecords), ...buildTidySample({ en: EN_DATA, pid: TIDY_PID, now: NOW })].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 const tidyById = (id) => {
   const r = tidyRecords.find((x) => x.id === id);
   if (!r) throw Object.assign(new Error('找不到整理記錄'), { code: 'E_NOT_FOUND', en: { message: 'Tidy-up record not found' } });
@@ -61,7 +65,7 @@ const REDACTED = EN_DATA ? '[redacted: stored in Windows Credential Manager]' : 
 let importState = { applied: false, tag: null };
 let guidelinesAdopted = false;
 let pendingList = projects.slice(0, 1).map((p) => ({ path: 'C:\\Users\\Demo\\Desktop\\' + (p.aliases?.[0] || p.name) + '-v2', pid: p.pid, encoded: 'C--Users-Demo-Desktop-example-v2', since: minutesAgo(35), reason: 'ask' }));
-const settings = { machineLabel: RAW.self.label, remote: 'https://github.com/demo/engram-vault.git', syncIntervalMin: 10, bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on', healthTime: '09:30', paused: false };
+const settings = { machineLabel: RAW.self.label, remote: 'https://github.com/demo/engram-vault.git', syncIntervalMin: 10, bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on', autopilot: ['off', 'empty'].includes(AP_VARIANT) ? 'off' : 'on', autopilotBudget: 30, healthTime: '09:30', paused: false };
 
 const byRef = (ref) => memories.find((m) => m.ref === ref);
 const projectName = (pid) => projects.find((p) => p.pid === pid)?.name || pid;
@@ -187,7 +191,7 @@ const jobs = [
   { id: 'watch', label: '檔案監看', schedule: 'vault 有變更且安靜 30 秒後做本機 commit', en: { label: 'File watcher', schedule: 'Commits locally after the vault changes and stays quiet for 30 seconds' }, enabled: true, nextRunAt: null, lastRunAt: minutesAgo(52), lastResult: { ok: true, ms: 120, note: 'autosave +1 ~1' } },
   { id: 'health', label: '健康檢查', schedule: '每天 09:30；錯過時在啟動後補跑', en: { label: 'Health check', schedule: 'Daily at 09:30; runs after startup if missed' }, enabled: true, nextRunAt: nextHealth, lastRunAt: lastHealth, lastResult: { ok: true, ms: 412, note: '發現 2 項高、4 項中、3 項低', en: { note: 'Found 2 high, 4 medium, 3 low' } } },
   { id: 'probe', label: '相容性探測', schedule: 'Claude Code 改版時；會用你的 Claude 額度跑 6 次 Haiku 小測試（約 3 萬 token／次）', en: { label: 'Compatibility probe', schedule: 'When Claude Code is updated; runs 6 small Haiku tests on your Claude usage (about 30k tokens each)' }, enabled: true, nextRunAt: null, lastRunAt: minutesAgo(60 * 4), lastResult: VARIANT.probe === 'fail' ? { ok: false, ms: 7410, note: 'C3 未通過（Claude Code 2.1.307）；已暫停 junction 綁定', en: { note: 'C3 failed (Claude Code 2.1.307); junction binding paused' } } : { ok: true, ms: 6230, note: '7 項全部通過（Claude Code 2.1.306）', en: { note: 'All 7 passed (Claude Code 2.1.306)' } } },
-  { id: 'curate', label: '每週整理建議', schedule: '每週一 10:00，以 claude -p 產生建議（只寫入收件匣）', en: { label: 'Weekly tidy suggestions', schedule: 'Mondays at 10:00; suggestions from claude -p (written to the inbox only)' }, enabled: false, nextRunAt: null, lastRunAt: null, lastResult: null },
+  { id: 'curate', label: '自動駕駛', schedule: '開啟後每天一次，在電腦閒置 20 分鐘以上時執行（超過 2 天沒執行就直接執行）', en: { label: 'Autopilot', schedule: 'Once a day when turned on, while the computer has been idle for 20+ minutes (runs anyway if it has not run for 2 days)' }, enabled: false, nextRunAt: null, lastRunAt: null, lastResult: null },
 ];
 const probe = {
   at: minutesAgo(60 * 4), claudeVersion: VARIANT.probe === 'fail' ? '2.1.307' : '2.1.306', ok: VARIANT.probe !== 'fail',
@@ -205,10 +209,21 @@ const probe = {
     return { id, label, ok: !failed, detail: failed ? '透過 junction 寫入記憶時被要求權限（Claude Code 2.1.307，權限模式 auto）' : '', en: { label: labelEn, detail: failed ? 'Writing a memory through a junction asked for permission (Claude Code 2.1.307, permission mode auto)' : '' } };
   }),
 };
+// 自動駕駛（1.5.0）：排程工作 curate 的狀態跟著下方的展示狀態走
+const curateJob = () => {
+  const on = settings.autopilot === 'on';
+  const last = apRuns.find((r) => r.status !== 'running');
+  const sm = last?.summary;
+  const note = sm ? (EN_DATA ? `Made ${sm.changes} changes${sm.rejected ? `; ${sm.rejected} suggestions not carried out` : ''}` : `處理 ${sm.changes} 項${sm.rejected ? `、${sm.rejected} 項建議沒有執行` : ''}`) : '';
+  return {
+    enabled: on, nextRunAt: on && !apRunning ? minutesLater(60 * 15) : null, lastRunAt: last?.startedAt ?? null,
+    lastResult: last ? { ok: last.status === 'done', ms: Math.max(1000, Date.parse(last.endedAt ?? last.startedAt) - Date.parse(last.startedAt)), note, en: { note: `Made ${sm?.changes ?? 0} changes${sm?.rejected ? `; ${sm.rejected} suggestions not carried out` : ''}` } } : null,
+  };
+};
 const agentInfo = () => ({
   pid: 18244, version: '1.1.0', startedAt: minutesAgo(60 * 9 + 12), port: 4777, claudeVersion: VARIANT.probe === 'fail' ? '2.1.307' : '2.1.306', paused: VARIANT.probe === 'fail',
   logonTask: { installed: true, state: 'running', launcher: 'wscript', lastRunAt: minutesAgo(60 * 9 + 12) },
-  jobs: clone(jobs), probe: clone(probe),
+  jobs: clone(jobs).map((j) => (j.id === 'curate' ? { ...j, ...curateJob() } : j)), probe: clone(probe),
 });
 const logs = [
   [4, 'info', 'sync', '同步完成：拉取 3、推送 1，用時 1.8 秒'],
@@ -494,10 +509,11 @@ export const demoApi = {
   async runJob(id) {
     const j = jobs.find((x) => x.id === id);
     if (id === 'sync') return demoApi.sync();
+    if (id === 'curate') { startDemoRun('manual'); return { started: true }; }
     setTimeout(() => { j.lastRunAt = new Date().toISOString(); j.lastResult = { ok: true, ms: 380, note: '手動執行完成' }; emit('job', { id }); }, 900);
     return { started: true };
   },
-  async toggleJob(id, enabled) { await wait(80); jobs.find((x) => x.id === id).enabled = enabled; return agentInfo(); },
+  async toggleJob(id, enabled) { await wait(80); if (id === 'curate') await demoApi.saveSettings({ autopilot: enabled ? 'on' : 'off' }); else jobs.find((x) => x.id === id).enabled = enabled; return agentInfo(); },
   async logs(f = {}) { await wait(60); return clone(f.level ? logs.filter((l) => l.level === f.level) : logs); },
   async importPlan() {
     await wait(500);
@@ -546,12 +562,22 @@ export const demoApi = {
   async adoptGuidelines() { await wait(400); guidelinesAdopted = true; return action('同步工作準則', ['core/rules/user-guidelines.md'], () => { guidelinesAdopted = false; }); },
   async revertGuidelines() { await wait(300); guidelinesAdopted = false; return { ok: true }; },
   async settings() { await wait(80); return clone(settings); },
-  async saveSettings(patch) { await wait(150); Object.assign(settings, patch); if (patch.machineLabel) self.label = patch.machineLabel; emit('status', null); return clone(settings); },
+  async saveSettings(patch) {
+    await wait(150);
+    const was = settings.autopilot;
+    Object.assign(settings, patch);
+    if (patch.machineLabel) self.label = patch.machineLabel;
+    if (patch.autopilot === 'on' && was !== 'on') startDemoRun('enable');
+    if (patch.autopilot === 'off') stopDemoRun();
+    if (patch.autopilot !== undefined || patch.autopilotBudget !== undefined) { emit('autopilot', { id: apRunning?.id ?? null, status: apRunning ? 'running' : 'idle', summary: null }); emit('job', { id: 'curate' }); }
+    emit('status', null);
+    return clone(settings);
+  },
   async importUndo() { await wait(600); importState = { applied: false, tag: null }; return { ok: true }; },
   // 記憶整理：與 app/src/tidy 的規則相同（決定只能在待決定或已產生指令時修改；依備註調整一定要有備註）
   async tidyList() {
     await wait(70);
-    return tidyRecords.map((r) => ({ id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, appliedAt: r.appliedAt ?? null, scope: r.scope, request: r.request, summary: r.summary, status: r.status, counts: tidyCounts(r), ...(r.kind ? { kind: r.kind, dream: r.dream } : {}) }));
+    return tidyRecords.map((r) => ({ id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, appliedAt: r.appliedAt ?? null, scope: r.scope, request: r.request, summary: r.summary, status: r.status, counts: tidyCounts(r), ...(r.kind ? { kind: r.kind, dream: r.dream, autopilot: r.autopilot } : {}) }));
   },
   async tidyRecord(id) {
     await wait(90);
@@ -587,6 +613,8 @@ export const demoApi = {
     await wait(300);
     const it = tidyById(id).items.find((x) => x.id === itemId);
     it.result = { ...it.result, status: 'undone', undoneAt: new Date().toISOString() };
+    // 自動駕駛的記錄：同步標到執行紀錄、記成回饋（與 app/src/autopilot/run.mjs 的 noteTidyUndo 相同）
+    for (const run of apRuns) for (const a of run.actions) if (a.kind === 'tidy' && a.record === id && a.item === itemId && !a.undone) markUndone(a);
     emit('tidy', null);
     return { ok: true, reverted: [sha()] };
   },
@@ -647,8 +675,100 @@ export const demoApi = {
     coreText = `${coreText.replace(/\n*$/, '')}\n\n${add.map((x) => x.text).join('\n')}\n`;
     return action('加入核心準則建議', ['core/CORE.md']);
   },
+  // 1.5.0：自動駕駛（執行紀錄、立即執行、逐項或整輪復原）
+  async autopilot() {
+    await wait(80);
+    const on = settings.autopilot === 'on';
+    const monthly = settings.autopilotBudget;
+    const known = on || apRuns.length > 0;
+    return {
+      enabled: on, budget: { monthly, used: apUsed, remaining: Math.max(0, Math.round((monthly - apUsed) * 10000) / 10000) },
+      host: known ? { mid: self.id, label: self.label, self: true, enabled: on ? [self.id] : [] } : { mid: null, label: null, self: false, enabled: [] },
+      paused: apPaused(), feedback: clone(apFeedback.slice(-20)), running: apRunning ? clone(apRunning) : null, runs: apRuns.map(apEntry),
+    };
+  },
+  async autopilotRun(id) {
+    await wait(90);
+    return clone(apById(id));
+  },
+  async autopilotStart() {
+    await wait(120);
+    if (settings.autopilot !== 'on') throw Object.assign(new Error('自動駕駛目前是關閉的'), { code: 'E_INVALID', en: { message: 'Autopilot is turned off' } });
+    startDemoRun('manual');
+    return { started: true };
+  },
+  async autopilotUndo(id, index) {
+    await wait(300);
+    const run = apById(id);
+    const one = index !== undefined && index !== null;
+    const targets = one ? [Number(index)] : run.actions.map((_, i) => i).reverse();
+    const results = [];
+    for (const i of targets) {
+      const a = run.actions[i];
+      if (!a || a.status !== 'done' || a.undone || !(a.undo?.length || a.kind === 'tidy')) { if (one) results.push({ index: i, ok: false, message: EN_DATA ? 'This item has no change to undo' : '這一項沒有可以復原的變更' }); continue; }
+      markUndone(a);
+      results.push({ index: i, ok: true });
+    }
+    emit('autopilot', { id, status: run.status, summary: run.summary });
+    return { ok: results.every((x) => x.ok), results };
+  },
   subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 };
+
+// ── 自動駕駛的展示狀態與模擬 ──────────────────────────
+let apRuns = AP_VARIANT === 'empty' ? [] : AP.runs;
+let apFeedback = AP_VARIANT === 'empty' ? [] : AP.feedback;
+let apUsed = AP_VARIANT === 'empty' ? 0 : 4.31;
+let apRunning = null;
+let apSeq = 0;
+const apEntry = (r) => ({ id: r.id, reason: r.reason, startedAt: r.startedAt, endedAt: r.endedAt ?? null, status: r.status, summary: r.summary ?? null, host: r.host ?? null });
+const apById = (id) => {
+  const r = apRuns.find((x) => x.id === id);
+  if (!r) throw Object.assign(new Error('找不到這次的執行紀錄'), { code: 'E_NOT_FOUND', en: { message: 'This run was not found' } });
+  return r;
+};
+// 60 天內被復原 2 次以上的類別（與 app/src/autopilot/state.mjs 的 pausedCategories 相同）
+function apPaused() {
+  const n = new Map();
+  for (const f of apFeedback) if (Date.now() - Date.parse(f.at) <= 60 * 864e5) n.set(f.category, (n.get(f.category) ?? 0) + 1);
+  return [...n].filter(([, c]) => c >= 2).map(([k]) => k).sort();
+}
+function markUndone(a) {
+  a.undone = new Date().toISOString();
+  apFeedback.push({ at: a.undone, category: a.category ?? a.kind, ref: a.refs?.[0] ?? null, title: a.title, reason: a.reason, mid: self.id });
+  if (a.kind === 'tidy') {
+    const it = tidyRecords.find((r) => r.id === a.record)?.items.find((x) => x.id === a.item);
+    if (it?.result) it.result = { ...it.result, status: 'undone', undoneAt: a.undone };
+    emit('tidy', null);
+  }
+}
+/** 模擬一輪：開始後分兩段加入結果，最後收尾（展示版不會真的改任何東西） */
+function startDemoRun(reason) {
+  if (apRunning) return;
+  const monthly = settings.autopilotBudget;
+  const run = { v: 1, id: `ap-demo-${apSeq++}`, reason, machine: self.id, startedAt: new Date().toISOString(), endedAt: null, status: 'running', host: { mid: self.id, label: self.label, self: true }, budget: { monthly, used: apUsed, remaining: Math.max(0, monthly - apUsed), run: 5 }, actions: [], rejected: [], skipped: [], notes: [], calls: [], records: [], summary: null };
+  apRuns.unshift(run);
+  apRunning = run;
+  const live = AP.live();
+  const tick = (ms, fn) => setTimeout(() => { if (apRunning === run) { fn(); emit('autopilot', { id: run.id, status: run.status, summary: summarizeRun(run) }); emit('job', { id: 'curate' }); } }, ms);
+  emit('autopilot', { id: run.id, status: 'running', summary: null });
+  emit('job', { id: 'curate' });
+  live.stages.forEach((acts, i) => tick(1400 * (i + 1), () => run.actions.push(...clone(acts))));
+  tick(1400 * (live.stages.length + 1), () => {
+    run.calls = live.calls;
+    run.endedAt = new Date().toISOString();
+    run.status = 'done';
+    run.summary = summarizeRun(run);
+    apUsed += run.summary.costUsd;
+    apRunning = null;
+  });
+}
+function stopDemoRun() {
+  if (!apRunning) return;
+  apRunning.status = 'interrupted';
+  apRunning.endedAt = new Date().toISOString();
+  apRunning = null;
+}
 
 // 待你確認（H23）的展示資料：一筆 Claude 修改的全域記憶、一筆新增的
 let reviewItems = EN_DATA ? [

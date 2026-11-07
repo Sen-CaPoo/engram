@@ -5,11 +5,11 @@ import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api } from '../api.js';
 import { CopyBox, PluginState } from '../askclaude.jsx';
-import { Banner, ConfirmDialog, Dialog, drafts, Empty, ErrorBanner, ScopeLabel, Skeleton, TypeLabel, useApp, useData, useDirty, When } from '../components.jsx';
+import { Banner, ConfirmDialog, Dialog, drafts, Empty, ErrorBanner, ReviewLine, ScopeLabel, Skeleton, TypeLabel, useApp, useData, useDirty, When } from '../components.jsx';
 import { t, N_, local } from '../i18n.js';
-import { IconArchive, IconBack, IconCheck, IconCheckCircle, IconChevronRight, IconCore, IconEdit, IconFile, IconHistory, IconMerge, IconMove, IconPlus, IconSparkle, IconTidy, IconTrash, IconUndo } from '../icons.jsx';
+import { IconArchive, IconAutopilot, IconBack, IconCheck, IconCheckCircle, IconChevronRight, IconCore, IconEdit, IconFile, IconHistory, IconMerge, IconMove, IconPlus, IconSparkle, IconTidy, IconTrash, IconUndo } from '../icons.jsx';
 import { createSaveQueue } from '../savequeue.js';
-import { lineDiff, parseScopeKey, relTime } from '../util.js';
+import { lineDiff, parseScopeKey, relTime, RISK_LABEL } from '../util.js';
 
 const STATUS = { pending: N_('待你決定'), ready: N_('待 Claude 執行'), applying: N_('執行中'), finishing: N_('Claude 處理備註項目中'), done: N_('已完成') };
 const STATUS_TONE = { pending: 'warn', ready: 'brand', applying: 'brand', finishing: 'brand', done: 'ok' };
@@ -156,7 +156,7 @@ function TidyHome({ preset, presetMode }) {
               <div class="rows tidy-records">
                 {records.map((r) => (
                   <a class="row" key={r.id} href={`#/tidy?id=${r.id}`} onClick={(e) => { e.preventDefault(); go('tidy', { id: r.id }); }}>
-                    <span class="title" style={{ display: 'inline-flex', gap: 8, alignItems: 'center', minWidth: 0 }}><ScopeText value={r.scope} />{r.kind === 'dream' && <span class="chip brand"><IconHistory />{t('對話回顧')}</span>}</span>
+                    <span class="title" style={{ display: 'inline-flex', gap: 8, alignItems: 'center', minWidth: 0 }}><ScopeText value={r.scope} />{r.kind === 'dream' && <span class="chip brand"><IconHistory />{t('對話回顧')}</span>}{r.kind === 'autopilot' && <span class="chip brand"><IconAutopilot />{t('自動駕駛')}</span>}{r.kind === 'autopilot' && r.autopilot?.dream && <span class="chip brand"><IconHistory />{t('對話回顧')}</span>}</span>
                     <span class={`chip ${STATUS_TONE[r.status] || ''}`}>{t(STATUS[r.status] || r.status)}</span>
                     <span class="desc">{r.summary}</span>
                     <span class="meta">
@@ -369,9 +369,17 @@ function TidyRecord({ id }) {
           <div class="tidy-meta">
             <ScopeText value={r.scope} />
             <span class={`chip ${STATUS_TONE[r.status] || ''}`}>{t(STATUS[r.status] || r.status)}</span>
+            {r.kind === 'autopilot' && <span class="chip brand"><IconAutopilot />{t('自動駕駛')}</span>}
             <span>{t('Claude 建立於 {when}', { when: <When at={r.createdAt} /> })}</span>
             {r.status !== 'applying' && r.status !== 'finishing' && <span class="end"><button class="btn ghost sm danger" onClick={() => setDialog({ kind: 'delete' })}><IconTrash />{t('刪除這份記錄')}</button></span>}
           </div>
+          {r.kind === 'autopilot' && (
+            <p class="muted" style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <IconAutopilot style={{ width: 15, height: 15, flex: 'none' }} />
+              {t('這份記錄由自動駕駛建立並已自動執行，每一項都先經過審核員檢查；可以在下面逐項復原。')}
+              {r.autopilot?.run && <a class="btn ghost sm" href={`#/autopilot?id=${r.autopilot.run}`} onClick={(e) => { if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey) { e.preventDefault(); go('autopilot', { id: r.autopilot.run }); } }}>{t('查看這一輪')}<IconChevronRight /></a>}
+            </p>
+          )}
           {r.dream && (
             <p class="muted" style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
               <IconHistory style={{ width: 15, height: 15, flex: 'none' }} />
@@ -487,9 +495,11 @@ function ItemCard({ it, rec, editable, decision, note, missing, onChange, onUndo
         <h3><code>{it.name}</code></h3>
         {scope ? <ScopeLabel scope={scope} /> : it.scope === 'core' ? <ScopeText value="core" /> : null}
         {it.type && <TypeLabel type={it.type} />}
+        {it.autopilot?.risk && <span class={`sev-chip ${it.autopilot.risk}`}>{t(RISK_LABEL[it.autopilot.risk])}</span>}
       </header>
       <p class="tidy-title"><IconSparkle />{it.title}</p>
       <p class="tidy-reason">{it.reason}</p>
+      <ReviewLine review={it.autopilot?.review} />
       {it.evidence?.length > 0 && (
         <div class="tidy-evidence" role="group" aria-label={t('對話裡的證據')}>
           {it.evidence.map((e, k) => (
@@ -535,7 +545,7 @@ function ItemCard({ it, rec, editable, decision, note, missing, onChange, onUndo
         </div>
       ) : (
         <div class="tidy-decided">
-          {decision && <span class="chip">{t('你的決定：{d}', { d: t(DECISION[decision]) })}</span>}
+          {decision && rec.kind !== 'autopilot' && <span class="chip">{t('你的決定：{d}', { d: t(DECISION[decision]) })}</span>}
           {note && <span class="muted">{t('備註：{note}', { note })}</span>}
         </div>
       )}

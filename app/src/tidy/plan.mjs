@@ -122,7 +122,7 @@ async function lookups(eg) {
  * 讀計畫檔、驗證、建立整理記錄。成功後，草稿資料夾（~/.engram/local/drafts）裡的計畫與內容檔刪除。
  * @returns {Promise<object>} 新建立的記錄
  */
-export async function createFromPlan(eg, file, { now = new Date() } = {}) {
+export async function createFromPlan(eg, file, { now = new Date(), autopilot = null } = {}) {
   const planPath = path.resolve(file);
   let text;
   try { text = await fsp.readFile(planPath, 'utf8'); } catch {
@@ -453,7 +453,8 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
 
   if (errs.length) {
     const shown = errs.slice(0, 25);
-    throw new CliError('E_INVALID', `整理計畫有 ${errs.length} 個問題：\n${shown.map((e) => `• ${e}`).join('\n')}${errs.length > shown.length ? `\n…另外還有 ${errs.length - shown.length} 個` : ''}`, '修正計畫檔後再執行 engram tidy create；記錄還沒有建立');
+    // details：完整的問題清單（自動駕駛用來剔除有問題的項目後重試）
+    throw Object.assign(new CliError('E_INVALID', `整理計畫有 ${errs.length} 個問題：\n${shown.map((e) => `• ${e}`).join('\n')}${errs.length > shown.length ? `\n…另外還有 ${errs.length - shown.length} 個` : ''}`, '修正計畫檔後再執行 engram tidy create；記錄還沒有建立'), { details: errs });
   }
 
   // 建議當時的內容（遮蔽後）：介面用來顯示「目前內容」與差異比對；執行之後也看得到當初比對的是什麼
@@ -487,6 +488,8 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
         ...(skipped.length ? { skipped: skipped.length } : {}),
       },
     } : {}),
+    // 1.5.0：自動駕駛建立的記錄（由 AI 判斷、審核員確認、自動執行；在「自動駕駛」頁逐項復原）
+    ...(autopilot ? { kind: 'autopilot', autopilot: { run: String(autopilot.run), task: String(autopilot.task ?? ''), ...(dream ? { dream: true } : {}) } } : {}),
   };
   await writeRecord(eg.paths.local, rec);
   // 對話回顧：記錄建立後，這批對話記為已回顧（使用者在網頁怎麼決定都算回顧過）；沒分析到的不記
