@@ -82,14 +82,23 @@ export async function listSecrets(local) {
  */
 const valueCache = new Map(); // local → { at, values }：同一個程序 10 分鐘內不重複解密（每筆都要啟動一次 PowerShell）
 
+/** 保管區的檔案清單；資料夾不存在時空陣列，其他讀取錯誤丟 E_VAULT（不能當成「沒有東西要遮蔽」） */
+async function entryFiles(local) {
+  try { return (await fsp.readdir(dirOf(local))).filter((x) => x.endsWith('.json')).sort(); } catch (err) {
+    if (err?.code === 'ENOENT') return [];
+    throw new EngramError('E_VAULT', `讀不到本機保管區（${err.code ?? err.message}），這次先不匯出對話`, '稍後再試').withEn('The local secret store could not be read, so conversations were not exported this time', 'Try again later');
+  }
+}
+
 export async function vaultValues(local) {
   const hit = valueCache.get(local);
-  const names = (await fsp.readdir(dirOf(local)).catch(() => [])).filter((x) => x.endsWith('.json')).sort().join('|');
+  const files = await entryFiles(local);
+  const names = files.join('|');
   if (!names) return [];
   if (hit && hit.names === names && Date.now() - hit.at < 600_000) return hit.values;
   const out = [];
   const failed = [];
-  for (const n of (await fsp.readdir(dirOf(local)).catch(() => [])).filter((x) => x.endsWith('.json'))) {
+  for (const n of files) {
     const e = await readEntry(local, n.slice(0, -5));
     // 檔案在但讀不出內容（壞掉的 JSON、缺 data）也算解不開
     const value = e?.data ? await crypto.unprotect(e.data).catch(() => null) : null;
@@ -123,7 +132,7 @@ export function scrubVault(text, values, { short = true } = {}) {
 /** 逐筆試著解密，只回報名稱與狀態（不含值） */
 export async function checkSecrets(local) {
   const out = [];
-  for (const n of (await fsp.readdir(dirOf(local)).catch(() => [])).filter((x) => x.endsWith('.json')).sort()) {
+  for (const n of await entryFiles(local)) {
     const name = n.slice(0, -5);
     const e = await readEntry(local, name);
     const ok = e?.data ? typeof (await crypto.unprotect(e.data).catch(() => null)) === 'string' : false;
@@ -135,16 +144,27 @@ export async function checkSecrets(local) {
 
 /** 刪除解不開的項目（解得開的不刪：那是唯一的一份，記憶裡只剩存放位置） */
 export async function deleteBrokenSecret(local, name) {
-  invariant(NAME_RE.test(String(name ?? '')), '保管區名稱格式不正確', undefined, { message: 'Invalid secret name' });
+  // 名稱以保管區裡實際存在的檔案比對（名稱格式不合的舊檔也能處理；不接受路徑）
+  const files = await entryFiles(local);
+  if (!files.includes(`${String(name ?? '')}.json`) || /[\\/]/.test(String(name))) throw new EngramError(E.NOT_FOUND, `保管區裡沒有「${String(name ?? '').slice(0, 60)}」`, 'engram secret check 可以列出每一筆').withEn(`No "${String(name ?? '').slice(0, 60)}" in the local secret store`);
   const e = await readEntry(local, name);
-  const exists = await fsp.stat(fileOf(local, name)).then(() => true, () => false);
-  if (!exists) throw new EngramError(E.NOT_FOUND, `保管區裡沒有「${name}」`).withEn(`No "${name}" in the local secret store`);
-  const ok = e?.data ? typeof (await crypto.unprotect(e.data).catch(() => null)) === 'string' : false;
+  // 連續兩次都解不開才算壞掉（避免 PowerShell 一時啟動失敗就把唯一的一份刪掉）
+  const tryOnce = async () => (e?.data ? typeof (await crypto.unprotect(e.data).catch(() => null)) === 'string' : false);
+  const ok = (await tryOnce()) || (await tryOnce());
   invariant(!ok, `「${name}」解得開，不能刪除（記憶裡只剩存放位置，刪了就找不回來）`, '用 engram secret get 取出後自行保存，再手動處理', { message: `"${name}" can be decrypted, so it is not deleted (the memory only records where it is stored)` });
-  await fsp.rm(fileOf(local, name), { force: true });
+  // 不直接刪：移到 secrets/.deleted/（萬一誤判，還找得回加密的原檔）
+  const bin = path.join(dirOf(local), '.deleted');
+  await fsp.mkdir(bin, { recursive: true });
+  await fsp.rename(fileOf(local, name), path.join(bin, `${name}-${Date.now()}.json`));
   valueCache.delete(local);
-  return { ok: true, name };
+  return { ok: true, name, movedTo: bin };
 }
 
-/** 記憶裡取代金鑰值的文字 */
-export const placeholder = (name) => `‹存放在 Engram 本機保管區：${name}（engram secret get ${name}）›`;
+/**
+ * 記憶裡取代金鑰值的文字。用角括號：金鑰偵測把 <…> 當成佔位字串，寫在 Password=、token: 後面也不會再被當成金鑰
+ * （2026-11-07 第一次真實執行：原本的「‹存放在…›」寫在 Password= 後面時，開頭幾個字又被偵測成連線字串的密碼）。
+ */
+export const placeholder = (name) => `<engram-secret:${name}>`;
+
+/** 記憶結尾的說明（一筆記憶只加一次） */
+export const PLACEHOLDER_NOTE = '（`<engram-secret:名稱>` 是存放在這台電腦 Engram 本機保管區的值，用 `engram secret get 名稱` 取出；不會同步到其他電腦。）';

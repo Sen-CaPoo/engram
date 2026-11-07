@@ -437,7 +437,8 @@ describe('疑似金鑰', () => {
     assert.equal(r.ok, true);
     const text = raw(ref);
     assert.ok(!text.includes(token), '真的金鑰不在記憶裡');
-    assert.match(text, /Engram 本機保管區：deploy-github-token/);
+    assert.ok(text.includes('<engram-secret:deploy-github-token>'));
+    assert.match(text, /engram secret get/);
     assert.ok(text.includes(example), '範例值保留');
     assert.equal(await getSecret(eg.paths.local, 'deploy-github-token'), token);
     assert.equal((await listSecrets(eg.paths.local))[0].from, ref);
@@ -721,6 +722,25 @@ describe('第五輪審查的回歸測試', () => {
     await assert.rejects(deleteBrokenSecret(eg.paths.local, 'good-one'), /解得開/);
     await deleteBrokenSecret(eg.paths.local, 'broken-one');
     const mf = await eg.dream.prepare({ pid, max: 5 });
+    await eg.dream.done(mf.id);
+  });
+
+  test('記憶全文不套用短值遮蔽：name、[[連結]] 不會被改壞（第六輪審查）', async () => {
+    const { putSecret } = await import('../../src/core/secretvault.mjs');
+    await putSecret(eg.paths.local, { name: 'short-pw', value: 'admin', from: 'test' });
+    await eg.memories.create({ scope: { kind: 'project', pid }, name: 'admin-setup', type: 'reference', description: 'admin 帳號的設定', body: '參見 [[admin-setup]]。' });
+    const dir = path.join(m.claudeHome, 'projects', encodeProjectPath(repo));
+    const sid = 'ab12cd34-0000-4000-8000-0000000000cc';
+    const file = path.join(dir, `${sid}.jsonl`);
+    fs.writeFileSync(file, `${JSON.stringify({ cwd: repo, sessionId: sid, timestamp: new Date(Date.now() - 3 * 3600_000).toISOString(), type: 'user', message: { role: 'user', content: '幫我確認 admin 帳號的權限設定是否正確' } })}
+`);
+    const tm = new Date(Date.now() - 3 * 3600_000);
+    fs.utimesSync(file, tm, tm);
+    const mf = await eg.dream.prepare({ pid, max: 5 });
+    const md = fs.readFileSync(path.join(mf.dir, 'memories.md'), 'utf8');
+    assert.match(md, /name: admin-setup/);
+    assert.match(md, /\[\[admin-setup\]\]/);
+    assert.match(await eg.dream.text(mf.id), /確認 ‹保管區：short-pw› 帳號/, '對話文字照樣遮蔽');
     await eg.dream.done(mf.id);
   });
 

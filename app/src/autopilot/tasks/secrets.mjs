@@ -9,7 +9,7 @@ import path from 'node:path';
 import { readJson, writeJsonAtomic } from '../../cli/fsutil.mjs';
 import { loadAllow, scanWithAllow } from '../../core/secretallow.mjs';
 import { secretHash } from '../../core/secrets.mjs';
-import { getSecret, NAME_RE, placeholder, putSecret } from '../../core/secretvault.mjs';
+import { getSecret, NAME_RE, PLACEHOLDER_NOTE, placeholder, putSecret } from '../../core/secretvault.mjs';
 import { fence, REVIEW_SCHEMA, SECRET_SCHEMA, secretPrompt } from '../prompts.mjs';
 
 const holdFile = (local) => path.join(local, 'autopilot', 'vault-hold.json');
@@ -159,11 +159,15 @@ export async function secretCards(ctx) {
         }
         text = `${text.slice(0, h.offset)}${placeholder(names.get(value))}${text.slice(h.offset + h.length)}`;
       }
+      if (!text.includes(PLACEHOLDER_NOTE)) text = `${text.replace(/\n*$/, '')}\n\n${PLACEHOLDER_NOTE}\n`;
+      // 替換後還有疑似金鑰（例如同一行還有別的值）：先說清楚，不寫入
+      const left = scanWithAllow(text, it.ref, await loadAllow(eg.paths.local));
+      if (left.length) throw new Error(`替換後第 ${left.map((h) => h.line).join('、')} 行仍疑似含有金鑰（${[...new Set(left.map((h) => h.kind))].join('、')}），這次不動它`);
       // 加解密期間檔案可能被改過：寫入前再確認一次（含金鑰的檔案沒有 commit 過，蓋掉就找不回來）
       if ((await readNow()) !== raw) throw new Error('這段期間記憶被修改了，這次不動它');
       const res = it.ref === 'core/CORE.md' ? await eg.core.write(text, { carryReviewed: true, expect: raw }) : await eg.memories.write(it.ref, { text, carryReviewed: true });
       // 復原不能用 git revert（這個檔案第一次 commit 就是改寫後的版本，revert 等於刪檔）：改成從保管區把值放回原處
-      run.actions.push({ task: 'secrets', kind: 'vault', card: it.card, code: 'H13', refs: [it.ref], title: `金鑰移到本機保管區：${it.ref}`, reason: `存成 ${[...new Set(stored)].join('、')}；記憶改寫成只記存放位置（用 engram secret get <名稱> 取出）`, category: 'vault', status: 'done', undo: [], vaultNames: [...new Set(stored)], commit: shaOf(res) });
+      run.actions.push({ task: 'secrets', kind: 'vault', card: it.card, code: 'H13', refs: [it.ref], title: `金鑰移到本機保管區：${it.ref}`, reason: `存成 ${[...new Set(stored)].join('、')}；記憶裡的值換成 <engram-secret:名稱>（用 engram secret get <名稱> 取出）`, category: 'vault', status: 'done', undo: [], vaultNames: [...new Set(stored)], commit: shaOf(res) });
     } catch (err) {
       run.rejected.push({ task: 'secrets', title: it.ref, why: `移到保管區失敗：${err.message}` });
     }

@@ -234,7 +234,7 @@ export async function screen(call, items, snapshot, { dream = null, paused = [],
       // 對話回顧只能把記憶搬到全域、單機或這個專案
       if (it.ops.some((o) => o.op === 'move' && String(o.to).startsWith('project:') && o.to !== `project:${dream.pid}`)) { rejected.push({ ...brief(it), why: '對話回顧不能把記憶搬到其他專案' }); continue; }
       // 碰到每次都會載入的範圍（寫入、新增、搬入，或封存、合併、搬走全域與單機的記憶），要有使用者自己說的話當證據
-      const touchesShared = targetScopes(it).some(SHARED);
+      const touchesShared = !it.ops.every((o) => o.op === 'verify') && targetScopes(it).some(SHARED);
       for (const e of it.evidence ?? []) e.fromUser = quoteFromUser(dream.transcript, e.quote);
       if (touchesShared && !(it.evidence ?? []).some((e) => e.fromUser)) { rejected.push({ ...brief(it), why: '動到全域或單機的記憶，但證據裡沒有使用者自己說的話' }); continue; }
     }

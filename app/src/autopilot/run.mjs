@@ -170,10 +170,11 @@ async function digest(eg, notifier, now) {
 
 /** 復原「金鑰移到保管區」：把記憶裡的保管區標記換回原值（檔案會回到疑似金鑰、不同步的狀態） */
 async function restoreFromVault(eg, ref, names) {
-  const { getSecret, placeholder } = await import('../core/secretvault.mjs');
+  const { getSecret, placeholder, PLACEHOLDER_NOTE } = await import('../core/secretvault.mjs');
   const raw = ref === 'core/CORE.md' ? (await eg.core.read()).text ?? '' : (await eg.memories.read(ref)).raw;
   let text = raw;
   for (const n of names) text = text.split(placeholder(n)).join(await getSecret(eg.paths.local, n));
+  if (!text.includes('<engram-secret:')) text = text.split(`\n\n${PLACEHOLDER_NOTE}\n`).join('\n');
   if (text === raw) throw Object.assign(new Error('記憶裡已經找不到保管區的標記（之後被修改過）'), { code: 'E_CONFLICT' });
   // 直接寫回檔案、不經過引擎的寫入（引擎會擋下金鑰；allowSecrets 則會把值記成「不是金鑰」而同步出去）：
   // 回到移入保管區之前的狀態——含疑似金鑰的檔案留在這台電腦、不同步。在 vault 鎖內比對讀取時的內容，避免蓋掉剛發生的修改
@@ -213,7 +214,10 @@ export async function undoRun(eg, runId, index) {
       else if (a.kind === 'vault' && a.vaultNames?.length) {
         // 你要拿回原文：先記下這個檔案 30 天內不再自動移回保管區（記在本機；收件匣的提醒照常顯示），再放回原值
         await holdVault(eg.paths.local, a.refs?.[0], Date.now() + 30 * DAY);
-        await restoreFromVault(eg, a.refs?.[0], a.vaultNames);
+        try { await restoreFromVault(eg, a.refs?.[0], a.vaultNames); } catch (err) {
+          await holdVault(eg.paths.local, a.refs?.[0], 0).catch(() => {}); // 沒放回去：撤回暫緩
+          throw err;
+        }
       }
       else for (const sha of [...a.undo].reverse()) await eg.undo(sha);
       a.undone = new Date().toISOString();

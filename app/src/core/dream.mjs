@@ -429,8 +429,7 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
       wroteRefs.has(m.ref) ? '- 這筆記憶是在這批對話裡寫下的' : null,
       '',
       '````markdown',
-      // 保管區的短值只在記憶內文遮蔽（標題列的 ref 不動，免得 ref 被改壞）
-      scrubVault(redactSecrets(raw.replace(/\r\n/g, '\n'), allowEntries(allow, m.ref)).text, vault).replace(/\n*$/, ''),
+      redactSecrets(raw.replace(/\r\n/g, '\n'), allowEntries(allow, m.ref)).text.replace(/\n*$/, ''),
       '````',
       '',
     );
