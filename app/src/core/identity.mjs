@@ -632,9 +632,11 @@ export async function bind(ctx, dir, target = {}, { mode = 'safe', force = false
     before.bindings = JSON.parse(JSON.stringify(bindings));
     const key = bindingKey(encoded, method, root);
     const prevFootprint = Object.values(bindings).find((v) => v?.path && samePath(v.path, root))?.footprint;
+    // 1.4.1：同一個資料夾、同一個專案最早的綁定時間。換綁定方式時 key 會變（編碼 ↔ 編碼@雜湊），
+    // 不帶過來的話綁定時間會被重設成現在，對話回顧判斷「哪些對話屬於這個專案」時會漏掉之前的對話
+    const firstBoundAt = Object.values(bindings).filter((v) => v?.path && samePath(v.path, root) && v.pid === pid && Number.isFinite(Date.parse(v.boundAt ?? ''))).map((v) => v.boundAt).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
     // 同一個資料夾換了綁定方式時，移除舊的那筆
     for (const [k, v] of Object.entries(bindings)) if (k !== key && v?.path && samePath(v.path, root)) delete bindings[k];
-    const prev = bindings[key];
     bindings[key] = {
       pid,
       path: root,
@@ -646,7 +648,7 @@ export async function bind(ctx, dir, target = {}, { mode = 'safe', force = false
       ...(deferred ? { reason: swap.reason } : {}),
       // 綁定在使用者資料夾留下的足跡（R-48）；同一個資料夾重新綁定時保留第一次的紀錄
       footprint: mergeFootprint(prevFootprint, footprint),
-      boundAt: prev?.pid === pid && prev.boundAt ? prev.boundAt : new Date().toISOString(),
+      boundAt: firstBoundAt ?? new Date().toISOString(),
       lastOpenedAt: new Date().toISOString(),
     };
     await writeBindings(ctx.vault, ctx.mid, bindings);

@@ -750,7 +750,7 @@ export async function open(opts = {}) {
           invariant(typeof a.encoded === 'string' && Object.hasOwn(b, a.encoded), '找不到這個綁定', undefined, { message: 'Binding not found' });
           // 1.4.1：舊資料夾的對話紀錄還在，記下來讓對話回顧（H20）仍能找到它們
           const old = b[a.encoded];
-          await retireBinding(ctx.local, { key: a.encoded, pid: old?.pid, encoded: old?.encoded ?? a.encoded.split('@')[0], path: old?.path ?? null }, { claudeHome: homes.claudeHome });
+          await retireBinding(ctx.local, { key: a.encoded, pid: old?.pid, encoded: old?.encoded ?? a.encoded.split('@')[0], path: old?.path ?? null, boundAt: old?.boundAt ?? null }, { claudeHome: homes.claudeHome });
           // 1.4.1：拆掉舊編碼位置的 junction（比照撞名改名）。留著的話，之後在同一個路徑或編碼相同的
           // 另一個資料夾開 Claude Code，記憶會寫進這個已經不用的專案，重新綁定也會被拒絕。
           // junction 綁定的 key 就是編碼，這個位置的連結屬於這筆綁定；仍只拆指向 vault 專案記憶資料夾的，

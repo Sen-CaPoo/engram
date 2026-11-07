@@ -318,8 +318,10 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
   await fsp.mkdir(path.join(dir, 'sessions'), { recursive: true });
 
   const roots = { home: normPath(ctx.homes.userHome), vault: normPath(ctx.vault), claudeHome: normPath(ctx.homes.claudeHome) };
-  // 舊對話讀的是舊資料夾的記憶路徑：已移除的綁定也要對得回專案（目前的綁定優先）
-  const encToPid = new Map((await readRetired(ctx.local)).map((b) => [b.encoded.toLowerCase(), b.pid]));
+  // 舊對話讀的是舊資料夾的記憶路徑：已移除的綁定也要對得回專案。同一個編碼先後屬於好幾個專案時，
+  // 正在回顧的這個專案自己的紀錄優先於別的專案，目前的綁定再優先
+  const retiredRows = await readRetired(ctx.local);
+  const encToPid = new Map([...retiredRows.filter((b) => b.pid !== pid), ...retiredRows.filter((b) => b.pid === pid)].map((b) => [b.encoded.toLowerCase(), b.pid]));
   for (const v of allBindingViews(await readBindings(ctx.vault, ctx.mid))) if (v.encoded && v.pid) encToPid.set(v.encoded.toLowerCase(), v.pid);
   const memories = await scanAllMemories(ctx.vault);
   const wroteBy = new Map(); // originSessionId → refs

@@ -547,6 +547,53 @@ describe('對話回顧', () => {
     assert.ok(inWindows(at('02'), back) && inWindows(at('06'), back));
     // 綁定時間不知道：全部都算（維持 1.4.0 的行為）
     assert.ok(inWindows(at('02'), sessionWindows(rows(['P', '07']), 'Q', 'C--E', -Infinity)));
+    // 第三輪審查：撞名並存的兩個專案在同一次整理裡先後移除（相差 2 秒）→ 兩邊都保有移除前的全部對話
+    const both = [
+      { pid: 'P', encoded: 'C--E', boundAt: '2026-10-01T00:00:00.000Z', retiredAt: '2026-11-07T00:00:00.000Z' },
+      { pid: 'Q', encoded: 'C--E', boundAt: '2026-10-02T00:00:00.000Z', retiredAt: '2026-11-07T00:00:02.000Z' },
+    ];
+    for (const who of ['P', 'Q']) {
+      const w = sessionWindows(both, who, 'C--E', undefined);
+      assert.ok(['02', '05', '06'].every((d) => inWindows(at(d), w)), `${who} 保有移除前的對話`);
+    }
+    // 路徑先後重用（有綁定時間）：Q 在 P 移除之後才綁定 → 只擁有之後的
+    const seq = [
+      { pid: 'P', encoded: 'C--E', boundAt: '2026-10-01T00:00:00.000Z', retiredAt: '2026-11-03T00:00:00.000Z' },
+      { pid: 'Q', encoded: 'C--E', boundAt: '2026-11-04T00:00:00.000Z', retiredAt: '2026-11-06T00:00:00.000Z' },
+    ];
+    assert.deepEqual(['02', '05'].map((d) => [inWindows(at(d), sessionWindows(seq, 'P', 'C--E', undefined)), inWindows(at(d), sessionWindows(seq, 'Q', 'C--E', undefined))]), [[true, false], [false, true]]);
+    // GRACE：移除後 60 秒內的寫入仍算舊專案；mtime 缺漏不算任何專案
+    const g = sessionWindows(rows(['P', '07']), 'P', 'C--E', undefined);
+    assert.ok(inWindows({ mtimeMs: D('07') + 59_000 }, g) && !inWindows({ mtimeMs: D('07') + 61_000 }, g));
+    assert.ok(!inWindows({}, g) && !inWindows(null, g));
+  });
+
+  test('退役紀錄：同一個專案移除後又綁回來再移除，兩段分開保存', async () => {
+    const { readRetired, retireBinding } = await import('../../src/core/retired.mjs');
+    const local = path.join(root, 'retired-local-2');
+    await retireBinding(local, { key: 'C--R', pid: 'P', encoded: 'C--R', boundAt: '2026-10-01T00:00:00.000Z' }, { now: Date.parse('2026-11-01T00:00:00Z') });
+    await retireBinding(local, { key: 'C--R', pid: 'P', encoded: 'C--R', boundAt: '2026-11-04T00:00:00.000Z' }, { now: Date.parse('2026-11-05T00:00:00Z') });
+    await retireBinding(local, { key: 'C--R', pid: 'P', encoded: 'C--R', boundAt: '2026-11-04T00:00:00.000Z' }, { now: Date.parse('2026-11-06T00:00:00Z') });
+    const list = await readRetired(local);
+    assert.deepEqual(list.map((b) => [b.boundAt, b.retiredAt]), [['2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'], ['2026-11-04T00:00:00.000Z', '2026-11-06T00:00:00.000Z']], '同一筆綁定以最新為準，不同次綁定分開');
+  });
+
+  test('同一個資料夾換綁定方式時，綁定時間沿用第一次的', async () => {
+    const dir = makeRepo(path.join(root, 'work', 'switch-method'));
+    const p = (await eg.identity.bind(dir, { create: { name: '換方式' } })).pid;
+    const bf = path.join(eg.paths.vault, 'machines', eg.machine.id, 'bindings.json');
+    const enc = encodeProjectPath(dir);
+    const all = JSON.parse(fs.readFileSync(bf, 'utf8'));
+    // 模擬之前是設定檔綁定（key 不同），綁定時間是 30 天前
+    const entry = all[enc];
+    delete all[enc];
+    all[`${enc}@abcdef12`] = { ...entry, method: 'settings', boundAt: '2026-10-01T00:00:00.000Z' };
+    fs.writeFileSync(bf, JSON.stringify(all));
+    await eg.identity.bind(dir, { pid: p });
+    const now = JSON.parse(fs.readFileSync(bf, 'utf8'));
+    const cur = Object.values(now).find((b) => b.pid === p && b.path && path.resolve(b.path).toLowerCase() === path.resolve(dir).toLowerCase());
+    assert.equal(cur.boundAt, '2026-10-01T00:00:00.000Z');
+    assert.equal(Object.values(now).filter((b) => b.pid === p).length, 1, '舊的那筆移除');
   });
 
   test('卡片過期（資料夾其實還在）時移除綁定不拆 junction', async () => {
