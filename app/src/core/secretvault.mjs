@@ -88,22 +88,29 @@ export async function vaultValues(local) {
   if (!names) return [];
   if (hit && hit.names === names && Date.now() - hit.at < 600_000) return hit.values;
   const out = [];
+  let failed = false;
   for (const n of (await fsp.readdir(dirOf(local)).catch(() => [])).filter((x) => x.endsWith('.json'))) {
     const e = await readEntry(local, n.slice(0, -5));
     if (!e?.data) continue;
     const value = await crypto.unprotect(e.data).catch(() => null);
-    // 太短的值可能是一般文字，取代會破壞匯出內容
-    if (typeof value === 'string' && value.length >= 8) out.push({ name: e.name, value });
+    if (typeof value !== 'string') { failed = true; continue; }
+    if (value.length >= 4) out.push({ name: e.name, value });
   }
   const values = out.sort((a, b) => b.value.length - a.value.length);
-  valueCache.set(local, { at: Date.now(), names, values });
+  // 有解不開的就不快取，下次再試
+  if (!failed) valueCache.set(local, { at: Date.now(), names, values });
   return values;
 }
 
 /** 把文字裡出現的保管區值換成標記 */
 export function scrubVault(text, values) {
   let t = String(text ?? '');
-  for (const v of values) if (t.includes(v.value)) t = t.split(v.value).join(`‹保管區：${v.name}›`);
+  for (const v of values) {
+    if (!t.includes(v.value)) continue;
+    // 短值（8 字以內）只在前後不是英數字時取代，免得換掉一般文字
+    if (v.value.length >= 8) t = t.split(v.value).join(`‹保管區：${v.name}›`);
+    else t = t.replace(new RegExp(`(?<![A-Za-z0-9])${v.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9])`, 'g'), `‹保管區：${v.name}›`);
+  }
   return t;
 }
 

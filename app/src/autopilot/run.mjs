@@ -176,8 +176,11 @@ async function restoreFromVault(eg, ref, names) {
   for (const n of names) text = text.split(placeholder(n)).join(await getSecret(eg.paths.local, n));
   if (text === raw) throw Object.assign(new Error('記憶裡已經找不到保管區的標記（之後被修改過）'), { code: 'E_CONFLICT' });
   // 直接寫回檔案、不經過引擎的寫入（引擎會擋下金鑰；allowSecrets 則會把值記成「不是金鑰」而同步出去）：
-  // 回到移入保管區之前的狀態——含疑似金鑰的檔案留在這台電腦、不同步
-  await writeFileAtomic(path.join(eg.paths.vault, ...String(ref).split('/')), text);
+  // 回到移入保管區之前的狀態——含疑似金鑰的檔案留在這台電腦、不同步。在 vault 鎖內比對讀取時的內容，避免蓋掉剛發生的修改
+  const { safeWriteResult, sha1 } = await import('../core/fsx.mjs');
+  const abs = path.join(eg.paths.vault, ...String(ref).split('/'));
+  const r = await eg.locked('autopilot.restore', () => safeWriteResult(abs, text, { expectHash: sha1(raw) }));
+  if (!r?.ok) throw Object.assign(new Error('記憶剛被修改，這次沒有復原；稍後再試'), { code: 'E_CONFLICT' });
 }
 
 /** 這一項能不能從自動駕駛頁復原 */
@@ -207,7 +210,11 @@ export async function undoRun(eg, runId, index) {
         }
       } else if (a.kind === 'rename' && a.renameId) await eg.collisions.undo(a.renameId);
       else if (a.kind === 'not-secret' && a.allowHashes?.length) { for (const h of a.allowHashes) await eg.secrets.removeAllowed(h).catch((err) => { if (err?.code !== 'E_NOT_FOUND') throw err; }); }
-      else if (a.kind === 'vault' && a.vaultNames?.length) await restoreFromVault(eg, a.refs?.[0], a.vaultNames);
+      else if (a.kind === 'vault' && a.vaultNames?.length) {
+        await restoreFromVault(eg, a.refs?.[0], a.vaultNames);
+        // 你要拿回原文：30 天內不要再自動移回保管區（卡片照樣留在收件匣提醒）
+        if (a.card) await eg.findings.dismiss(a.card, { until: new Date(Date.now() + 30 * DAY).toISOString() }).catch(() => {});
+      }
       else for (const sha of [...a.undo].reverse()) await eg.undo(sha);
       a.undone = new Date().toISOString();
       results.push({ index: i, ok: true });

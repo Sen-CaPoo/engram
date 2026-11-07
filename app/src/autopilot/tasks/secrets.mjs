@@ -12,20 +12,16 @@ import { fence, REVIEW_SCHEMA, SECRET_SCHEMA, secretPrompt } from '../prompts.mj
 
 const MEMORY_RE = /^(global\/|machines\/[^/]+\/|projects\/[^/]+\/memory\/)[^/]+\.md$/;
 const shaOf = (r) => r?.undo?.sha ?? r?.commit?.sha ?? null;
-/** 只有這些啟發式偵測到的種類，才可能是誤判（範例值、雜湊、版本號）；有固定格式的權杖一律當成真的 */
-export const ALLOWABLE_KINDS = new Set(['high-entropy', 'credential-assignment', 'connection-string']);
+/** 只有啟發式偵測到的「高亂度」才可能是誤判；有固定格式的權杖、寫在金鑰關鍵字後面的值一律當成真的 */
+export const ALLOWABLE_KINDS = new Set(['high-entropy']);
 
 /**
- * 「不是金鑰」除了判斷者與審核員都同意，值本身的形狀也要明確無害（程式判斷）：
- * git commit／雜湊（hex）、UUID、版本號、或明顯的佔位字串。其餘一律進保管區。
+ * 程式先決定哪些值「有可能」是誤判，才交給判斷者與審核員：只有沒有金鑰關鍵字、純粹因為「亂」被偵測到的值
+ * （high-entropy，例如 base64 編碼的識別碼）。寫在 password:、AccountKey= 這類關鍵字後面的值、有固定格式的權杖
+ * 一律當成真的（偵測時已排除佔位字串；帶關鍵字的長 hex 正是 Azure 等服務的金鑰格式，1.5.0 第三輪審查）。
  */
-export function benignShape(value) {
-  const v = String(value ?? '').trim();
-  if (/^[0-9a-f]{7,64}$/i.test(v) && !/^[0-9]+$/.test(v)) return true;
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return true;
-  if (/^v?\d+(\.\d+){1,3}([-+][0-9A-Za-z.-]+)?$/.test(v)) return true;
-  if (/(x{3,}|\*{3,}|<[^>]*>|\$\{[^}]*\}|%[A-Z_]+%|your[-_ ]?|example|placeholder|changeme|dummy|sample|redacted|範例|佔位)/i.test(v)) return true;
-  return false;
+export function benignShape(_value, kind) {
+  return kind === 'high-entropy';
 }
 
 /** 給 LLM 看的內容：疑似金鑰換成帶原始行號的標記（遮蔽後行數可能改變，例如多行私鑰變成一行） */
@@ -81,7 +77,7 @@ export async function secretCards(ctx) {
     const hits = scanWithAllow(p.before, ref, allow0);
     if (!hits.length) continue;
     const benign = new Map();
-    for (const h of hits) benign.set(h.line, (benign.get(h.line) ?? true) && benignShape(p.before.slice(h.offset, h.offset + h.length)));
+    for (const h of hits) benign.set(h.line, (benign.get(h.line) ?? true) && benignShape(p.before.slice(h.offset, h.offset + h.length), h.kind));
     items.push({ card: c.id, ref, raw: p.before, seen: hitsByLine(hits, p.before), benign, hits: hits.map((h) => ({ line: h.line, kind: h.kind, preview: safePreview(p.before.slice(h.offset, h.offset + h.length)) })), text: markedText(p.before, hits).slice(0, 20_000) });
   }
   if (!items.length) return;

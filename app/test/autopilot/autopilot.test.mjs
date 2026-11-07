@@ -416,7 +416,7 @@ describe('整條流程：整理、審核員、注入攔截、復原與暫停', (
 describe('疑似金鑰', () => {
   test('真的金鑰移到本機保管區、記憶改寫成存放位置；確定不是的標記不是金鑰', async () => {
     const token = fakeToken();
-    const example = 'token: 3f786850e387550fdab836ed7e6dc881de23001b'; // 形狀明確無害（git commit 雜湊）
+    const example = 'ref Q2xhdWRlQ29kZVNlc3Npb25JZDEyMzQ1Njc4OTA'; // 沒有金鑰關鍵字、只因為「亂」被偵測（high-entropy）
     const ref = `projects/${pid}/memory/gh-setup.md`;
     fs.writeFileSync(vaultFile(ref), mem({ name: 'gh-setup', description: 'GitHub 權杖設定', type: 'reference', body: `部署用權杖：${token}\n\n設定檔範例：${example}` }));
     const f = (await eg.health()).find((x) => x.code === 'H13' && x.refs[0] === ref);
@@ -602,15 +602,16 @@ describe('第二輪審查的回歸測試', () => {
     assert.equal(u.ok, true, JSON.stringify(u));
     assert.ok(exists(ref), '記憶還在');
     assert.ok(raw(ref).includes(token), '值放回原處');
-    assert.ok((await eg.health()).some((x) => x.code === 'H13' && x.refs[0] === ref), '回到疑似金鑰（不同步）');
+    const h13 = (await eg.health({ includeDismissed: true })).find((x) => x.code === 'H13' && x.refs[0] === ref);
+    assert.ok(h13, '回到疑似金鑰（不同步）');
+    assert.ok(h13.dismissed, '30 天內不再自動移回保管區');
   });
 
   test('「不是金鑰」要值的形狀明確無害；給 LLM 的標記帶原始行號', async () => {
     const { benignShape, markedText } = await import('../../src/autopilot/tasks/secrets.mjs');
-    assert.equal(benignShape('3f786850e387550fdab836ed7e6dc881de23001b'), true);
-    assert.equal(benignShape('6f1c2a3b-1234-4abc-8def-001122334455'), true);
-    assert.equal(benignShape('your-api-key-here'), true);
-    assert.equal(benignShape('Xy7kPq2mZ9wT'), false);
+    assert.equal(benignShape('Q2xhdWRlQ29kZVNlc3Npb25JZDEyMzQ1Njc4OTA', 'high-entropy'), true);
+    assert.equal(benignShape('0123456789abcdef0123456789abcdef', 'credential-assignment'), false, '關鍵字後面的 hex 是 Azure 等金鑰的格式');
+    assert.equal(benignShape('Hunter2xyz', 'connection-string'), false);
     const text = 'a\n-----BEGIN KEY-----\nAAAA\n-----END KEY-----\npassword: Q1';
     const out = markedText(text, [{ offset: 2, length: 37, kind: 'private-key', line: 2 }, { offset: text.indexOf('Q1'), length: 2, kind: 'credential-assignment', line: 5 }]);
     assert.match(out, /原第 5 行/);
@@ -661,6 +662,17 @@ describe('第二輪審查的回歸測試', () => {
     assert.ok(before >= 1);
     for (let k = 0; k < 4; k++) await runAutopilot(eg, { judge: fakeJudge({ analyze: { __fail: 'E_LLM' } }), reason: 'test' });
     assert.equal((await eg.dream.status(pid)).pending, before, '四輪都是基礎設施錯誤：對話仍待回顧');
+  });
+});
+
+describe('第三輪審查的回歸測試', () => {
+  test('對話分析失敗的分類：登入、網路、用量上限不算對話壞掉；其他的算', async () => {
+    const { infraFailure } = await import('../../src/autopilot/tasks/dream.mjs');
+    assert.equal(infraFailure({ code: 'E_LLM', message: 'Invalid API key · Please run /login' }), true);
+    assert.equal(infraFailure({ code: 'E_LLM', message: 'fetch failed: getaddrinfo ENOTFOUND api.anthropic.com' }), true);
+    assert.equal(infraFailure({ code: 'E_LLM_LIMIT', message: 'usage limit' }), true);
+    assert.equal(infraFailure({ code: 'E_LLM', message: 'error_max_turns' }), false);
+    assert.equal(infraFailure({ code: 'E_LLM_TIMEOUT', message: 'claude 超過 600 秒沒有回應' }), false);
   });
 });
 

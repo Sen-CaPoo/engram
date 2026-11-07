@@ -196,6 +196,12 @@ export async function acquireRunLock(local, runId, now = Date.now()) {
         // 先改名再刪：只有改名成功的程序接手，另一個同時判斷過期的程序改名會失敗（ENOENT）
         const tmp = `${f}.stale-${process.pid}-${randomBytes(3).toString('hex')}`;
         try { await fsp.rename(f, tmp); } catch { continue; }
+        const moved = await readJson(tmp, null);
+        if (moved && cur && (moved.run !== cur.run || moved.pid !== cur.pid)) {
+          // 搬到的是別人剛建立的新鎖：放回去，這次不跑
+          await fsp.rename(tmp, f).catch(() => {});
+          return null;
+        }
         await fsp.rm(tmp, { force: true }).catch(() => {});
         continue;
       }

@@ -29,6 +29,12 @@ export async function dreamTargets(ctx) {
   return out.sort((a, b) => a.expires - b.expires || b.pending - a.pending);
 }
 
+/** 登入失效、網路、預算或用量上限：不是對話本身的問題，不計入放棄次數 */
+export function infraFailure(err) {
+  if (['E_STOPPED', 'E_LLM_LIMIT', 'E_LLM_SPAWN'].includes(err?.code)) return true;
+  return /auth|login|log in|401|403|credential|network|ECONN|ENOTFOUND|EAI_AGAIN|socket|fetch failed|getaddrinfo|proxy|certificate|overloaded|529|503|502/i.test(String(err?.message ?? ''));
+}
+
 export async function dreamProject(ctx, target) {
   const { eg, call, run, mid, feedback, paused, cap } = ctx;
   const m = await eg.dream.prepare({ pid: target.pid, max: SESSIONS_PER_RUN });
@@ -39,23 +45,29 @@ export async function dreamProject(ctx, target) {
     return;
   }
   const memoriesText = await fsp.readFile(path.join(m.dir, 'memories.md'), 'utf8').catch(() => '');
+  // 記憶全文本身就太大：每段對話都會超過上限，先不消耗這批對話
+  if (memoriesText.length > 250_000) {
+    run.skipped.push({ task: 'dream', pid: target.pid, why: `這個專案要驗證的記憶全文太大（${Math.round(memoriesText.length / 1000)}K 字），先整理記憶再回顧` });
+    return;
+  }
   const findings = [];
   const skipped = [];
   const fails = (await readJson(failFile(eg.paths.local), null)) ?? {};
   for (const s of withText) {
     let ok = true;
     let budgetStop = false;
+    let weight = 1;
     for (const f of s.files) {
       const transcript = await fsp.readFile(path.join(m.dir, ...f.split('/')), 'utf8');
       const r = await call(`回顧 ${target.name} ${String(s.sid).slice(0, 8)}`, { schema: DREAM_ANALYZE_SCHEMA, prompt: dreamAnalyzePrompt({ memories: memoriesText, transcript, projectName: target.name }) });
-      // 只有對話本身的問題（太長、輸出格式不對）才算這個對話壞掉；登入、網路、逾時、預算都不算
-      if (!r.ok) { ok = false; budgetStop = !['E_TOO_LARGE', 'E_LLM_OUTPUT'].includes(r.error?.code); break; }
+      if (!r.ok) { ok = false; budgetStop = infraFailure(r.error); weight = ['E_TOO_LARGE', 'E_LLM_OUTPUT'].includes(r.error?.code) ? 2 : 1; break; }
       findings.push({ session: String(s.sid).slice(0, 8), file: f, ...r.data });
     }
     if (ok) { delete fails[s.sid]; continue; }
     // 這個對話本身分析不了（太長、格式問題、逾時）：失敗次數到上限就當成回顧過，不再卡住
-    if (!budgetStop) fails[s.sid] = (fails[s.sid] ?? 0) + 1;
-    if (!budgetStop && fails[s.sid] >= MAX_SESSION_FAILS) { run.notes.push({ task: 'dream', pid: target.pid, note: `對話 ${String(s.sid).slice(0, 8)} 連續 ${MAX_SESSION_FAILS} 次分析失敗（內容太長或格式問題），略過不再重試` }); delete fails[s.sid]; s.givenUp = true; continue; }
+    // 對話本身的問題（太長、輸出格式不對）每次算 2；其他（逾時、模型回報錯誤）每次算 1，累積到 6 就放棄
+    if (!budgetStop) fails[s.sid] = (fails[s.sid] ?? 0) + weight;
+    if (!budgetStop && fails[s.sid] >= MAX_SESSION_FAILS * 2) { run.notes.push({ task: 'dream', pid: target.pid, note: `對話 ${String(s.sid).slice(0, 8)} 多次分析失敗（內容太長、格式或模型錯誤），略過不再重試` }); delete fails[s.sid]; continue; }
     skipped.push(String(s.sid));
   }
   await writeJsonAtomic(failFile(eg.paths.local), fails).catch(() => {});

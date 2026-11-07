@@ -97,7 +97,7 @@ export function normalizeItems(raw, snapshot, { allowCore = false, mid, writable
     if (ops.filter((o) => o.op === 'core').length > 1) { dropped.push({ title, why: '一個項目最多改一次核心準則' }); continue; }
     // 結構欄位要合乎格式（這些字串會原樣出現在審核員的提示詞裡，不能夾帶換行或偽造段落）
     const badField = ops.find((o) => (o.op === 'move' && !SCOPE_RE.test(String(o.to ?? ''))) || (o.op === 'create' && (!SCOPE_RE.test(String(o.scope ?? '')) || !NAME_RE.test(String(parseMemoryFile(String(o.content ?? '')).data?.name ?? '')))));
-    if (badField) { dropped.push({ title, why: `動作的範圍或名稱格式不正確（${one(badField.op === 'move' ? badField.to : badField.scope, 60)}）` }); continue; }
+    if (badField) { dropped.push({ title, why: badField.op === 'create' && SCOPE_RE.test(String(badField.scope ?? '')) ? `新記憶的名稱格式不正確（要是 kebab-case 英數）：${one(parseMemoryFile(String(badField.content ?? '')).data?.name, 60)}` : `動作的範圍格式不正確：${one(badField.op === 'move' ? badField.to : badField.scope, 60)}` }); continue; }
     let bad = null;
     for (const o of ops) {
       if (o.op === 'core' && !allowCore) { bad = '這個任務不能改核心準則'; break; }
