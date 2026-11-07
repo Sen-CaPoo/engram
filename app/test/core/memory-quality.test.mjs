@@ -459,6 +459,7 @@ describe('對話回顧', () => {
     const j = JSON.parse(saved);
     const entry = j.bindings.find((b) => b.pid === pidOld);
     assert.ok(entry && entry.encoded === encodeProjectPath(oldRepo));
+    assert.ok(Number.isFinite(Date.parse(entry.boundAt)), '退役紀錄帶綁定時間（判斷撞名並存用）');
     entry.retiredAt = new Date(Date.now() - 10 * DAY).toISOString();
     fs.writeFileSync(rf, JSON.stringify(j));
     assert.equal((await eg.dream.status(pidOld)).pending, 1, '只算移除之前（10 天前）就寫好的 moved-1');
@@ -588,6 +589,8 @@ describe('對話回顧', () => {
     const entry = all[enc];
     delete all[enc];
     all[`${enc}@abcdef12`] = { ...entry, method: 'settings', boundAt: '2026-10-01T00:00:00.000Z' };
+    // 同一個路徑殘留的別的專案紀錄：時間更早，但不能沿用
+    all[`${enc}@99999999`] = { ...entry, pid: 'someone-else', method: 'settings', boundAt: '2026-09-01T00:00:00.000Z' };
     fs.writeFileSync(bf, JSON.stringify(all));
     await eg.identity.bind(dir, { pid: p });
     const now = JSON.parse(fs.readFileSync(bf, 'utf8'));

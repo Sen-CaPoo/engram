@@ -634,7 +634,10 @@ export async function bind(ctx, dir, target = {}, { mode = 'safe', force = false
     const prevFootprint = Object.values(bindings).find((v) => v?.path && samePath(v.path, root))?.footprint;
     // 1.4.1：同一個資料夾、同一個專案最早的綁定時間。換綁定方式時 key 會變（編碼 ↔ 編碼@雜湊），
     // 不帶過來的話綁定時間會被重設成現在，對話回顧判斷「哪些對話屬於這個專案」時會漏掉之前的對話
-    const firstBoundAt = Object.values(bindings).filter((v) => v?.path && samePath(v.path, root) && v.pid === pid && Number.isFinite(Date.parse(v.boundAt ?? ''))).map((v) => v.boundAt).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+    // （同一個 key 的舊紀錄也算，例如資料夾搬到編碼相同的另一個位置，比照 1.4.0）
+    const firstBoundAt = Object.entries(bindings)
+      .filter(([k, v]) => v?.pid === pid && (k === key || (v.path && samePath(v.path, root))) && Number.isFinite(Date.parse(v.boundAt ?? '')))
+      .map(([, v]) => v.boundAt).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
     // 同一個資料夾換了綁定方式時，移除舊的那筆
     for (const [k, v] of Object.entries(bindings)) if (k !== key && v?.path && samePath(v.path, root)) delete bindings[k];
     bindings[key] = {
