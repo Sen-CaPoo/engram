@@ -602,9 +602,11 @@ describe('第二輪審查的回歸測試', () => {
     assert.equal(u.ok, true, JSON.stringify(u));
     assert.ok(exists(ref), '記憶還在');
     assert.ok(raw(ref).includes(token), '值放回原處');
-    const h13 = (await eg.health({ includeDismissed: true })).find((x) => x.code === 'H13' && x.refs[0] === ref);
-    assert.ok(h13, '回到疑似金鑰（不同步）');
-    assert.ok(h13.dismissed, '30 天內不再自動移回保管區');
+    assert.ok((await eg.health()).some((x) => x.code === 'H13' && x.refs[0] === ref), '回到疑似金鑰（不同步），收件匣照常提醒');
+    // 下一輪不會又移回保管區（30 天內）
+    const r2 = await runAutopilot(eg, { judge: fakeJudge({ secret: { decisions: [{ card: f.id, line, verdict: 'secret', confidence: 'high', reason: '真的' }] } }), reason: 'test' });
+    assert.ok(raw(ref).includes(token), '值還在');
+    assert.ok(r2.run.notes.some((n) => /不自動移到保管區/.test(n.note)));
   });
 
   test('「不是金鑰」要值的形狀明確無害；給 LLM 的標記帶原始行號', async () => {
@@ -673,6 +675,28 @@ describe('第三輪審查的回歸測試', () => {
     assert.equal(infraFailure({ code: 'E_LLM_LIMIT', message: 'usage limit' }), true);
     assert.equal(infraFailure({ code: 'E_LLM', message: 'error_max_turns' }), false);
     assert.equal(infraFailure({ code: 'E_LLM_TIMEOUT', message: 'claude 超過 600 秒沒有回應' }), false);
+    // 第四輪：模型回覆內容剛好談到登入、認證，不能被當成基礎設施錯誤
+    assert.equal(infraFailure({ code: 'E_LLM_OUTPUT', message: '結果不是 JSON：會員登入與 OAuth authentication 401 流程' }), false);
+    assert.equal(infraFailure({ code: 'E_LLM', message: 'author of the 4010 report' }), false);
+  });
+
+  test('保管區值的遮蔽：特殊字元正確跳脫、短值不換掉一般文字、記憶全文不套短值規則', async () => {
+    const { scrubVault } = await import('../../src/core/secretvault.mjs');
+    assert.equal(scrubVault('a.b*c 與 aXb*c', [{ name: 'k', value: 'a.b*c' }]), '‹保管區：k› 與 aXb*c');
+    assert.equal(scrubVault('x $&1 y', [{ name: 'k', value: '$&1' }]), 'x ‹保管區：k› y');
+    assert.equal(scrubVault('sysadmin 用 admin 登入', [{ name: 'pw', value: 'admin' }]), 'sysadmin 用 ‹保管區：pw› 登入');
+    assert.equal(scrubVault('admin-setup.md', [{ name: 'pw', value: 'admin' }], { short: false }), 'admin-setup.md');
+  });
+
+  test('過期的執行鎖：同時搶的程序最多一個接手', async () => {
+    const local = path.join(root, 'lock-race');
+    fs.mkdirSync(path.join(local, 'autopilot'), { recursive: true });
+    for (let k = 0; k < 20; k++) {
+      fs.writeFileSync(path.join(local, 'autopilot', 'run.lock'), JSON.stringify({ pid: 999999, run: `stale-${k}`, at: new Date().toISOString() }));
+      const got = await Promise.all([1, 2, 3, 4].map((i) => acquireRunLock(local, `r${k}-${i}`)));
+      assert.ok(got.filter(Boolean).length <= 1, `第 ${k} 次有 ${got.filter(Boolean).length} 個同時拿到鎖`);
+      for (const g of got) if (g) await g.release();
+    }
   });
 });
 

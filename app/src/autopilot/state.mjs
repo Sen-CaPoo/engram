@@ -187,22 +187,26 @@ export async function acquireRunLock(local, runId, now = Date.now()) {
       return { release: async () => { if ((await readJson(f, null))?.run === runId) await fsp.rm(f, { force: true }).catch(() => {}); } };
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
-      const cur = await readJson(f, null);
+      const text = await fsp.readFile(f, 'utf8').catch(() => null);
+      let cur = null;
+      try { cur = text ? JSON.parse(text) : null; } catch { cur = null; }
       const st = await fsp.stat(f).catch(() => null);
       // 剛建立、還沒寫入內容（另一個程序正在寫）：不算殘留
       if (!cur && st && Date.now() - st.mtimeMs < 10_000) return null;
       // 鎖檔壞掉、持有的程序已結束、或超過 6 小時：視為殘留
       if (!cur || !alive(cur.pid) || now - (Date.parse(cur.at) || 0) > 6 * 3600_000) {
-        // 先改名再刪：只有改名成功的程序接手，另一個同時判斷過期的程序改名會失敗（ENOENT）
-        const tmp = `${f}.stale-${process.pid}-${randomBytes(3).toString('hex')}`;
-        try { await fsp.rename(f, tmp); } catch { continue; }
-        const moved = await readJson(tmp, null);
-        if (moved && cur && (moved.run !== cur.run || moved.pid !== cur.pid)) {
-          // 搬到的是別人剛建立的新鎖：放回去，這次不跑
-          await fsp.rename(tmp, f).catch(() => {});
-          return null;
+        // 接手權：獨占建立 run.lock.takeover，同時只有一個程序能接手；接手權本身殘留超過 30 秒就清掉
+        const tk = `${f}.takeover`;
+        const tst = await fsp.stat(tk).catch(() => null);
+        if (tst && Date.now() - tst.mtimeMs > 30_000) await fsp.rm(tk, { force: true }).catch(() => {});
+        try { const h = await fsp.open(tk, 'wx'); await h.close(); } catch { return null; }
+        try {
+          // 接手權內重讀：仍是剛才判斷過期的同一份內容才刪（不是別人剛建立的新鎖）
+          if ((await fsp.readFile(f, 'utf8').catch(() => null)) !== text) return null;
+          await fsp.rm(f, { force: true }).catch(() => {});
+        } finally {
+          await fsp.rm(tk, { force: true }).catch(() => {});
         }
-        await fsp.rm(tmp, { force: true }).catch(() => {});
         continue;
       }
       return null;

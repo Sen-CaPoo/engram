@@ -348,7 +348,8 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
   }
 
   // 1.5.0：保管區的值（自動駕駛從記憶移出來的金鑰）在匯出的文字裡一律遮蔽
-  const vault = chosen.length ? await vaultValues(ctx.local).catch(() => []) : [];
+  // 解不開時丟錯（這次不匯出）：寧可下次再回顧，也不讓金鑰值出現在匯出的文字裡
+  const vault = chosen.length ? await vaultValues(ctx.local) : [];
   const sessions = [];
   const failed = [];
   const readRefs = new Set();
@@ -433,7 +434,7 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
       '',
     );
   }
-  await fsp.writeFile(path.join(dir, 'memories.md'), scrubVault(memText.filter((l) => l !== null).join('\n'), vault), 'utf8');
+  await fsp.writeFile(path.join(dir, 'memories.md'), scrubVault(memText.filter((l) => l !== null).join('\n'), vault, { short: false }), 'utf8');
 
   const manifest = {
     v: 1,

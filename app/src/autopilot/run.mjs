@@ -212,8 +212,9 @@ export async function undoRun(eg, runId, index) {
       else if (a.kind === 'not-secret' && a.allowHashes?.length) { for (const h of a.allowHashes) await eg.secrets.removeAllowed(h).catch((err) => { if (err?.code !== 'E_NOT_FOUND') throw err; }); }
       else if (a.kind === 'vault' && a.vaultNames?.length) {
         await restoreFromVault(eg, a.refs?.[0], a.vaultNames);
-        // 你要拿回原文：30 天內不要再自動移回保管區（卡片照樣留在收件匣提醒）
-        if (a.card) await eg.findings.dismiss(a.card, { until: new Date(Date.now() + 30 * DAY).toISOString() }).catch(() => {});
+        // 你要拿回原文：這個檔案 30 天內不再自動移回保管區（記在本機；收件匣的提醒照常顯示）
+        const { holdVault } = await import('./tasks/secrets.mjs');
+        await holdVault(eg.paths.local, a.refs?.[0], Date.now() + 30 * DAY).catch(() => {});
       }
       else for (const sha of [...a.undo].reverse()) await eg.undo(sha);
       a.undone = new Date().toISOString();

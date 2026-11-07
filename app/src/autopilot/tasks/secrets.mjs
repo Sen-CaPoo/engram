@@ -5,10 +5,23 @@
 //   同一行沒有任何其他判斷、標記時這一行的值與送給 LLM 判斷時完全相同（比對雜湊，不只看行號）。
 //   其餘一律移到保管區（不會遺失任何東西）。標記可以在自動駕駛頁復原（移除「不是金鑰」清單裡的雜湊）。
 // 每台電腦處理自己的：含金鑰的檔案本來就不會同步。
+import path from 'node:path';
+import { readJson, writeJsonAtomic } from '../../cli/fsutil.mjs';
 import { loadAllow, scanWithAllow } from '../../core/secretallow.mjs';
 import { secretHash } from '../../core/secrets.mjs';
 import { getSecret, NAME_RE, placeholder, putSecret } from '../../core/secretvault.mjs';
 import { fence, REVIEW_SCHEMA, SECRET_SCHEMA, secretPrompt } from '../prompts.mjs';
+
+const holdFile = (local) => path.join(local, 'autopilot', 'vault-hold.json');
+
+/** 使用者復原了「移到保管區」：這個檔案到 until 為止不再自動處理 */
+export async function holdVault(local, ref, until) {
+  if (!ref) return;
+  const h = (await readJson(holdFile(local), null)) ?? {};
+  h[ref] = new Date(until).toISOString();
+  for (const [k, v] of Object.entries(h)) if (Date.parse(v) < Date.now()) delete h[k];
+  await writeJsonAtomic(holdFile(local), h);
+}
 
 const MEMORY_RE = /^(global\/|machines\/[^/]+\/|projects\/[^/]+\/memory\/)[^/]+\.md$/;
 const shaOf = (r) => r?.undo?.sha ?? r?.commit?.sha ?? null;
@@ -66,7 +79,10 @@ const sameLine = (a = [], b = []) => a.length === b.length && a.every((x, i) => 
 export async function secretCards(ctx) {
   const { eg, call, run, findings, paused = [] } = ctx;
   if (paused.includes('vault')) { run.notes.push({ task: 'secrets', note: '「金鑰移到保管區」被你復原過多次，暫停中：疑似金鑰的記憶維持不同步' }); return; }
-  const cards = findings.filter((f) => f.code === 'H13' && f.refs?.length && (MEMORY_RE.test(f.refs[0]) || f.refs[0] === 'core/CORE.md'));
+  const held = (await readJson(holdFile(eg.paths.local), null)) ?? {};
+  const holding = (ref) => Date.parse(held[ref] ?? '') > Date.now();
+  for (const f of findings.filter((x) => x.code === 'H13' && holding(x.refs?.[0]))) run.notes.push({ task: 'secrets', note: `${f.refs[0]} 的金鑰是你復原回去的，${String(held[f.refs[0]]).slice(0, 10)} 前不自動移到保管區` });
+  const cards = findings.filter((f) => f.code === 'H13' && f.refs?.length && !holding(f.refs[0]) && (MEMORY_RE.test(f.refs[0]) || f.refs[0] === 'core/CORE.md'));
   if (!cards.length) return;
   const allow0 = await loadAllow(eg.paths.local);
   const items = [];

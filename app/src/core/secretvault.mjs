@@ -97,19 +97,25 @@ export async function vaultValues(local) {
     if (value.length >= 4) out.push({ name: e.name, value });
   }
   const values = out.sort((a, b) => b.value.length - a.value.length);
-  // 有解不開的就不快取，下次再試
-  if (!failed) valueCache.set(local, { at: Date.now(), names, values });
+  // 有解不開的：這次不能保證遮蔽完整，交給呼叫端決定（對話回顧會先不匯出）；也不快取，下次再試
+  if (failed) throw new EngramError('E_VAULT', '本機保管區有項目解不開，這次先不匯出對話（避免金鑰值出現在匯出的文字裡）', '稍後再試；一直失敗時執行 engram secret list 檢查保管區').withEn('Some items in the local secret store could not be decrypted, so conversations were not exported this time', 'Try again later');
+  valueCache.set(local, { at: Date.now(), names, values });
   return values;
 }
 
 /** 把文字裡出現的保管區值換成標記 */
-export function scrubVault(text, values) {
+export function scrubVault(text, values, { short = true } = {}) {
   let t = String(text ?? '');
   for (const v of values) {
     if (!t.includes(v.value)) continue;
-    // 短值（8 字以內）只在前後不是英數字時取代，免得換掉一般文字
-    if (v.value.length >= 8) t = t.split(v.value).join(`‹保管區：${v.name}›`);
-    else t = t.replace(new RegExp(`(?<![A-Za-z0-9])${v.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9])`, 'g'), `‹保管區：${v.name}›`);
+    const mark = `‹保管區：${v.name}›`;
+    if (v.value.length >= 8) { t = t.split(v.value).join(mark); continue; }
+    if (!short) continue;
+    // 短值（未滿 8 字）：值的頭尾是英數字時，前後也不能緊接英數字，免得換掉一般文字的片段
+    const esc = v.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pre = /^[A-Za-z0-9]/.test(v.value) ? '(?<![A-Za-z0-9])' : '';
+    const post = /[A-Za-z0-9]$/.test(v.value) ? '(?![A-Za-z0-9])' : '';
+    t = t.replace(new RegExp(`${pre}${esc}${post}`, 'g'), () => mark);
   }
   return t;
 }

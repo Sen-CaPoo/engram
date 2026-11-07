@@ -31,8 +31,13 @@ export async function dreamTargets(ctx) {
 
 /** 登入失效、網路、預算或用量上限：不是對話本身的問題，不計入放棄次數 */
 export function infraFailure(err) {
-  if (['E_STOPPED', 'E_LLM_LIMIT', 'E_LLM_SPAWN'].includes(err?.code)) return true;
-  return /auth|login|log in|401|403|credential|network|ECONN|ENOTFOUND|EAI_AGAIN|socket|fetch failed|getaddrinfo|proxy|certificate|overloaded|529|503|502/i.test(String(err?.message ?? ''));
+  const code = err?.code;
+  if (['E_STOPPED', 'E_LLM_LIMIT', 'E_LLM_SPAWN'].includes(code)) return true;
+  const msg = String(err?.message ?? '');
+  // E_LLM_OUTPUT 的訊息會夾帶模型的回覆內容（可能剛好談到登入、認證）：只有「整段輸出都解析不了」時才看訊息
+  const checkable = code === 'E_LLM' || (code === 'E_LLM_OUTPUT' && msg.startsWith('無法解析 claude 的輸出'));
+  if (!checkable) return false;
+  return /\b(401|403|429|502|503|529)\b|invalid api key|\/login\b|not logged in|please log ?in|authentication (failed|error|required)|\bunauthori[sz]ed\b|\bE(CONNRESET|CONNREFUSED|TIMEDOUT|NOTFOUND|AI_AGAIN)\b|fetch failed|getaddrinfo|socket hang up|network error|proxy error|certificate|\boverloaded\b/i.test(msg);
 }
 
 export async function dreamProject(ctx, target) {

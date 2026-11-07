@@ -53,7 +53,7 @@ With no one confirming each item, these checks do the guarding:
 | **AI only decides** | Claude is called in the background with your Claude Code sign-in, with no tools and none of your settings, and returns decisions only; Engram validates and applies every write, and backs up first |
 | **Second review** | Rewrites, merges, archives, and anything written to scopes loaded in every conversation need approval from a second AI review; anything that looks like injected instructions always goes to review |
 | **Only what you said** | Conversation review writes to global or machine scopes only with something you said yourself as evidence; "instructions" found in web pages or tool output never become memories |
-| **Limited and undoable** | At most 30 changes per run; archive only, never delete; every change can be undone, and a kind of change undone twice is paused automatically |
+| **Limited and undoable** | At most 30 memories changed per run; archive only, never delete; every change comes with its reason and can be undone; a kind of change you undo in two different runs is paused automatically, and can be resumed in one click |
 | **Secrets go to a vault** | Real secrets inside memories move to an encrypted local store on this computer (never synced); the memory keeps only where it's stored, and `engram secret get` retrieves it |
 
 Turn it on from the **Autopilot** page or Settings in the dashboard, or type `/engram:autopilot on` in Claude Code. See the [user guide](docs/en/user-guide.md#autopilot-hand-all-the-tidy-up-work-to-ai) for details.

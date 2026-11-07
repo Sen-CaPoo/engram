@@ -17,15 +17,15 @@
   - **收件匣**：收編尚未納管的記憶、大量刪除（確認或還原）、可能屬於另一個資料夾的記憶、撞名資料夾改名、綁定修正、核心準則的建議更新；資料夾連續 14 天都不見才移除舊綁定。判斷後不需要處理的卡片會忽略 90 天。
   - **同步衝突**：AI 合併兩台電腦的版本；會捨棄一邊內容的處理要審核員同意，否則兩個版本都留下。
   - **待你確認**：Claude 寫進全域、單機記憶或核心準則的內容，由 AI 代為把關；被注入可疑指示的退回。
-  - **疑似金鑰**：真的金鑰移到新的「本機保管區」（這台電腦、Windows DPAPI 加密、不同步），記憶改寫成只記存放位置，之後就能正常同步；用 `engram secret get <名稱>` 取出。判斷者與審核員都非常確定是範例值或佔位字串時才標記「不是金鑰」，沒把握一律移到保管區。
+  - **疑似金鑰**：真的金鑰移到新的「本機保管區」（這台電腦、Windows DPAPI 加密、不同步），記憶改寫成只記存放位置，之後就能正常同步；用 `engram secret get <名稱>` 取出。寫在金鑰關鍵字後面的值與有固定格式的權杖一律進保管區；只有單純因為「亂」被偵測到的值，判斷者與審核員都高度確定不是金鑰時才標記「不是金鑰」（可以復原）。
 - **AI 判斷、引擎執行**：背景用你的 Claude Code 登入呼叫 `claude -p`，不給任何工具、不載入你的 CLAUDE.md 與設定（每次固定開銷約 4 千 token）、不留對話紀錄，只回傳結構化的決定；所有寫入由 Engram 驗證後執行，沿用記憶整理的版本檢查、金鑰檢查、釘選保護與備份。
 - **取代人工審閱的關卡**：
   - 改寫、合併、封存、寫進每次都會載入的範圍，要第二次 AI 呼叫（審核員）同意；不同意就不執行。
   - 新內容出現像是被注入的指示（要求忽略規則、下載後執行、把憑證送出去、關掉權限保護）時一定送審。
   - 對話回顧要寫進全域或單機的內容，證據裡一定要有你自己說過的話；只出現在網頁或工具結果裡的內容不會被記下。
-  - 每輪最多改動 30 項、而且不超過記憶總數的 15%，其餘的下一輪處理。
+  - 每輪最多改動 30 筆記憶、而且不超過記憶總數的 15%，其餘的下一輪處理；一個項目最多 6 個動作。
   - 只封存、不真的刪除；正在使用中的對話不會被拿來回顧。
-- **事後可以復原、而且會學**：「自動駕駛」頁列出每一輪做了什麼、理由、審核員的意見與沒有執行的建議，可以逐項或整輪復原。被你復原的處理會記成回饋（兩台電腦共用），之後的判斷會參考；同一類被復原 2 次以上就自動暫停。
+- **事後可以復原、而且會學**：「自動駕駛」頁列出每一輪做了什麼、理由、審核員的意見與沒有執行的建議，可以逐項或整輪復原。被你復原的處理會記成回饋（兩台電腦共用），之後的判斷會參考；同一類處理在兩輪各被復原過就自動暫停（只記錄、不執行），在「自動駕駛」頁可以一鍵恢復。
 - **兩台電腦**：共用範圍（全域、核心準則、專案記憶的整理、同步衝突）只由一台處理（最早啟用、3 天內有上線的那台）；單機記憶、金鑰、待你確認與對話回顧各台處理自己的。
 - **用量**：每月上限預設約當 US$30（API 牌價，用 Claude 訂閱時不另外計費，代表額度的消耗），每輪最多 US$5；碰到 Claude 的用量上限就停止，下一輪再繼續。每週一則 Windows 通知摘要。
 - 新指令 `engram autopilot`（`status`、`on`、`off`、`run`、`runs`、`show`、`undo`、`budget`）與 `engram secret`（`list`、`get`），新技能 `/engram:autopilot`。
@@ -39,8 +39,8 @@
 - New **Autopilot** page and switch in Settings (also `engram autopilot on` and `/engram:autopilot`). When it's on, the agent runs once a day after the computer has been idle for 20+ minutes (or right away if it hasn't run for 2 days); **Run now** starts one immediately.
 - Each run handles: **tidy-up** (merge duplicates, archive outdated memories, move memories to the right scope, split or shorten long ones, fix frontmatter and broken links, shorten an oversized index or core rules), **conversation review** (up to 8 unreviewed conversations per project per run, oldest-to-expire first), **inbox cards** (adopt unmanaged memories, mass deletions, memories that belong to another folder, colliding folder renames, binding fixes, core rule suggestions; an old binding is removed only after its folder has been gone for 14 days), **sync conflicts**, **items waiting for your review**, and **possible secrets** (real secrets move to the new local secret store, encrypted with Windows DPAPI and never synced, and the memory keeps only where the secret is stored; `engram secret get <name>` retrieves it).
 - **AI decides, the engine acts:** runs `claude -p` with your Claude Code sign-in, with no tools, without loading your CLAUDE.md or settings (about 4k tokens of fixed overhead per call) and without saving a transcript. It only returns structured decisions; Engram validates and applies them with the same version checks, secret checks, pin protection and backups as tidy-up.
-- **Checks that replace your review:** a second AI call (the reviewer) must approve rewrites, merges, archives and anything written to scopes loaded in every conversation; content that looks like injected instructions always goes to review; conversation review writes to global or machine scopes only with something you said yourself as evidence; at most 30 changes (and no more than 15% of your memories) per run; archive only, never delete.
-- **Undo, and it learns:** the Autopilot page lists every run, each change with its reason and the reviewer's opinion, and suggestions that were not carried out. Undo one change or a whole run. Undone changes become feedback shared by your computers; a kind of change undone twice is paused automatically.
+- **Checks that replace your review:** a second AI call (the reviewer) must approve rewrites, merges, archives and anything written to scopes loaded in every conversation; content that looks like injected instructions always goes to review; conversation review writes to global or machine scopes only with something you said yourself as evidence; at most 30 memories changed (and no more than 15% of your memories) per run; archive only, never delete.
+- **Undo, and it learns:** the Autopilot page lists every run, each change with its reason and the reviewer's opinion, and suggestions that were not carried out. Undo one change or a whole run. Undone changes become feedback shared by your computers; a kind of change you undo in two different runs is paused automatically, and you can resume it in one click.
 - **Two computers:** shared scopes are handled by one computer only (the earliest to turn it on that was online within 3 days); each computer handles its own machine memories, secrets, reviews and conversations.
 - **Usage:** a monthly cap of about US$30 at API list prices by default (no extra charge on a Claude subscription; it reflects quota use), up to US$5 per run; it stops at Claude's usage limit and continues next run. A weekly Windows notification summarizes what was done.
 - New commands `engram autopilot` and `engram secret`, new skill `/engram:autopilot`. Tested with Claude Code 2.1.319; earlier versions are untested.

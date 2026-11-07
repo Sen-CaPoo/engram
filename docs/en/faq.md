@@ -65,7 +65,7 @@ One analysis subagent (Sonnet) reads each piece of conversation text in full (a 
 
 ### Could autopilot mess up my memories?
 
-Autopilot doesn't ask you to confirm each change, so code and a second AI review do the checking instead: the AI only returns decisions and can't write files; rewrites, merges, archives, and anything written to scopes loaded in every conversation need the reviewer's approval; anything that looks like injected instructions always goes to review; conversation review writes to global or machine scopes only with something you said yourself as evidence; at most 30 changes per run, and memories are archived, never deleted. Every change is backed up first and can be undone one by one or a whole run at a time on the **Autopilot** page; a kind of change you undo twice is paused automatically.
+Autopilot doesn't ask you to confirm each change, so code and a second AI review do the checking instead: the AI only returns decisions and can't write files; rewrites, merges, archives, and anything written to scopes loaded in every conversation need the reviewer's approval; anything that looks like injected instructions always goes to review; conversation review writes to global or machine scopes only with something you said yourself as evidence; at most 30 memories changed per run, and memories are archived, never deleted. Every change is backed up first and can be undone one by one or a whole run at a time on the **Autopilot** page; a kind of change you undo in two different runs is paused automatically, and you can resume it in one click.
 
 ### How much quota does autopilot use, and what does it send?
 
