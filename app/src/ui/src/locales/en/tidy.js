@@ -1,4 +1,6 @@
 // 英文對照：記憶整理（views/tidy.jsx）。鍵是中文原文，見 ../README.md。
+const plural = (n, one, many) => (Number(n) === 1 ? one : many);
+
 export default {
   '待你決定': 'Awaiting your decisions',
   '待 Claude 執行': 'Ready for Claude',
@@ -126,4 +128,27 @@ export default {
   '⋯ {n} 行相同': ({ n }) => (n === 1 ? '⋯ 1 unchanged line' : '⋯ {n} unchanged lines'),
   '新增：': 'Added: ',
   '刪除：': 'Removed: ',
+  // 1.4.0
+  "確認仍正確": "Still correct",
+  "Claude 會拿這台電腦最近的對話紀錄當證據，逐筆驗證這個專案的記憶：哪些被證實、哪些已經改變或過時、哪些說得太肯定，並補上對話裡值得記、卻還沒記下的事。分析時不會改動任何記憶；對話紀錄不會同步，也不會上傳到 GitHub，由你的 Claude Code 在這台電腦讀取分析。": "Claude uses this computer's recent conversations as evidence to check each of this project's memories: which are confirmed, which have changed or gone out of date, and which are too confident. It also adds things worth remembering that no memory has yet. Nothing changes while Claude analyzes. Your conversations aren't synced or uploaded to GitHub; your own Claude Code reads and analyzes them on this computer.",
+  "整理方式": "How to tidy",
+  "只看記憶": "Memories only",
+  "對照對話紀錄": "Check against conversations",
+  "對話回顧": "Conversation review",
+  "對話回顧：這台電腦的 {n} 個對話（{from} ～ {to}）": ({ n }) => plural(n, 'Conversation review: 1 conversation on this computer ({from} – {to})', 'Conversation review: {n} conversations on this computer ({from} – {to})'),
+  "還有 {n} 個對話留到下次回顧": ({ n }) => plural(n, '1 more conversation is left for the next review', '{n} more conversations are left for the next review'),
+  "對話裡的證據": "Evidence from the conversations",
+  "與記憶不符": "contradicts the memory",
+  "這台電腦沒有這個專案的對話紀錄（Claude Code 保留 {n} 天）。在其他電腦回顧，或之後有對話時再回顧。": ({ n }) => plural(n, 'This computer has no conversations for this project (Claude Code keeps them for 1 day). Review on another computer, or once there are conversations here.', 'This computer has no conversations for this project (Claude Code keeps them for {n} days). Review on another computer, or once there are conversations here.'),
+  "這台電腦的 {n} 個對話都已回顧過（上次 {when}）。": ({ n }) => plural(n, 'The 1 conversation on this computer has been reviewed (last {when}).', 'All {n} conversations on this computer have been reviewed (last {when}).'),
+  "這台電腦有 {n} 個對話還沒回顧{expire}。每次最多回顧 20 個，由舊到新。": ({ n }) => plural(n, '1 conversation on this computer has not been reviewed{expire}. Each review covers up to 20, oldest first.', '{n} conversations on this computer have not been reviewed{expire}. Each review covers up to 20, oldest first.'),
+  "，最早的一個 {d} 天後會被 Claude Code 清除": ({ d }) => plural(d, ', and the oldest will be deleted by Claude Code in 1 day', ', and the oldest will be deleted by Claude Code in {d} days'),
+  "{n} 個對話沒分析到，下次會再回顧": ({ n }) => plural(n, '1 conversation was not analyzed and will be reviewed next time', '{n} conversations were not analyzed and will be reviewed next time'),
+  "Engram 在匯出的對話文字裡找不到這段原文，可能是改寫過的引句": "Engram could not find this text in the exported conversations; the quote may have been reworded",
+  "找不到原文": "Not found in conversation",
+  "在 {ref} 記下驗證日期 {date}（內容不變）": "Record the check date {date} in {ref} (content unchanged)",
+  "讀不到這個專案的對話紀錄狀態；仍然可以複製指令交給 Claude。": "Couldn't read the conversation status for this project; you can still copy the command for Claude.",
+  "正在查看這台電腦的對話紀錄…": "Checking this computer's conversations…",
+  "Claude Code 設定為不保留對話紀錄（cleanupPeriodDays 是 0），沒有可以回顧的對話。": "Claude Code is set not to keep conversations (cleanupPeriodDays is 0), so there is nothing to review.",
+  "，最早的一個很快就會被 Claude Code 清除": ", and the oldest will be deleted by Claude Code soon",
 };

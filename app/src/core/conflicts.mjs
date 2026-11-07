@@ -112,6 +112,9 @@ export async function resolveConflict(ctx, id, { choice, body } = {}) {
       const scope = scopeOfRef(ref);
       if (scope) touched.push(...await refreshIndex(ctx, scope));
     }
+    // 1.4.0：解衝突是使用者看過兩個版本後做的決定，結果記為確認過
+    const { markReviewed } = await import('./review.mjs');
+    touched.push(...await markReviewed(ctx, touched.filter((r) => !/(INDEX|MEMORY)\.md$/i.test(r))));
     const commit = await commitPaths(ctx.vault, touched, `resolve ${id} (${choice})`, { action: 'resolve', refs: ref ? [ref] : [], mid: ctx.mid });
     return { ok: true, ref: resultRef, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
   });

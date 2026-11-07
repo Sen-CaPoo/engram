@@ -7,13 +7,13 @@ import { api } from '../api.js';
 import { CopyBox, PluginState } from '../askclaude.jsx';
 import { Banner, ConfirmDialog, Dialog, drafts, Empty, ErrorBanner, ScopeLabel, Skeleton, TypeLabel, useApp, useData, useDirty, When } from '../components.jsx';
 import { t, N_, local } from '../i18n.js';
-import { IconArchive, IconBack, IconCheck, IconChevronRight, IconCore, IconEdit, IconFile, IconMerge, IconMove, IconPlus, IconSparkle, IconTidy, IconTrash, IconUndo } from '../icons.jsx';
+import { IconArchive, IconBack, IconCheck, IconCheckCircle, IconChevronRight, IconCore, IconEdit, IconFile, IconHistory, IconMerge, IconMove, IconPlus, IconSparkle, IconTidy, IconTrash, IconUndo } from '../icons.jsx';
 import { createSaveQueue } from '../savequeue.js';
 import { lineDiff, parseScopeKey, relTime } from '../util.js';
 
 const STATUS = { pending: N_('待你決定'), ready: N_('待 Claude 執行'), applying: N_('執行中'), finishing: N_('Claude 處理備註項目中'), done: N_('已完成') };
 const STATUS_TONE = { pending: 'warn', ready: 'brand', applying: 'brand', finishing: 'brand', done: 'ok' };
-const ACTION = { keep: N_('保留'), update: N_('改寫'), move: N_('搬移'), archive: N_('封存'), merge: N_('合併'), create: N_('新增'), split: N_('拆分'), promote: N_('升為全域') };
+const ACTION = { keep: N_('保留'), update: N_('改寫'), move: N_('搬移'), archive: N_('封存'), merge: N_('合併'), create: N_('新增'), split: N_('拆分'), promote: N_('升為全域'), verify: N_('確認仍正確') };
 const DECISION = { accept: N_('採用建議'), keep: N_('維持原狀'), archive: N_('封存'), custom: N_('依備註調整') };
 const RESULT = { done: N_('已完成'), kept: N_('維持原狀'), failed: N_('失敗'), skipped: N_('略過'), 'needs-claude': N_('等 Claude 處理'), undone: N_('已復原') };
 const SCOPES = [
@@ -24,6 +24,8 @@ const SCOPES = [
   { key: 'all', label: N_('全部記憶') },
 ];
 const EDITABLE = new Set(['pending', 'ready']);
+// 篩選「建議保留」：維持原狀與確認仍正確（只記驗證日期，內容不變）
+const KEEPISH = new Set(['keep', 'verify']);
 const NOTE_MAX = 4000; // 與 app/src/tidy/store.mjs 相同
 const CORE_REF = 'core/CORE.md';
 
@@ -35,7 +37,7 @@ function allowedDecisions(it) {
 const suggestedOf = (it) => (it.action === 'keep' ? 'keep' : 'accept');
 
 export function Tidy({ params }) {
-  return params.id ? <TidyRecord id={params.id} key={params.id} /> : <TidyHome preset={params.scope} />;
+  return params.id ? <TidyRecord id={params.id} key={params.id} /> : <TidyHome preset={params.scope} presetMode={params.mode} />;
 }
 
 /** 整理範圍的標籤：global、machine:<mid>、project:<pid>、core、all 或單筆記憶的 ref */
@@ -55,22 +57,27 @@ function presetOf(preset) {
   return { kind: 'memory', ref: preset };
 }
 
-function TidyHome({ preset }) {
+function TidyHome({ preset, presetMode }) {
   const { status, projects, go } = useApp();
   const list = useData(() => api.tidyList(), []);
   const plugin = useData(() => api.claudePlugin(), []);
   const init = presetOf(preset);
   const [kind, setKind] = useState(init.kind);
   const [pid, setPid] = useState(init.pid || '');
+  // 1.4.0：專案可以選「對照對話紀錄」（/engram:dream），拿這台電腦最近的對話驗證記憶
+  const [mode, setMode] = useState(presetMode === 'dream' ? 'dream' : 'tidy');
   const [note, setNote] = useState('');
   const [copied, setCopied] = useState(false);
-  const live = useMemo(() => (projects || []).filter((p) => !p.archived && p.counts.memories > 0).sort((a, b) => b.counts.memories - a.counts.memories), [projects]);
-  useEffect(() => { if (kind === 'project' && !pid && live[0]) setPid(live[0].pid); }, [kind, live]);
-  useEffect(() => setCopied(false), [kind, pid, note]);
+  const live = useMemo(() => (projects || []).filter((p) => !p.archived && (p.counts.memories > 0 || mode === 'dream' || p.pid === init.pid)).sort((a, b) => b.counts.memories - a.counts.memories), [projects, mode]);
+  // 切回「只看記憶」時，沒有記憶的專案不在清單裡：改選清單的第一個，選單和指令才會一致
+  useEffect(() => { if (kind === 'project' && projects && !live.some((p) => p.pid === pid)) setPid(live[0]?.pid || ''); }, [kind, live]);
+  useEffect(() => setCopied(false), [kind, pid, note, mode]);
+  const dreaming = kind === 'project' && mode === 'dream';
+  const dream = useData(() => (dreaming && pid ? api.dreamStatus(pid) : Promise.resolve(null)), [dreaming, pid]);
 
   const arg = kind === 'project' ? (pid ? `project:${pid}` : '') : kind === 'memory' ? init.ref : kind;
   const extra = note.trim().replace(/\s*\n+\s*/g, ' ');
-  const command = arg ? `/engram:tidy ${arg}${extra ? ` ${extra}` : ''}` : '';
+  const command = arg ? `/engram:${dreaming ? 'dream' : 'tidy'} ${arg}${extra ? ` ${extra}` : ''}` : '';
   const c = status?.counts;
   const size = kind === 'global' ? c?.global : kind === 'machine' ? c?.machine : kind === 'all' ? c?.total : kind === 'project' ? live.find((p) => p.pid === pid)?.counts.memories : null;
   const copy = async () => { try { await navigator.clipboard.writeText(command); setCopied(true); } catch { setCopied(false); } };
@@ -93,7 +100,9 @@ function TidyHome({ preset }) {
         <section class="panel">
           <div class="panel-head"><h2>{t('請 Claude 整理記憶')}</h2></div>
           <div class="panel-body tidy-start">
-            <p class="muted" style={{ fontSize: 13 }}>{t('Claude 會讀過這個範圍的記憶，找出重複、過時、互相矛盾、放錯範圍與說明不清楚的內容，提出整理建議。分析時不會改動任何記憶。')}</p>
+            <p class="muted" style={{ fontSize: 13 }}>{dreaming
+              ? t('Claude 會拿這台電腦最近的對話紀錄當證據，逐筆驗證這個專案的記憶：哪些被證實、哪些已經改變或過時、哪些說得太肯定，並補上對話裡值得記、卻還沒記下的事。分析時不會改動任何記憶；對話紀錄不會同步，也不會上傳到 GitHub，由你的 Claude Code 在這台電腦讀取分析。')
+              : t('Claude 會讀過這個範圍的記憶，找出重複、過時、互相矛盾、放錯範圍與說明不清楚的內容，提出整理建議。分析時不會改動任何記憶。')}</p>
             <div class="field">
               <span class="field-label" id="tidy-scope-label">{t('整理範圍')}</span>
               <div class="scope-pick">
@@ -108,8 +117,15 @@ function TidyHome({ preset }) {
                   </select>
                 )}
               </div>
+              {kind === 'project' && (
+                <div class="seg tidy-mode" role="group" aria-label={t('整理方式')} style={{ marginTop: 8 }}>
+                  <button aria-pressed={mode === 'tidy'} onClick={() => setMode('tidy')}>{t('只看記憶')}</button>
+                  <button aria-pressed={mode === 'dream'} onClick={() => setMode('dream')}><IconHistory style={{ width: 14, height: 14 }} />{t('對照對話紀錄')}</button>
+                </div>
+              )}
               <span class="hint">
-                {kind === 'core' ? t('每次對話都會載入的部分：核心準則 CORE.md、全域索引與這台電腦的單機索引。')
+                {dreaming ? (pid ? <DreamHint d={dream.data} error={dream.error} loading={dream.loading} /> : null)
+                  : kind === 'core' ? t('每次對話都會載入的部分：核心準則 CORE.md、全域索引與這台電腦的單機索引。')
                   : kind === 'memory' ? t('只檢查這一筆：{ref}', { ref: <code>{init.ref}</code> })
                   : kind === 'all' ? t('全部範圍共 {n} 筆記憶。範圍很大時，Claude 會先看清單與說明，只打開可能有問題的記憶。', { n: size ?? '—' })
                   : size != null ? t('這個範圍有 {n} 筆記憶。', { n: size }) : null}
@@ -140,7 +156,7 @@ function TidyHome({ preset }) {
               <div class="rows tidy-records">
                 {records.map((r) => (
                   <a class="row" key={r.id} href={`#/tidy?id=${r.id}`} onClick={(e) => { e.preventDefault(); go('tidy', { id: r.id }); }}>
-                    <span class="title"><ScopeText value={r.scope} /></span>
+                    <span class="title" style={{ display: 'inline-flex', gap: 8, alignItems: 'center', minWidth: 0 }}><ScopeText value={r.scope} />{r.kind === 'dream' && <span class="chip brand"><IconHistory />{t('對話回顧')}</span>}</span>
                     <span class={`chip ${STATUS_TONE[r.status] || ''}`}>{t(STATUS[r.status] || r.status)}</span>
                     <span class="desc">{r.summary}</span>
                     <span class="meta">
@@ -301,13 +317,13 @@ function TidyRecord({ id }) {
   for (const it of r.items) n[dOf(it) || 'none']++;
 
   const FILTERS = editable
-    ? [['all', N_('全部'), r.items.length], ['none', N_('待決定'), n.none], ['change', N_('建議變更'), r.items.filter((it) => it.action !== 'keep').length], ['keep', N_('建議保留'), r.items.filter((it) => it.action === 'keep').length]]
+    ? [['all', N_('全部'), r.items.length], ['none', N_('待決定'), n.none], ['change', N_('建議變更'), r.items.filter((it) => !KEEPISH.has(it.action)).length], ['keep', N_('建議保留'), r.items.filter((it) => KEEPISH.has(it.action)).length]]
     : [['all', N_('全部'), r.items.length], ['done', N_('已完成'), r.counts.done], ['failed', N_('失敗'), r.counts.failed], ['waiting', N_('等 Claude 處理'), r.counts.waiting]];
   // 狀態改變後原本的篩選不在了，就看全部；「待決定」用選它當下的清單，做了決定卡片也不會立刻消失
   const fil = FILTERS.some(([k]) => k === filter) ? filter : 'all';
   const pickFilter = (k) => { setFilter(k); setNoneIds(k === 'none' ? new Set(r.items.filter((it) => !dOf(it)).map((it) => it.id)) : null); };
   const shown = r.items.filter((it) => fil === 'all'
-    || (fil === 'none' && (noneIds ? noneIds.has(it.id) : !dOf(it))) || (fil === 'change' && it.action !== 'keep') || (fil === 'keep' && it.action === 'keep')
+    || (fil === 'none' && (noneIds ? noneIds.has(it.id) : !dOf(it))) || (fil === 'change' && !KEEPISH.has(it.action)) || (fil === 'keep' && KEEPISH.has(it.action))
     || (fil === 'done' && it.result?.status === 'done') || (fil === 'failed' && it.result?.status === 'failed') || (fil === 'waiting' && it.result?.status === 'needs-claude'));
   const groups = [];
   for (const it of shown) {
@@ -356,6 +372,14 @@ function TidyRecord({ id }) {
             <span>{t('Claude 建立於 {when}', { when: <When at={r.createdAt} /> })}</span>
             {r.status !== 'applying' && r.status !== 'finishing' && <span class="end"><button class="btn ghost sm danger" onClick={() => setDialog({ kind: 'delete' })}><IconTrash />{t('刪除這份記錄')}</button></span>}
           </div>
+          {r.dream && (
+            <p class="muted" style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <IconHistory style={{ width: 15, height: 15, flex: 'none' }} />
+              {t('對話回顧：這台電腦的 {n} 個對話（{from} ～ {to}）', { n: r.dream.sessions, from: r.dream.from ? r.dream.from.slice(0, 10) : '?', to: r.dream.to ? r.dream.to.slice(0, 10) : '?' })}
+              {r.dream.remaining > 0 && <span class="faint">{t('還有 {n} 個對話留到下次回顧', { n: r.dream.remaining })}</span>}
+              {r.dream.skipped > 0 && <span class="faint">{t('{n} 個對話沒分析到，下次會再回顧', { n: r.dream.skipped })}</span>}
+            </p>
+          )}
           <h2 class="tidy-summary">{r.summary}</h2>
           {r.highlights?.length > 0 && <ul class="tidy-highlights">{r.highlights.map((x, i) => <li key={i}>{x}</li>)}</ul>}
           {r.request && <p class="faint" style={{ fontSize: 13 }}>{t('你的補充說明：{text}', { text: r.request })}</p>}
@@ -466,6 +490,20 @@ function ItemCard({ it, rec, editable, decision, note, missing, onChange, onUndo
       </header>
       <p class="tidy-title"><IconSparkle />{it.title}</p>
       <p class="tidy-reason">{it.reason}</p>
+      {it.evidence?.length > 0 && (
+        <div class="tidy-evidence" role="group" aria-label={t('對話裡的證據')}>
+          {it.evidence.map((e, k) => (
+            <blockquote key={k} class={e.contradicts ? 'contra' : ''}>
+              <span class="ev-meta">
+                {e.contradicts && <span class="chip bad">{t('與記憶不符')}</span>}
+                {e.unmatched && <><span class="chip warn">{t('找不到原文')}</span><span class="faint">{t('Engram 在匯出的對話文字裡找不到這段原文，可能是改寫過的引句')}</span></>}
+                {(e.date || e.session) && <span class="faint">{[e.date, e.session].filter(Boolean).join(' · ')}</span>}
+              </span>
+              <span>{e.quote}</span>
+            </blockquote>
+          ))}
+        </div>
+      )}
       {!it.result && it.changed?.length > 0 && (
         <Banner tone="warn" title={t('建議之後被改過')}>{t('{refs} 在 Claude 提出建議之後被修改了（可能是另一台電腦同步過來）。執行時這一項不會寫入（會標成失敗），不會覆蓋；要依最新內容整理，請重新整理一次。', { refs: it.changed.join(t('、')) })}</Banner>
       )}
@@ -530,6 +568,7 @@ function OpRow({ op, rec }) {
   else if (op.op === 'merge') { Icon = IconMerge; text = t('把 {refs} 合併成 {into}，其他筆移到歷史', { refs: op.refs.map((x) => x.split('/').pop()).join(t('、')), into: <code>{op.into}</code> }); diff = [rec.texts?.[op.into] ?? '', op.content]; }
   else if (op.op === 'create') { Icon = IconPlus; text = t('新增 {scope} 記憶 {ref}', { scope: <ScopeText value={op.scope} />, ref: <code>{op.name}</code> }); diff = ['', op.content]; }
   else if (op.op === 'core') { Icon = IconCore; text = t('改寫核心準則 CORE.md'); diff = [rec.texts?.[CORE_REF] ?? '', op.content]; }
+  else if (op.op === 'verify') { Icon = IconCheckCircle; text = t('在 {ref} 記下驗證日期 {date}（內容不變）', { ref: <code>{op.ref}</code>, date: op.date ?? '—' }); }
   return (
     <div class="op">
       <Icon />
@@ -540,8 +579,19 @@ function OpRow({ op, rec }) {
   );
 }
 
+/** 對話回顧的狀態：這台電腦有幾個對話還沒回顧、最早的何時被清除 */
+function DreamHint({ d, error, loading }) {
+  if (error && !d) return t('讀不到這個專案的對話紀錄狀態；仍然可以複製指令交給 Claude。');
+  if (!d || loading) return t('正在查看這台電腦的對話紀錄…');
+  if (!d.retention) return t('Claude Code 設定為不保留對話紀錄（cleanupPeriodDays 是 0），沒有可以回顧的對話。');
+  if (!d.sessions) return t('這台電腦沒有這個專案的對話紀錄（Claude Code 保留 {n} 天）。在其他電腦回顧，或之後有對話時再回顧。', { n: d.retention });
+  if (!d.pending) return t('這台電腦的 {n} 個對話都已回顧過（上次 {when}）。', { n: d.sessions, when: d.lastRunAt ? relTime(d.lastRunAt).toLowerCase() : '—' });
+  const expire = d.expiresInDays === null ? '' : d.expiresInDays <= 0 ? t('，最早的一個很快就會被 Claude Code 清除') : t('，最早的一個 {d} 天後會被 Claude Code 清除', { d: d.expiresInDays });
+  return t('這台電腦有 {n} 個對話還沒回顧{expire}。每次最多回顧 20 個，由舊到新。', { n: d.pending, expire });
+}
+
 /** 只顯示有變化的行與前後兩行，中間相同的部分收起來 */
-function DiffView({ a, b }) {
+export function DiffView({ a, b }) {
   const rows = useMemo(() => {
     const lines = lineDiff(a, b);
     const keep = new Array(lines.length).fill(false);

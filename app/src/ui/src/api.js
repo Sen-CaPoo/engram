@@ -46,7 +46,7 @@
 //   GET  /api/core/guidelines                → { current, proposed, coreLine, lines, adopted }   （41 號 §11 選用步驟）
 //   POST /api/core/guidelines/adopt          → ActionResult
 //   POST /api/core/guidelines/revert         → ActionResult
-//   GET  /api/settings                       → { machineLabel, remote, syncIntervalMin, bindAuto: 'confident'|'ask'|'off', healthTime, paused }
+//   GET  /api/settings                       → { machineLabel, remote, syncIntervalMin, bindAuto: 'confident'|'ask'|'off', reviewWrites: 'on'|'off', healthTime, paused }
 //   PUT  /api/settings         { ...部分欄位 }         → 同上
 //   POST /api/sync                           → { started: true }   （進度與結果經由 SSE 的 sync 事件）
 //   GET  /api/loaded?session=latest          → { sessionId, at, cwd, pid, files: [{ path, kind, bytes, lines, loadReason, parent? }] } | null
@@ -58,6 +58,14 @@
 //   POST /api/tidy/ready       { id }                  → { ok, command, counts }   （產生執行指令；沒有決定的項目當成維持原狀）
 //   POST /api/tidy/undo        { id, item }            → { ok, reverted[] }   （整項復原：依相反順序 engram undo）
 //   POST /api/tidy/delete      { id }                  → { ok }
+//   GET  /api/memory/usage?ref=              → { tracking, since, reads, last, projects: { pid: n }, byMachine: { mid: n }, daily: [{ date, reads }] }（1.4.0 讀取統計）
+//   GET  /api/memory/links?ref=              → { out: [{ name, ref|null }], in: [{ ref, name }] }（1.4.0 [[名稱]] 連結）
+//   GET  /api/dream/status?pid=              → { pid, lastRunAt, pending, oldestPendingAt, expiresInDays, retention, sessions }（1.4.0 對話回顧）
+//   GET  /api/review                         → [{ ref, kind: 'new'|'changed', sha, name, description, current, previous, previousMissing, changedAt, machine }]（1.4.0 待你確認，H23）
+//   POST /api/review/confirm   { items: [{ ref, sha }] } → { ok, confirmed[], stale[] }
+//   POST /api/review/revert    { ref, sha }            → ActionResult   （改回確認過的版本；新增的封存。sha 與目前內容不符時 E_CONFLICT）
+//   GET  /api/core/suggestions               → [{ id, title, reason, text, en: { title, reason } }]（1.4.0 核心準則建議，H24）
+//   POST /api/core/suggestions/apply { ids }           → ActionResult
 //   GET  /api/agent                          → AgentInfo（見下）
 //   POST /api/jobs/run         { id }                  → { started: true }
 //   POST /api/jobs/toggle      { id, enabled }         → AgentInfo
@@ -168,6 +176,15 @@ const httpApi = {
   tidyReady: (id) => request('POST', '/api/tidy/ready', { id }),
   tidyUndo: (id, item) => request('POST', '/api/tidy/undo', { id, item }),
   tidyDelete: (id) => request('POST', '/api/tidy/delete', { id }),
+  // 1.4.0
+  memoryUsage: (ref) => request('GET', `/api/memory/usage${qs({ ref })}`),
+  memoryLinks: (ref) => request('GET', `/api/memory/links${qs({ ref })}`),
+  dreamStatus: (pid) => request('GET', `/api/dream/status${qs({ pid })}`),
+  reviewList: () => request('GET', '/api/review'),
+  reviewConfirm: (items) => request('POST', '/api/review/confirm', { items }),
+  reviewRevert: (ref, sha) => request('POST', '/api/review/revert', { ref, sha }),
+  coreSuggestions: () => request('GET', '/api/core/suggestions'),
+  applyCoreSuggestions: (ids) => request('POST', '/api/core/suggestions/apply', { ids }),
   agent: () => request('GET', '/api/agent'),
   runJob: (id) => request('POST', '/api/jobs/run', { id }),
   toggleJob: (id, enabled) => request('POST', '/api/jobs/toggle', { id, enabled }),

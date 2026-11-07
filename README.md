@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img alt="版本 1.3.0" src="https://img.shields.io/badge/version-1.3.0-0072CE">
+  <img alt="版本 1.4.0" src="https://img.shields.io/badge/version-1.4.0-0072CE">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-0072CE">
   <img alt="Claude Code 外掛" src="https://img.shields.io/badge/Claude%20Code-plugin-13202F">
   <img alt="MIT 授權" src="https://img.shields.io/badge/license-MIT-2E8B87">
@@ -36,34 +36,36 @@
 
 <!-- 維護方式：這一節只放最近三個版本。新版本寫在最上面的大區塊；原本的大區塊縮成下面兩欄表格的第一格，表格原本的第二格移除（完整內容仍在 CHANGELOG.md）。 -->
 
-### 1.3.0　記憶整理：Claude 提建議，你逐項決定
+### 1.4.0　對話回顧：拿對話紀錄驗證記憶
 
-記憶越用越多，重複、過時、放錯專案的內容也越積越多。現在在管理介面選好範圍，把一行指令貼給 Claude Code：Claude 讀過範圍內的記憶，提出整理建議和修改後的內容，**你在網頁上逐項看差異、做決定**，Claude 才照你的決定動手。
+記憶寫錯了，或專案改了做法卻沒更新，Claude 還是會一直讀到、一直相信。Anthropic 的記憶研究發現，回頭拿原始對話紀錄當證據驗證記憶，才修得回來。現在在 Claude Code 輸入 `/engram:dream`：Claude 讀這台電腦最近的對話，逐筆檢查專案的記憶，**哪些被證實、哪些已經改變或過時、哪些說得太肯定**，並補上對話裡值得記、卻還沒記下的事。每一項建議都附對話原文當證據，**你在網頁逐項決定**；對話紀錄不會同步，也不會上傳到 GitHub。
 
 <p align="center">
-  <img src="docs/assets/screenshots/tidy.png" alt="記憶整理頁：上方是 Claude 的整體結論與四個步驟的進度，下方每一項有建議、理由、差異比對，以及採用建議、維持原狀、封存、依備註調整四種決定" width="960">
+  <img src="docs/assets/screenshots/dream.png" alt="對話回顧的整理記錄：上方是回顧了幾個對話與主要發現，下方每一項附上對話原文當證據，紅線表示與記憶不符、綠線表示證實" width="960">
 </p>
 
-| | 在哪裡 | 做什麼 |
-| :---: | --- | --- |
-| **1** | 管理介面「記憶整理」 | 選範圍（全域、單機、專案、核心準則或全部），寫下補充說明，複製指令 |
-| **2** | Claude Code | 貼上 `/engram:tidy …`：Claude 讀過記憶、提出建議，給你一個回到管理介面的網址。這一步不改任何記憶 |
-| **3** | 管理介面 | 每一項看建議、理由與修改前後的差異，選「採用建議／維持原狀／封存／依備註調整」，自動儲存 |
-| **4** | Claude Code | 貼上 `/engram:tidy-apply …`：先備份，採用的項目照你看過的內容執行，選了「依備註調整」的交給 Claude 處理；結果回到同一頁，每一項都能單獨復原 |
+這一版也讓「每次對話都會載入的記憶」更精簡、更可信：
 
-詳見[使用說明](docs/使用說明.md#3-在-claude-code-裡用-ai-整理)。
+| | 做什麼 |
+| --- | --- |
+| **待你確認** | Claude 自己寫入全域記憶、單機記憶或核心準則時，收件匣會請你看一下差異，確認、編輯或退回。寫錯的記憶不會悄悄出現在每個專案 |
+| **讀取統計** | 從對話紀錄算出每筆記憶近 90 天被讀了幾次。很少用到、或只在一個專案用到的全域記憶會提醒你；全域索引放不下時，最近新增或修改的優先，其次是常用的 |
+| **建議回顧** | 專案有還沒回顧的對話，而且快被 Claude Code 清除（預設保留 30 天），或專案裡容易過時的記憶很久沒確認時，收件匣提醒你回顧 |
+| **連結修復** | `[[名稱]]` 指向已經合併或封存的記憶時，一鍵改連到合併後的記憶；指向已封存的則拿掉連結、保留文字 |
+
+詳見[使用說明](docs/使用說明.md#對話回顧拿對話紀錄驗證記憶)。
 
 <table>
   <tr>
     <td width="50%" valign="top">
+      <b>1.3.0　記憶整理：Claude 提建議，你逐項決定</b><br><br>
+      <img src="docs/assets/screenshots/tidy.png" alt="記憶整理頁：每一項有建議、理由、差異比對與四種決定"><br>
+      在管理介面選範圍、把指令貼給 Claude Code：Claude 提出整理建議與修改後的內容，你在網頁逐項看差異、做決定，Claude 才照你的決定動手，每一項都能復原，<a href="docs/使用說明.md#記憶整理claude-提建議你逐項決定">使用說明</a>
+    </td>
+    <td width="50%" valign="top">
       <b>1.2.0　親眼看見 Claude 讀了哪些記憶</b><br><br>
       <img src="docs/assets/screenshots/memory-pane.png" alt="Claude Code 右側的記憶面板：開場載入的檔案排成樹狀，下方列出對話中讀取的記憶"><br>
       Claude Code 旁的記憶面板即時列出這次對話載入與讀取的記憶，標出 Claude 看到的是全文、標題還是摘要。輸入 <code>/engram-memories</code> 開關，<a href="docs/使用說明.md#4-記憶面板這次對話讀了哪些記憶">使用說明</a>
-    </td>
-    <td width="50%" valign="top">
-      <b>1.1.0　英文介面與英文文件</b><br><br>
-      <img src="docs/assets/en/screenshots/overview.png" alt="英文版的管理介面總覽頁"><br>
-      管理介面可以切換 English，收件匣卡片、錯誤訊息等常駐程式傳來的文字也有英文；另有英文版 README、AI 安裝手冊與使用說明，<a href="README.en.md">English README</a>
     </td>
   </tr>
 </table>
@@ -96,8 +98,8 @@ Engram 把記憶變成**跟著你走、跟著專案走、隨時能復原**的資
 | <img src="docs/assets/icons/scopes.webp" width="48" alt=""> | **三種範圍各歸其位** | 個人偏好放「全域」，每個專案都看得到；安裝路徑、網路設定放「單機」，不會跑到別台電腦。 |
 | <img src="docs/assets/icons/restore.webp" width="48" alt=""> | **什麼都能復原** | 每個變更都有歷史。匯入前先在複本上完整演練，套用後隨時一鍵還原；原始記憶檔一律保留。 |
 | <img src="docs/assets/icons/merge.webp" width="48" alt=""> | **衝突不吵你** | 兩台改了不同段落就自動合併；改到同一段才請你並排比對，Claude 永遠不會讀到衝突標記。 |
-| <img src="docs/assets/icons/secrets.webp" width="48" alt=""> | **金鑰不外流** | 偵測到疑似密碼、權杖、連線字串的記憶，只留在本機、不會推送，並在收件匣提醒你遮蔽。 |
-| <img src="docs/assets/icons/ai-tidy.webp" width="48" alt=""> | **交給 Claude 整理** | 在管理介面選範圍，Claude 分析後提出建議與修改後的內容；你在網頁逐項看差異、做決定，Claude 才動手，每一項都能復原。收件匣也能交給 `/engram:inbox` 處理。 |
+| <img src="docs/assets/icons/secrets.webp" width="48" alt=""> | **金鑰不外流，寫入有把關** | 偵測到疑似密碼、權杖、連線字串的記憶，只留在本機、不會推送，並在收件匣提醒你遮蔽。Claude 自己寫進每次都會載入的記憶時，收件匣會請你看過差異後確認或退回。 |
+| <img src="docs/assets/icons/ai-tidy.webp" width="48" alt=""> | **交給 Claude 整理與驗證** | 在管理介面選範圍，Claude 分析後提出建議與修改後的內容；`/engram:dream` 還會拿最近的對話紀錄當證據，找出已經過時或寫錯的記憶。你在網頁逐項看差異、做決定，Claude 才動手，每一項都能復原。收件匣也能交給 `/engram:inbox` 處理。 |
 | <img src="docs/assets/icons/dashboard.webp" width="48" alt=""> | **看得見的管理介面** | 總覽、記憶庫、收件匣、專案、裝置與同步，一個介面全部看清楚；支援深色模式，可安裝成桌面應用程式。 |
 
 ## 30 秒看懂運作方式
@@ -160,6 +162,7 @@ Claude 會檢查環境、補齊工具、列出安裝計畫給你確認，再完�
 | `/engram:inbox` | 讓 Claude 逐張讀過收件匣，說明判斷依據與建議；你同意後才執行。加上「自動」直接處理有把握的項目 |
 | `/engram:tidy` | 深度整理全域、單機、一個專案、核心準則或全部記憶：Claude 提出建議，你在管理介面「記憶整理」逐項決定（指令可以在那一頁產生） |
 | `/engram:tidy-apply` | 照你在記憶整理頁的決定執行，結果回到同一頁 |
+| `/engram:dream` | 對話回顧：拿這台電腦最近的對話紀錄驗證專案的記憶、補上漏記的事；建議同樣在記憶整理頁逐項決定 |
 | `/engram:save` | 把這次對話值得長期記住的事存成記憶 |
 | `/engram:recall` | 從其他專案、其他電腦的記憶找出相關經驗，只讀不寫 |
 | `/engram-memories` | 開關記憶面板，看這次對話載入與讀取了哪些記憶（也可以點底部的「◆ 憶跡」） |
@@ -181,8 +184,8 @@ Claude 會檢查環境、補齊工具、列出安裝計畫給你確認，再完�
   <img src="docs/assets/illustrations/privacy.webp" alt="資料只在你的電腦與你的 GitHub 私人 repo 之間流動；沒有第三方伺服器；疑似金鑰不推送" width="760">
 </p>
 
-- **你的資料只在兩個地方**：你的電腦，以及你自己 GitHub 帳號底下的私人 repo。對話紀錄（transcript）不會同步。
-- **不呼叫 AI**：只有兩種情況會用到你的 Claude 額度：Claude Code 改版時的相容性探測（只用合成資料，可在介面關閉），以及你主動輸入 `/engram:` 開頭的指令時。記憶面板只在本機讀取，不會用到額度。
+- **你的資料只在兩個地方**：你的電腦，以及你自己 GitHub 帳號底下的私人 repo。對話紀錄（transcript）不會同步：讀取統計與對話回顧都在這台電腦讀，同步的只有每筆記憶的讀取次數。
+- **不呼叫 AI**：只有兩種情況會用到你的 Claude 額度：Claude Code 改版時的相容性探測（只用合成資料，可在介面關閉），以及你主動輸入 `/engram:` 開頭的指令時（`/engram:dream` 會分析多個對話，用量比其他指令多）。記憶面板與讀取統計只在本機計算，不會用到額度。
 - **金鑰保護**：疑似金鑰的記憶不會推送；交給 Claude 整理前，偵測到的金鑰會先在本機遮蔽。
 - **可完整移除**：安裝前列出所有會改動的位置，每一項都記錄下來；`engram uninstall` 依紀錄逐項還原，預設保留你的記憶庫。
 - **公司資料**：如果公司不允許把工作資料放在個人 GitHub，可以改用公司組織底下的私人 repo，或只在單機使用。

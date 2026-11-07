@@ -8,7 +8,7 @@ import {
 } from '../components.jsx';
 import { Editor } from '../lazy-editor.jsx';
 import { TYPE_LABEL, scopeKey, relTime, debounce, humanizeCommit } from '../util.js';
-import { IconGlobe, IconFolder, IconMonitor, IconLibrary, IconEdit, IconMove, IconPin, IconHistory, IconTrash, IconSearch, IconArchive, IconUndo, IconBack, IconEye, IconSparkle } from '../icons.jsx';
+import { IconGlobe, IconFolder, IconMonitor, IconLibrary, IconEdit, IconMove, IconPin, IconHistory, IconTrash, IconSearch, IconArchive, IconUndo, IconBack, IconEye, IconSparkle, IconCheck } from '../icons.jsx';
 import { t, local } from '../i18n.js';
 
 function useMedia(query) {
@@ -304,6 +304,7 @@ function Detail({ ref_, go, params }) {
               </Banner>
             )}
             <Markdown text={reveal ? m.body : masked.text} />
+            <MemoryInsights m={m} go={go} params={params} />
             <details>
               <summary class="faint" style={{ cursor: 'pointer', fontSize: 12 }}>{t('原始檔案與位置')}</summary>
               <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
@@ -354,6 +355,41 @@ function Detail({ ref_, go, params }) {
         <ConfirmDialog title={t('放棄這次的修改？')} desc={t('編輯內容不會儲存。')} confirmLabel={t('放棄修改')} danger onConfirm={() => { setDialog(null); finish(); }} onClose={() => setDialog(null)}><span /></ConfirmDialog>
       )}
     </div>
+  );
+}
+
+/** 1.4.0：這筆記憶最後確認的日期、近 90 天被讀了幾次、[[連結]] 關係 */
+function MemoryInsights({ m, go, params }) {
+  const { projects } = useApp();
+  const usage = useData(() => api.memoryUsage(m.ref), [m.ref]);
+  const links = useData(() => api.memoryLinks(m.ref), [m.ref]);
+  const verified = m.frontmatter?.metadata?.engram?.verified;
+  const u = usage.data;
+  const l = links.data;
+  const pname = (pid) => (projects || []).find((x) => x.pid === pid)?.name ?? pid;
+  const hrefOf = (ref) => `#/library?ref=${encodeURIComponent(ref)}`;
+  const open = (ref) => go('library', { ...params, ref, edit: undefined }, false);
+  const top = u ? Object.entries(u.projects || {}).sort((a, b) => b[1] - a[1]).slice(0, 3) : [];
+  return (
+    <dl class="kv insights">
+      {verified && <><dt>{t('對話回顧')}</dt><dd><span class="chip ok"><IconCheck />{t('{date} 確認仍正確', { date: String(verified).slice(0, 10) })}</span></dd></>}
+      <dt>{t('讀取')}</dt>
+      <dd>
+        {!u ? <span class="faint">—</span>
+          : !u.tracking ? <span class="faint">{t('讀取統計會在常駐程式下一次健康檢查後開始（從這台電腦的對話紀錄計算）。')}</span>
+          : u.reads ? t('近 90 天被讀了 {n} 次，最後一次 {date}{where}', { n: u.reads, date: u.last, where: top.length ? t('（{list}）', { list: top.map(([pid, n]) => t('{name} {n} 次', { name: pname(pid), n })).join(t('、')) }) : '' })
+          : <span class="faint">{t('近 90 天沒有被讀過（統計從 {since} 開始）', { since: u.since ?? '—' })}</span>}
+      </dd>
+      {l && (l.out.length > 0 || l.in.length > 0) && (
+        <>
+          <dt>{t('連結')}</dt>
+          <dd class="links">
+            {l.out.length > 0 && <span>{t('連到：')}{l.out.map((x, i) => <span key={x.name}>{i > 0 && t('、')}{x.ref ? <a href={hrefOf(x.ref)} onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) return; e.preventDefault(); open(x.ref); }}>{x.name}</a> : <span class="faint">{t('{name}（還沒有這筆記憶）', { name: x.name })}</span>}</span>)}</span>}
+            {l.in.length > 0 && <span>{t('被連結：')}{l.in.map((x, i) => <span key={x.ref}>{i > 0 && t('、')}<a href={hrefOf(x.ref)} onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) return; e.preventDefault(); open(x.ref); }}>{x.name}</a></span>)}</span>}
+          </dd>
+        </>
+      )}
+    </dl>
   );
 }
 

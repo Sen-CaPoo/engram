@@ -66,4 +66,15 @@ export default {
   '併入': 'Merge',
   '目標專案': 'Target project',
   '{name}（{n} 筆）': ({ n }) => plural(n, '{name} (1 memory)', '{name} ({n} memories)'),
+  // 1.4.0
+  "拿這台電腦最近的對話紀錄驗證這個專案的記憶": "Check this project's memories against recent conversations on this computer",
+  "回顧對話": "Review conversations",
+  "對話回顧": "Conversation review",
+  "這台電腦沒有這個專案的對話紀錄": "This computer has no conversations for this project",
+  "，最早的一個 {d} 天後會被 Claude Code 清除": ({ d }) => plural(d, ', and the oldest will be deleted by Claude Code in 1 day', ', and the oldest will be deleted by Claude Code in {d} days'),
+  "這台電腦的 {n} 個對話都已回顧過（上次 {when}）": ({ n }) => plural(n, 'The 1 conversation on this computer has been reviewed (last {when})', 'All {n} conversations on this computer have been reviewed (last {when})'),
+  "這台電腦有 {n} 個對話還沒回顧{expire}。": ({ n }) => plural(n, '1 conversation on this computer has not been reviewed{expire}.', '{n} conversations on this computer have not been reviewed{expire}.'),
+  "，最早的一個很快就會被 Claude Code 清除": ", and the oldest will be deleted by Claude Code soon",
+  "上次回顧 {when}": "Last reviewed {when}",
+  "還沒有回顧過": "Never reviewed",
 };

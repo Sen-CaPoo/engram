@@ -51,6 +51,7 @@ EOF
 
 - 整理收件匣 → `/engram:inbox`
 - 整理專案、全域、單機記憶、核心準則或全部 → `/engram:tidy`：Claude 分析後把建議存成整理記錄，使用者在管理介面逐項決定，再貼上 `/engram:tidy-apply <id>` 執行
+- 拿最近的對話紀錄驗證專案的記憶、補上漏記的事 → `/engram:dream`：建議同樣存成整理記錄，由使用者逐項決定
 - 把對話重點存成記憶 → `/engram:save`
 - 從其他專案、其他電腦找經驗 → `/engram:recall`
 

@@ -16,7 +16,7 @@ import { redactText } from './safe.mjs';
 const STATUS_LABEL = { pending: '待使用者決定', ready: '已產生執行指令', applying: '執行中', finishing: '等 Claude 處理備註項目', done: '已完成' };
 const DECISION_LABEL = { accept: '採用建議', keep: '維持原狀', archive: '封存', custom: '依備註調整' };
 const RESULT_LABEL = { done: '完成', kept: '維持原狀', failed: '失敗', skipped: '略過', 'needs-claude': '等 Claude 處理', undone: '已復原' };
-const ACTION_LABEL = { keep: '保留', update: '改寫', move: '搬移', archive: '封存', merge: '合併', create: '新增', split: '拆分', promote: '升為全域' };
+const ACTION_LABEL = { keep: '保留', update: '改寫', move: '搬移', archive: '封存', merge: '合併', create: '新增', split: '拆分', promote: '升為全域', verify: '確認仍正確' };
 
 /** 管理介面的網址；常駐程式沒在跑時先在背景啟動（啟動不了也不讓指令失敗） */
 async function dashboardUrl(ctx) {
@@ -41,6 +41,7 @@ function opLine(o) {
   if (o.op === 'merge') return `合併 ${o.refs.join('、')} → ${o.into}`;
   if (o.op === 'create') return `新增 ${o.ref}`;
   if (o.op === 'core') return '改寫核心準則 CORE.md';
+  if (o.op === 'verify') return `記下驗證日期 ${o.ref}`;
   return o.op;
 }
 
@@ -86,6 +87,8 @@ export async function cmdTidy(ctx) {
     const c = counts(rec);
     return ctx.out.result({ id: rec.id, url, counts: c, status: rec.status }, [
       `已建立整理記錄 ${rec.id}（${scopeText(rec.scope)}，${countText(c)}${rec.kept.length ? `；另有 ${rec.kept.length} 筆看過、建議保留` : ''}）`,
+      rec.dream && !rec.warning ? `對話回顧 ${rec.dream.id}：${rec.dream.sessions - (rec.dream.skipped ?? 0)} 個對話已標為回顧過${rec.dream.skipped ? `；${rec.dream.skipped} 個沒分析到的下次再回顧` : ''}${rec.dream.remaining ? `；還有 ${rec.dream.remaining} 個對話留到下次回顧` : ''}。` : null,
+      rec.warning ? `注意：${rec.warning}（這批對話下次會再列入回顧）` : null,
       `請使用者到這裡逐項決定：${url}`,
       note,
       `使用者在介面按「產生執行指令」後，會得到：/engram:tidy-apply ${rec.id}`,

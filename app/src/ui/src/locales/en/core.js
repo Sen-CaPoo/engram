@@ -31,4 +31,14 @@ export default {
   '是真的金鑰時請取消，改成只記「存放在哪裡、怎麼取得」。選「這不是金鑰」後，這些值會記入「不是金鑰」清單（只存雜湊、同步到所有電腦）並照常儲存；核心準則每次對話都會載入，也會同步到其他電腦。': 'If it is a real secret, cancel and record only where it is stored and how to get it. If you choose "Not a secret", these values are added to the "not a secret" list (only hashes are stored, and the list syncs to all computers) and the content is saved as usual. Core rules are loaded in every conversation and also sync to your other computers.',
   '放棄這次的修改？': 'Discard these changes?',
   '編輯內容不會儲存。': 'Your edits will not be saved.',
+  // 1.4.0
+  "已加入核心準則，下一次對話生效": "Added to the core rules. It takes effect in the next conversation.",
+  "建議更新": "Suggested updates",
+  "依 Anthropic 的記憶研究調整了「記憶寫入協定」。這是你的檔案，Engram 不會自己改；看過覺得合適再加入，之後可以用變更歷史復原。": "The memory-writing protocol was adjusted based on Anthropic's memory research. This is your file, so Engram does not change it on its own; add these if they fit, and you can undo them later from the change history.",
+  "加入": "Add",
+  "左邊有尚未儲存的修改，先儲存或放棄後再加入。": "You have unsaved edits on the left. Save or discard them first.",
+  "全部加入": "Add all",
+  "每次載入的大小": "Size loaded every time",
+  "這一層每個專案、每次對話都會載入，建議維持在 20 KB 以內；很少用到的全域記憶可以搬到相關的專案。": "This layer loads in every project and every conversation, so keep it under 20 KB. Global memories you rarely use can move to the project they belong to.",
+  "加入：{name}": "Add: {name}",
 };

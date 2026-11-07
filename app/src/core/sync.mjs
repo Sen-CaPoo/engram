@@ -11,6 +11,7 @@ import { classifyGitError, git, parseStatusZ } from './git.mjs';
 import { quarantine } from './conflicts.mjs';
 import { splitCollision } from './identity.mjs';
 import { computeIndexBudget, normalizeProjectIndex, rebuildScopeIndex } from './normalize.mjs';
+import { readsForScope } from './usage.mjs';
 import { loadAllow, scanWithAllow } from './secretallow.mjs';
 import { hasActiveSession, scanEncodedDir } from './transcripts.mjs';
 import {
@@ -73,7 +74,10 @@ async function repairEngramMeta(ctx, now) {
     const prev = cache[m.ref];
     if ((!em || !Object.keys(em).length) && prev?.meta && Object.keys(prev.meta).length && !modifiedWithin(abs, RECENT_MS, now)) {
       const meta = { ...prev.meta };
-      if (prev.bodyHash !== bodyHash) delete meta.reviewedAt; // 內文改過 → 重新進收件匣
+      if (prev.bodyHash !== bodyHash) {
+        delete meta.reviewedAt; // 內文改過 → 重新進收件匣
+        delete meta.verified; // 1.4.0：內文改過，之前的驗證日期不再代表現在的內容
+      }
       const updates = Object.fromEntries(Object.entries(meta).map(([k, v]) => [`metadata.engram.${k}`, v]));
       const text = await readText(abs);
       // frontmatter 解析有錯誤時絕不自動改寫（R-28）；由健康檢查 H12 提示
@@ -106,9 +110,9 @@ async function tidy(ctx, { now = Date.now(), normalize = true } = {}) {
   }
   const projectNames = await ctx.projectNames();
   const budget = await computeIndexBudget(ctx.vault);
-  if ((await rebuildScopeIndex({ kind: 'global', dir: path.join(ctx.vault, 'global'), userHome: ctx.homes.userHome, projectNames, budget: budget.global })).changed) written.add('global/INDEX.md');
+  if ((await rebuildScopeIndex({ kind: 'global', dir: path.join(ctx.vault, 'global'), userHome: ctx.homes.userHome, projectNames, budget: budget.global, reads: await readsForScope(ctx.vault, 'global') })).changed) written.add('global/INDEX.md');
   // 單一寫入者：只重建自己的單機索引
-  if ((await rebuildScopeIndex({ kind: 'machine', dir: machineDir(ctx.vault, ctx.mid), userHome: ctx.homes.userHome, label: ctx.label, projectNames, budget: budget.machine })).changed) written.add(`machines/${ctx.mid}/INDEX.md`);
+  if ((await rebuildScopeIndex({ kind: 'machine', dir: machineDir(ctx.vault, ctx.mid), userHome: ctx.homes.userHome, label: ctx.label, projectNames, budget: budget.machine, reads: await readsForScope(ctx.vault, `machines/${ctx.mid}`) })).changed) written.add(`machines/${ctx.mid}/INDEX.md`);
   if (await touchMachine(ctx.homes, ctx.mid)) written.add(`machines/${ctx.mid}/machine.json`);
   return written;
 }

@@ -673,3 +673,13 @@ test('e2e：兩邊各自新增同一檔、只差 harness 欄位 → 乾淨合併
   assert.equal(p.data.metadata.originSessionId, 'b');
   assert.equal(existsSync(join(repo, 'conflicts')), false);
 });
+
+test('1.4.0：兩台電腦各自記下驗證日期（metadata.engram.verified）：取較新的日期，不算衝突', async (t) => {
+  const base = '---\nname: x\ndescription: d\nmetadata:\n  type: project\n---\n內容\n';
+  const ours = '---\nname: x\ndescription: d\nmetadata:\n  type: project\n  engram:\n    verified: 2026-11-02\n---\n內容\n';
+  const theirs = '---\nname: x\ndescription: d\nmetadata:\n  type: project\n  engram:\n    verified: 2026-11-05\n---\n內容\n';
+  const { r, out, conflictsDir } = await runDriver(t, { base, ours, theirs });
+  assert.equal(r.exitCode ?? 0, 0);
+  assert.equal(String(parseMemoryFile(out).data.metadata.engram.verified).slice(0, 10), '2026-11-05');
+  assert.equal(existsSync(conflictsDir) ? readdirSync(conflictsDir).length : 0, 0, '沒有隔離成衝突');
+});

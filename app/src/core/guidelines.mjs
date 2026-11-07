@@ -75,7 +75,10 @@ export function guidelines(ctx) {
       const manifest = (await readJson(manifestPath(ctx.homes), null)) ?? {};
       manifest.guidelines = { adoptedAt: new Date().toISOString(), backup, originalSha1: sha1(text), mid: ctx.mid };
       await writeJson(manifestPath(ctx.homes), manifest);
-      const commit = await commitPaths(ctx.vault, [rulesRef, 'core/CORE.md'], 'adopt user guidelines', { action: 'edit', refs: [rulesRef], mid: ctx.mid });
+      // 使用者在介面按「採用」：搬過去的內容就是使用者自己的準則，記為確認過（1.4.0）
+      const { markReviewed } = await import('./review.mjs');
+      const rv = await markReviewed(ctx, [rulesRef, 'core/CORE.md']);
+      const commit = await commitPaths(ctx.vault, [rulesRef, 'core/CORE.md', ...rv], 'adopt user guidelines', { action: 'edit', refs: [rulesRef], mid: ctx.mid });
       return { ok: true, commit: commit ?? undefined, backup };
     });
   }
@@ -98,7 +101,9 @@ export function guidelines(ctx) {
       fs.rmSync(rulesPath, { force: true });
       delete manifest.guidelines;
       await writeJson(manifestPath(ctx.homes), manifest);
-      const commit = await commitPaths(ctx.vault, [rulesRef, 'core/CORE.md'], 'revert user guidelines', { action: 'edit', refs: [rulesRef], mid: ctx.mid });
+      const { markReviewed } = await import('./review.mjs');
+      const rv = await markReviewed(ctx, [rulesRef, 'core/CORE.md']);
+      const commit = await commitPaths(ctx.vault, [rulesRef, 'core/CORE.md', ...rv], 'revert user guidelines', { action: 'edit', refs: [rulesRef], mid: ctx.mid });
       return { ok: true, commit: commit ?? undefined };
     });
   }

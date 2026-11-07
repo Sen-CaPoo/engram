@@ -137,6 +137,11 @@ export async function startAgent({
   beatTimer.unref();
   dailyTimer.unref();
   maintenance(paths, log);
+  // 1.4.0：回顧用的子代理要讀 local/dream。Claude Code 只在對話開始時套用 additionalDirectories，而且資料夾要已經存在，
+  // 所以常駐程式一啟動（登入、engram update 之後）就建立資料夾並加進設定，之後開的對話第一次回顧就讀得到
+  if (typeof eg.dream?.ensureReadable === 'function') eg.dream.ensureReadable().catch((err) => log.warn('dream', err));
+  // 確認紀錄的起點：升級後常駐程式一啟動就建立（不等每日健康檢查），之後 Claude 寫的內容才會列入「待你確認」
+  if (typeof eg.review?.baseline === 'function') eg.review.baseline().catch((err) => log.warn('review', err));
   jobs.start();
   const tidyWatcher = watchTidy(paths.local, events, log);
   log.info('agent', `已啟動：http://127.0.0.1:${agent.port}/（pid ${agent.pid}，Engram ${agent.version}）`);

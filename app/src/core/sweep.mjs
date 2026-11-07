@@ -483,6 +483,9 @@ export async function executeSweep(ctx, plan, { bindSources = true } = {}) {
       if (byScope.global.length) touched.push(...await refreshIndex(ctx, { kind: 'global' }));
       if (byScope.machine.length) touched.push(...await refreshIndex(ctx, { kind: 'machine', mid: ctx.mid }));
       const label = src.resolvedPath ? path.basename(src.resolvedPath) : src.encoded;
+      // 1.4.0：收編的是 Engram 之前就有的記憶（等同確認紀錄的起點），收進全域或單機時記為確認過；跟著這個 commit 一起還原
+      const { markReviewed } = await import('./review.mjs');
+      touched.push(...await markReviewed(ctx, imported.map((x) => x.destRef)));
       const commit = await commitPaths(ctx.vault, touched, `sweep ${src.items.length} memories from ${label}`, { action: 'sweep', mid: ctx.mid, trailers: { 'Engram-Import': tag } });
       if (commit) { result.commits.push(commit.sha); record.commits.push(commit.sha); }
       for (const it of imported) it.sha = commit?.sha ?? null;

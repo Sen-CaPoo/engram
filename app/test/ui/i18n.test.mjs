@@ -75,6 +75,14 @@ describe('介面多語系', () => {
     assert.deepEqual(diff, [], `英文不一致：\n${diff.join('\n')}`);
   });
 
+  test('英文值不是被當成字串的程式碼（單複數要寫成函式，不是 "({ n }) => …" 字串）', () => {
+    const bad = [];
+    for (const [part, dict] of Object.entries(PARTS)) {
+      for (const [k, v] of Object.entries(dict)) if (typeof v === 'string' && /=>|\bplural\(/.test(v)) bad.push(`${part}：${k}`);
+    }
+    assert.deepEqual(bad, [], `看起來是程式碼的英文：\n${bad.join('\n')}`);
+  });
+
   test('每份英文對照都已列入 index.js', () => {
     const dir = path.join(SRC, 'locales/en');
     const onDisk = fs.readdirSync(dir).filter((f) => f.endsWith('.js') && f !== 'index.js').map((f) => f.replace(/\.js$/, '')).sort();

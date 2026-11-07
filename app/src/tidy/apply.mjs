@@ -8,6 +8,7 @@ import path from 'node:path';
 import { revOf } from '../cli/commands/safe.mjs';
 import { CliError } from '../cli/errors.mjs';
 import { writeJsonAtomic } from '../cli/fsutil.mjs';
+import { parseMemoryFile } from '../core/frontmatter.mjs';
 import { CORE_REF } from './plan.mjs';
 import { applyingNow, busy, counts, readRecord, updateRecord } from './store.mjs';
 
@@ -92,28 +93,39 @@ async function precheck(eg, item, start) {
   }
 }
 
-/** 執行一個動作，回傳 { sha, ref? }（ref：動作之後這筆記憶的位置） */
+/**
+ * 執行一個動作，回傳 { sha, ref? }（ref：動作之後這筆記憶的位置）。
+ * 這些內容使用者已在記憶整理頁核可，寫入時一併記為確認過（1.4.0，H23）。
+ */
 async function runOp(eg, op) {
+  const reviewed = true;
   switch (op.op) {
     case 'write':
-      return { sha: shaOf(await eg.memories.write(op.ref, { text: op.content })) };
+      return { sha: shaOf(await eg.memories.write(op.ref, { text: op.content, reviewed })) };
+    case 'verify': {
+      // 只記下驗證日期（用當下的內容；precheck 已確認版本與建議時相同）。內容沒有被使用者看過全文，
+      // 所以確認紀錄只延續：原本確認過的才算確認過（1.4.0 審查）
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(op.date ?? ''))) throw new Error(`驗證日期不正確：${String(op.date ?? '（沒有）')}`);
+      const r = await eg.memories.write(op.ref, { frontmatter: { 'metadata.engram.verified': op.date }, carryReviewed: true });
+      return { sha: shaOf(r) };
+    }
     case 'move': {
-      const r = await eg.memories.move(op.ref, scopeFromKey(op.to));
+      const r = await eg.memories.move(op.ref, scopeFromKey(op.to), { reviewed });
       return { sha: shaOf(r), ref: r.ref };
     }
     case 'remove':
       return { sha: shaOf(await eg.memories.remove(op.ref)) };
     case 'merge': {
-      const r = await eg.memories.merge(op.refs, { into: op.into, text: op.content });
+      const r = await eg.memories.merge(op.refs, { into: op.into, text: op.content, reviewed });
       return { sha: shaOf(r), ref: r.ref };
     }
     case 'create': {
       // 整份內容原樣寫入（使用者在介面看到的就是這一份），frontmatter 的其他欄位一併保留
-      const r = await eg.memories.create({ scope: scopeFromKey(op.scope), name: op.name, type: op.type, description: op.description, body: op.body, text: op.content });
+      const r = await eg.memories.create({ scope: scopeFromKey(op.scope), name: op.name, type: op.type, description: op.description, body: op.body, text: op.content, reviewed });
       return { sha: shaOf(r), ref: r.ref };
     }
     case 'core':
-      return { sha: shaOf(await eg.core.write(op.content)) };
+      return { sha: shaOf(await eg.core.write(op.content, { reviewed })) };
     default:
       throw new CliError('E_INVALID', `不認得的動作：${op.op}`);
   }
@@ -140,6 +152,12 @@ async function alreadyDone(eg, op, since) {
     return c || !required ? { at, sha: c?.sha ?? null } : null;
   };
   switch (op.op) {
+    case 'verify': {
+      // 驗證日期已經是這一天（或更新）就算做過
+      const cur = await currentRaw(eg, op.ref);
+      const had = cur === null ? '' : String(parseMemoryFile(cur).data?.metadata?.engram?.verified ?? '').slice(0, 10);
+      return had && had >= op.date ? found(op.ref, 'edit', false) : null;
+    }
     case 'write':
     case 'core':
     case 'create': {

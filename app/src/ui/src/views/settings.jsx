@@ -106,6 +106,14 @@ export function Settings() {
             <input id="st-health" class="input" type="time" value={s.healthTime} onChange={(e) => save({ healthTime: e.currentTarget.value }, t('已更新健康檢查時間'))} style={{ width: 130 }} />
             <span class="help">{t('錯過時（例如電腦關機）會在下次啟動後補跑。只有高等級的發現才會發 Windows 通知。')}</span>
           </div>
+          <label class="setting" style={{ cursor: 'pointer' }}>
+            <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <input type="checkbox" id="st-review" checked={(s.reviewWrites ?? 'on') !== 'off'} onChange={(e) => save({ reviewWrites: e.currentTarget.checked ? 'on' : 'off' }, t('已更新確認設定'))} />
+              <b>{t('Claude 寫入每次都會載入的內容時請我確認')}</b>
+            </span>
+            <span />
+            <span class="help">{t('全域記憶、這台電腦的單機記憶與核心準則會在每個專案的每次對話被讀到。Claude 自己寫入這些內容時，收件匣會列出「待你確認」，看過差異後確認、編輯或退回；你在介面、記憶整理或 /engram:save 同意過的不會再問。只是提醒，不會擋住寫入。')}</span>
+          </label>
         </Section>
 
         <Section title={t('暫停與移除')}>

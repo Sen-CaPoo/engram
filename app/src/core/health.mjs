@@ -5,18 +5,24 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { machineSpecific } from './classify.mjs';
 import { diagEn, semanticKey } from './frontmatter.mjs';
-import { exists, readText, sha1 } from './fsx.mjs';
+import { exists, readJson, readText, sha1 } from './fsx.mjs';
 import { readSweepLog } from './sweep.mjs';
 import { JUNCTION_MODES, junctionState } from './identity.mjs';
 import { defaultPermissionMode, isJunctionReadAllowed } from './claudesettings.mjs';
 import { indexStats, PROJECT_INDEX, SCOPE_INDEX } from './normalize.mjs';
+import { brokenLinks } from './links.mjs';
+import { coverageDays, loadUsage } from './usage.mjs';
+import { needsBaseline, pendingReviews } from './review.mjs';
+import { dreamStatus } from './dream.mjs';
+import { suggestionsFor } from './coresuggest.mjs';
+import { uncheckedDays, volatility } from './volatile.mjs';
 import { loadAllow, scanWithAllow } from './secretallow.mjs';
 import { encodeProjectPath, memoryRootFor, samePath } from './paths.mjs';
 import { scanAll, sessionIndex } from './transcripts.mjs';
 import { allBindingViews, listMachineIds, listProjectIds, machineDir, memoryOwners, projectMemoryDir, readBindings, readProject, readState } from './vault.mjs';
 
 const DAY = 86_400_000;
-const LIMITS = { indexLines: 200, indexBytes: 25 * 1024, indexWarn: 150, fileWarn: 8 * 1024, fileHigh: 20 * 1024, coreLines: 200 };
+const LIMITS = { indexLines: 200, indexBytes: 25 * 1024, indexWarn: 150, fileWarn: 8 * 1024, fileHigh: 20 * 1024, coreLines: 200, coreBytes: 25 * 1024, coreBytesWarn: 20 * 1024 };
 
 function fid(code, refs) {
   return `${code}:${createHash('sha1').update(refs.join('|')).digest('hex').slice(0, 10)}`;
@@ -392,6 +398,59 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
     }
   }
 
+  // H20：建議回顧對話（1.4.0）。這台電腦綁定的專案有還沒回顧的對話，而且最早的那個 7 天內會被 Claude Code 清除，
+  // 或有容易過時的記憶超過 30 天沒確認。對話紀錄是驗證記憶的依據，清除後就無法回頭對照。
+  const dreamPids = [...new Set(views.map((v) => v.pid).filter(Boolean))];
+  for (const pid of dreamPids) {
+    const p = projects.get(pid);
+    if (!p || p.archived || p.mergedInto) continue;
+    const st = await dreamStatus(ctx, pid, { scans, now });
+    if (!st.pending) continue;
+    const stale = memories.filter((m) => m.scope?.kind === 'project' && m.scope.pid === pid && volatility(m, m._parsed?.body).yes && (uncheckedDays(m, now) ?? 0) > 30);
+    const expiring = st.expiresInDays !== null && st.expiresInDays <= 7;
+    if (!expiring && !stale.length) continue;
+    const name = p.name ?? pid;
+    const parts = [];
+    const partsEn = [];
+    if (expiring) {
+      parts.push(`${st.pending} 個對話還沒回顧，最早的一個${st.expiresInDays ? ` ${st.expiresInDays} 天後` : '很快就'}會被 Claude Code 清除（保留 ${st.retention} 天）`);
+      partsEn.push(`${st.pending === 1 ? '1 conversation has' : `${st.pending} conversations have`} not been reviewed, and the oldest ${st.expiresInDays ? `will be deleted by Claude Code in ${st.expiresInDays === 1 ? '1 day' : `${st.expiresInDays} days`}` : 'will be deleted by Claude Code soon'} (kept for ${st.retention} days)`);
+    } else {
+      parts.push(`${st.pending} 個對話還沒回顧`);
+      partsEn.push(`${st.pending === 1 ? '1 conversation has' : `${st.pending} conversations have`} not been reviewed`);
+    }
+    if (stale.length) {
+      parts.push(`${stale.length} 筆容易過時的記憶超過 30 天沒確認`);
+      partsEn.push(`${stale.length === 1 ? '1 memory that goes out of date easily has' : `${stale.length} memories that go out of date easily have`} not been checked in over 30 days`);
+    }
+    out.push(finding('H20', 'low', `建議回顧「${name}」的對話`,
+      `${parts.join('；')}。回顧時 Claude 會拿對話紀錄驗證這個專案的記憶、補上漏記的事，所有建議都由你在網頁逐項決定。`,
+      {
+        refs: [`projects/${pid}`], pid, key: `dream:${pid}`,
+        fix: { action: 'open-dream', args: { pid }, label: '交給 Claude 回顧', en: { label: 'Ask Claude to review' } },
+        en: {
+          title: `Review the conversations for "${name}"`,
+          detail: `${partsEn.join('; ')}. Claude checks this project's memories against the conversations and adds what was missed; you decide on every suggestion in the dashboard.`,
+        },
+      }));
+  }
+
+  // H21：連結斷了（1.4.0）。[[名稱]] 指向的記憶被合併或封存；從沒存在過的名稱不提示
+  for (const b of await brokenLinks(ctx, memories)) {
+    const pid = memories.find((m) => m.ref === b.ref)?.scope?.pid;
+    const merged = b.via === 'merge' && b.to;
+    out.push(finding('H21', 'low', `「${b.name}」的連結 [[${b.from}]] 斷了`,
+      merged ? `「${b.from}」已經合併進「${b.to}」。` : `「${b.from}」已經封存。`,
+      {
+        refs: [b.ref], pid, key: `${b.ref}:${b.from.toLowerCase()}`,
+        fix: { action: merged ? 'relink' : 'unlink', args: merged ? { ref: b.ref, from: b.from, to: b.to } : { ref: b.ref, from: b.from }, label: merged ? `改連到 ${b.to}` : '移除連結（保留文字）', en: { label: merged ? `Link to ${b.to} instead` : 'Remove the link (keep the text)' } },
+        en: {
+          title: `The link [[${b.from}]] in "${b.name}" is broken`,
+          detail: merged ? `"${b.from}" was merged into "${b.to}".` : `"${b.from}" was archived.`,
+        },
+      }));
+  }
+
   // H13：核心準則（CORE.md、core/rules）也會同步，而且每次對話都會載入
   let rules = [];
   try { rules = fs.readdirSync(path.join(ctx.vault, 'core', 'rules')).filter((n) => /\.md$/i.test(n)).map((n) => `core/rules/${n}`); } catch { /* 沒有 rules */ }
@@ -451,19 +510,93 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
     }
   } catch { /* 沒有衝突資料夾 */ }
 
-  // H16：核心準則過長
+  // H16：核心準則過長。每次對話都會載入的內容（CORE.md＋匯入的 rules＋全域與單機索引）：行數超過 200，
+  // 或位元組超過 25KB（比照 Claude Code 對 MEMORY.md 的載入上限）為中；1.4.0 起 20KB 以上為低（Anthropic 的記憶研究：這一層要小）
   const core = await indexStats(path.join(ctx.vault, 'core', 'CORE.md'));
   const gi = await indexStats(path.join(ctx.vault, 'global', SCOPE_INDEX));
   const mi = await indexStats(path.join(machineDir(ctx.vault, ctx.mid), SCOPE_INDEX));
+  let rulesBytes = 0;
+  for (const m of ((await readText(path.join(ctx.vault, 'core', 'CORE.md'))) ?? '').matchAll(/^@(\.\/)?(rules\/[^\s]+\.md)\s*$/gm)) rulesBytes += (await indexStats(path.join(ctx.vault, 'core', ...m[2].split('/')))).bytes;
   const total = core.lines + gi.lines + mi.lines;
+  const bytes = core.bytes + rulesBytes + gi.bytes + mi.bytes;
+  const kb = (n) => (n / 1024).toFixed(1);
   if (total > LIMITS.coreLines) {
-    out.push(finding('H16', 'medium', '核心準則加索引超過 200 行', `CORE.md ${core.lines} 行、全域索引 ${gi.lines} 行、單機索引 ${mi.lines} 行，共 ${total} 行。過長時 Claude 比較不會照做。`, {
+    out.push(finding('H16', 'medium', '核心準則加索引超過 200 行', `CORE.md ${core.lines} 行、全域索引 ${gi.lines} 行、單機索引 ${mi.lines} 行，共 ${total} 行（${kb(bytes)}KB）。過長時 Claude 比較不會照做。`, {
       refs: ['core/CORE.md'], fix: { action: 'open-core', args: {}, label: '編輯核心準則', en: { label: 'Edit core rules' } },
       en: {
         title: 'Core rules plus indexes exceed 200 lines',
-        detail: `CORE.md has ${core.lines} lines, the global index ${gi.lines}, and the machine index ${mi.lines}: ${total} lines in total. When it gets this long, Claude is less likely to follow it.`,
+        detail: `CORE.md has ${core.lines} lines, the global index ${gi.lines}, and the machine index ${mi.lines}: ${total} lines in total (${kb(bytes)}KB). When it gets this long, Claude is less likely to follow it.`,
       },
     }));
+  } else if (bytes >= LIMITS.coreBytesWarn) {
+    const over = bytes > LIMITS.coreBytes;
+    out.push(finding('H16', over ? 'medium' : 'low', over ? '每次對話都會載入的內容超過 25KB' : '每次對話都會載入的內容偏多', `核心準則與匯入的規則 ${kb(core.bytes + rulesBytes)}KB、全域索引 ${kb(gi.bytes)}KB、單機索引 ${kb(mi.bytes)}KB，共 ${kb(bytes)}KB（建議 20KB 以內）。這些內容在每個專案、每次對話都會佔用上下文；很少用到的全域記憶可以封存或搬到相關的專案，說明（description）也可以寫得更精簡。`, {
+      refs: ['core/CORE.md'], key: 'bytes', fix: { action: 'open-tidy', args: { scope: 'core' }, label: '交給 Claude 精簡', en: { label: 'Ask Claude to trim' } },
+      en: {
+        title: over ? 'What loads in every conversation exceeds 25KB' : 'A lot loads in every conversation',
+        detail: `Core rules and imported rules ${kb(core.bytes + rulesBytes)}KB, global index ${kb(gi.bytes)}KB, machine index ${kb(mi.bytes)}KB: ${kb(bytes)}KB in total (20KB or less is recommended). This content takes up context in every project and every conversation. Global memories you rarely use can be archived or moved to the project they belong to, and descriptions can be shorter.`,
+      },
+    }));
+  }
+
+  // H23：每次都會載入的內容被改了、使用者還沒確認（1.4.0）。起點還沒建立前不判斷；設定 reviewWrites: off 時不提示
+  const engineSettings = (await readJson(path.join(ctx.local, 'settings.json'), null)) ?? {};
+  if (engineSettings.reviewWrites !== 'off' && !(await needsBaseline(ctx))) {
+    const pending = await pendingReviews(ctx);
+    if (pending.length) {
+      const label = (r) => (r.startsWith('core/') ? `核心準則 ${path.posix.basename(r)}` : path.posix.basename(r, '.md'));
+      const labelEn = (r) => (r.startsWith('core/') ? `core rules ${path.posix.basename(r)}` : path.posix.basename(r, '.md'));
+      const shown = pending.slice(0, 5);
+      const more = pending.length - shown.length;
+      out.push(finding('H23', 'low', `${pending.length} 筆每次對話都會載入的內容還沒經過你確認`,
+        `${shown.map((p) => label(p.ref)).join('、')}${more > 0 ? ` 等 ${pending.length} 筆` : ''}。這些是 Claude 新增或修改的全域記憶、單機記憶或核心準則，會在每個專案的每次對話被讀到；看一下內容是否正確。`,
+        {
+          refs: pending.map((p) => p.ref), key: `review:${pending.map((p) => `${p.ref}@${p.sha}`).join('|')}`,
+          fix: { action: 'open-review', args: {}, label: '檢視與確認', en: { label: 'Review and confirm' } },
+          en: {
+            title: `${pending.length === 1 ? '1 item that loads' : `${pending.length} items that load`} in every conversation ${pending.length === 1 ? 'has' : 'have'} not been reviewed`,
+            detail: `${shown.map((p) => labelEn(p.ref)).join(', ')}${more > 0 ? ` and ${more} more` : ''}. Claude added or changed these global memories, machine memories, or core rules, and they are read in every conversation in every project. Check that they are correct.`,
+          },
+        }));
+    }
+  }
+
+  // H24：核心準則有 1.4.0 的建議更新（找得到原本範本的位置、還沒加過）
+  const sugg = suggestionsFor((await readText(path.join(ctx.vault, 'core', 'CORE.md'))) ?? '');
+  if (sugg.length) {
+    out.push(finding('H24', 'low', '核心準則有建議更新', `${sugg.map((s) => s.title).join('、')}。Engram 1.4.0 依 Anthropic 的記憶研究調整了「記憶寫入協定」，可以一鍵加入你的核心準則（可復原）。`, {
+      refs: ['core/CORE.md'], key: `core-suggest:${sugg.map((s) => s.id).join(',')}`,
+      fix: { action: 'open-core', args: { suggestions: true }, label: '查看建議', en: { label: 'View suggestions' } },
+      en: { title: 'Suggested updates for your core rules', detail: `${sugg.map((s) => s.en.title).join(', ')}. Engram 1.4.0 adjusted the memory-writing protocol based on Anthropic's memory research; you can add these to your core rules in one click (and undo it).` },
+    }));
+  }
+
+  // H22：很少用到、或只在一個專案用到的全域記憶（1.4.0）。讀取統計要涵蓋 60 天以上才判斷
+  const usage = await loadUsage(ctx.vault);
+  if ((await coverageDays(ctx.vault, usage, now)) >= 60) {
+    for (const m of memories) {
+      if (m.scope?.kind !== 'global' || m.pinned) continue;
+      const u = usage.refs.get(m.ref);
+      const updated = Date.parse(m.updatedAt ?? '') || 0;
+      if (!u) {
+        if (!updated || now - updated <= 60 * DAY) continue;
+        const day = new Date(updated).toISOString().slice(0, 10);
+        out.push(finding('H22', 'low', `「${m.name}」很少用到`, `近 90 天所有電腦都沒有打開過這筆全域記憶的全文（最後修改 ${day}）。只看索引那一行就夠用的記憶也會這樣，請看內容再決定；全域記憶每次對話都會列在索引裡，確定用不到的可以封存（可從歷史還原），或搬到相關的專案。`, {
+          refs: [m.ref], key: `${m.ref}:unused`, fix: { action: 'remove', args: { ref: m.ref }, label: '封存（可從歷史還原）', en: { label: 'Archive (can be restored from history)' } },
+          en: { title: `"${m.name}" is rarely used`, detail: `No computer has opened the full text of this global memory in the last 90 days (last changed ${day}). Memories whose one-line index entry is enough look like this too, so check the content before deciding. Global memories are listed in the index in every conversation; ones you really don't use can be archived (restorable from history) or moved to the project they belong to.` },
+        }));
+        continue;
+      }
+      const used = Object.entries(u.projects).filter(([, n]) => n > 0);
+      if (u.reads >= 3 && u.days >= 2 && used.length === 1 && used[0][1] >= u.reads && projects.has(used[0][0])) {
+        const [pid] = used[0];
+        const pname = projects.get(pid)?.name ?? pid;
+        out.push(finding('H22', 'low', `「${m.name}」只在「${pname}」用到`, `近 90 天讀了 ${u.reads} 次，全部在「${pname}」。只跟一個專案有關的話，搬到那個專案就不會佔用其他專案的上下文；如果是通用的做法，維持全域即可。`, {
+          refs: [m.ref], key: `${m.ref}:single`, fix: { action: 'move', args: { ref: m.ref, scope: { kind: 'project', pid } }, label: `搬到「${pname}」`, en: { label: `Move to "${pname}"` } },
+          en: { title: `"${m.name}" is only used in "${pname}"`, detail: `Read ${u.reads} times in the last 90 days, all in "${pname}". If it only concerns that project, moving it there keeps it out of other projects' context; if it is a general practice, keep it global.` },
+        }));
+      }
+    }
   }
 
   const rank = { high: 0, medium: 1, low: 2, auto: 3 };

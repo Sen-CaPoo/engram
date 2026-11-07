@@ -17,7 +17,7 @@ allowed-tools: Bash(engram memory *) Bash(engram search *) Bash(engram remember 
 
 ## 步驟
 
-1. **找出值得記的事**。值得記的：
+1. **找出值得記的事**。記憶是寫給之後的對話用的：之後用得到、而且不寫下來就會遺失的事才值得記；值不值得記由你判斷。常見的有：
    - 使用者的偏好、糾正過你的地方、明確認可的做法（feedback）
    - 使用者的角色、背景、工作方式（user）
    - 專案的決策、限制、進度里程碑、踩過的坑（project）
@@ -38,6 +38,7 @@ allowed-tools: Bash(engram memory *) Bash(engram search *) Bash(engram remember 
    「動作」是「新增」或「更新 <ref>」。表格下方附上每一筆的內文草稿（不長的話）。
 5. **取得同意**：用 AskUserQuestion 詢問，選項是「全部寫入」「只寫部分（請告訴我編號）」「先不要」。在同一個回合裡取得同意，執行時才不會逐一跳出權限詢問。沒有 AskUserQuestion 工具時，列出這三個選項，然後停下來等使用者回覆。使用者沒有明確同意，就不執行任何寫入。
 6. **執行**：只做使用者同意的項目，逐項執行並看輸出。任何一步失敗就停下來說明原因，不要換別的方法硬改。
+   - 全域與單機記憶在步驟 4 一定要列出**完整內文**（不能只給摘要），使用者同意後寫入的內容要和列出的一字不差，這時才在 `engram remember` 或 `engram memory write` 加上 `--reviewed`：這些記憶會記為使用者確認過，不會再出現在收件匣的「待你確認」。沒有列出全文、或使用者沒有明確同意的，不可以加 `--reviewed`。
    - 使用者是在**之後的訊息**才同意時（例如回覆「全部寫入」），先用 Skill 工具重新呼叫 `engram:save`，參數寫「執行：」加上同意的編號（例如 `執行：全部`、`執行：1,3,5`），在那一輪執行。這個技能預先允許的指令只在呼叫它的那一回合有效，不重新呼叫的話，每個指令都會跳出權限詢問。
 7. **收尾**：執行 `engram sync`，回報每一筆寫到哪個範圍、記憶名稱是什麼，以及復原指令（如果輸出有附）。
 
@@ -46,6 +47,7 @@ allowed-tools: Bash(engram memory *) Bash(engram search *) Bash(engram remember 
 - `--name` 用 kebab-case 英數，會成為檔名；`--description` 是一句具體的話（索引只顯示這一句，Claude 靠它判斷要不要讀）。
 - feedback 與 project 類型，內文之後加上 `**Why:**` 與 `**How to apply:**` 兩行。
 - 一律寫絕對日期（例如 2026-10-23），不寫「今天」「下週」。
+- 寫下規則或做法時，註明怎麼確認的（實測、查文件或推測）；之後發現說法不對，直接更新那一筆。
 - 相關的記憶用 `[[name]]` 連結。
 - 用使用者平常的語言寫。
 
@@ -54,7 +56,7 @@ allowed-tools: Bash(engram memory *) Bash(engram search *) Bash(engram remember 
 ```bash
 # 新增（--scope project|global|machine；專案以外要指定專案時加 --project <pid>）
 engram remember --scope project --name <名稱> --type <user|feedback|project|reference> \
-  --description "<一句話>" <<'EOF'
+  --description "<一句話>" --reviewed <<'EOF'
 <內文>
 
 **Why:** <原因>
@@ -62,7 +64,7 @@ engram remember --scope project --name <名稱> --type <user|feedback|project|re
 EOF
 
 # 更新既有的一筆（整份內容，含 frontmatter；--base 是 show 時的版本）
-engram memory write <ref> --base <版本> <<'EOF'
+engram memory write <ref> --base <版本> --reviewed <<'EOF'
 <整份內容>
 EOF
 ```

@@ -678,7 +678,8 @@ describe('介面需要的引擎能力', () => {
     assert.equal(eg.machine.label, '辦公室桌機');
     assert.match(fs.readFileSync(path.join(eg.paths.vault, 'core', 'CORE.md'), 'utf8'), /辦公室桌機（/);
     assert.equal(JSON.parse(fs.readFileSync(path.join(eg.paths.vault, 'machines', eg.machine.id, 'machine.json'), 'utf8')).label, '辦公室桌機');
-    assert.deepEqual(await eg.settings.get(), { bindAuto: 'confident', collisionRename: 'ask' });
+    assert.deepEqual(await eg.settings.get(), { bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on' });
+    await assert.rejects(eg.settings.set({ reviewWrites: 'maybe' }), /reviewWrites/);
     await assert.rejects(eg.settings.set({ collisionRename: 'sometimes' }), /collisionRename/);
     await assert.rejects(eg.settings.set({ collisionRename: 'sometimes' }), (e) => e.en?.message === "collisionRename must be 'auto', 'ask' or 'off'", 'invariant 也附英文版');
     await eg.settings.set({ bindAuto: 'ask' });

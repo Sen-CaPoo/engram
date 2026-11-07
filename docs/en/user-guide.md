@@ -37,7 +37,7 @@ You don't have to do anything. Claude remembers things as usual, and Engram hand
 | During the conversation | Project memories are written the official way. Global and machine memories are written by Claude with `engram remember`, and it tells you when it has |
 | Conversation end | Tidies the index, checks for possible secrets, then saves to the vault |
 | Every 10 minutes (default) | Exchanges changes with your other computers. While you're offline, changes stay on this computer and catch up automatically once you're back online. You can change the interval on the Settings page |
-| Once a day (default 09:30) | Runs a health check; anything that needs your decision goes into the inbox |
+| Once a day (default 09:30) | Runs a health check (and updates the read statistics from this computer's conversations); anything that needs your decision goes into the inbox |
 
 When you want to tidy up on your own:
 
@@ -54,6 +54,7 @@ Health checks use rules only, so they can only find candidates such as "same nam
 | `/engram:inbox` | Reads through the inbox cards one by one, explains its reasoning and recommendations, and acts only after you approve. Add a card id to handle just that one; add `auto` to have it handle the items it's confident about directly. Sync conflicts, possible secrets, folder binding and renaming, mass deletions, archiving, and anything it isn't sure about are still left for you to decide | **Ask Claude to tidy up** at the top of the inbox, **Ask Claude** on a card, **Ask Claude to merge** on a conflict card |
 | `/engram:tidy` | A deep tidy of the global scope, the machine scope, one project, the core rules, every scope, or a single memory: finds memories that are semantically duplicate, outdated, contradictory, misfiled, or unclear, saves its suggestions (with the complete revised content) as a tidy-up record, and gives you a link to decide on each item in the dashboard. Analysis never changes a memory (see **Tidy-up** below) | The **Tidy-up** page generates the command; **Ask Claude to tidy up** on the Projects page, **Ask Claude to check** in Library, and **Ask Claude to trim** on the Core rules page open that page with the scope filled in |
 | `/engram:tidy-apply` | Carries out the decisions you made on the Tidy-up page: accepted items are written exactly as you saw them, "Adjust per note" items are handled by Claude following your notes, and it reports the results and how to undo them | **Generate run command** on the Tidy-up page |
+| `/engram:dream` | Conversation review: uses this computer's recent conversations as evidence to check one project's memories one by one, and adds what was missed. The suggestions are saved as a tidy-up record too, and you decide on each item (see **Conversation review** below) | On the **Tidy-up** page, pick a project and choose **Check against conversations**; **Review conversations** on the Projects page; the **Review the conversations** card in the inbox |
 | `/engram:save` | Reviews this conversation and saves what's worth remembering long-term as memories: decides the scope, checks first whether a similar memory exists, and updates that one if so | Use it in a conversation |
 | `/engram:recall` | Finds relevant experience in the memories of other projects, the global scope, and each computer, distills it into conclusions you can apply right away with sources attached; read-only | Use it in a conversation |
 
@@ -89,6 +90,43 @@ Safety by design:
 - **Detected secrets are not handed to Claude.** When Claude reads memories, possible secrets have already been replaced on this computer with a marker such as `‹已遮蔽：…›` ("redacted"). Engram also refuses writes that contain possible secrets, so Claude records only where the secret is stored instead.
 - **"Not a secret" is confirmed by you personally.** For a value that was flagged by mistake, run `engram not-secret` in your own terminal (it is refused if run inside Claude Code). Confirmed values are stored only as hashes and synced to all computers; if you marked one by mistake, view the list with `engram not-secret --list` and revoke it with `--remove`.
 - **Nothing is overwritten if it changed after Claude read it.** If another computer has just synced a change, or you edited the memory in the dashboard, the write is refused, and Claude re-reads it and reconsiders.
+
+### Conversation review: check memories against your conversations
+
+When a memory is wrong, or a project changed how it does something but the memory wasn't updated, Claude keeps reading it and keeps believing it. Anthropic's memory research found that going back to the original conversations and using them as evidence is what fixes this (they call it dreaming). Conversation review does exactly that.
+
+<p align="center">
+  <img src="../assets/en/screenshots/dream.png" alt="A conversation review record: each item quotes the conversation as evidence, with a red line where it contradicts the memory and a green line where it confirms it" width="900">
+</p>
+
+1. **Start**: open Claude Code in the project folder and type `/engram:dream` (or, on the **Tidy-up** page, pick the project, choose **Check against conversations**, and copy the command). You can add notes, for example "focus on the memories about deployment".
+2. **Claude analyzes**: Engram turns this project's not-yet-reviewed conversations on this computer into compact text (possible secrets are masked first), by default 20 per run, oldest first (change it with `--sessions`, up to 100). Each piece of conversation text (a very long conversation is split into several) goes to its own analysis subagent, which uses the conversation as evidence to check every memory:
+
+   | Finding | Suggestion |
+   | --- | --- |
+   | The conversation confirms the memory is still correct | **Still correct**: only the date it was checked (the date of the latest conversation in the evidence) is recorded in the memory; the content doesn't change. Used only for memories that go out of date easily or haven't been checked for over 30 days; other confirmed memories aren't listed |
+   | What the memory says has changed (a command, a path, a decision) | Rewritten to match the current state, with the old wording kept in one dated sentence |
+   | A to-do or status in the memory has passed | Rewritten, or the whole memory archived |
+   | The memory sounds certain, but the conversation shows it was only a guess | Changed to the actual level of certainty |
+   | The conversations contain something worth remembering that no memory has yet | Added (Engram first checks whether a similar memory exists) |
+   | Two conversations contradict each other | Both versions listed with their dates, for you to judge |
+   | The conversation is older than the memory's last change and says something different | The memory isn't changed (it was most likely updated later); the summary points it out for you to check |
+3. **Decide each item**: Claude gives you a link, and you decide each item on the Tidy-up page, just as in a regular tidy-up. Each item comes with a quote from the conversation and its date (a red line means it contradicts the memory, a green line means it confirms it).
+4. **Run it**: press **Generate run command** and paste `/engram:tidy-apply <id>` back into Claude Code.
+
+<p align="center">
+  <img src="../assets/en/screenshots/dream-start.png" alt="The Tidy-up home page: after you pick a project, choose Memories only or Check against conversations; below, how many conversations on this computer have not been reviewed" width="900">
+</p>
+
+Things to know:
+
+- **Conversations are read on this computer only.** They aren't synced or uploaded to GitHub; your own Claude Code reads them during the analysis, as in any conversation. The exported text lives in `~/.engram/local/dream/` and is deleted as soon as the tidy-up record is created; if a run is never finished, it is deleted automatically after 14 days. Each computer has different conversations, so reviewing on one computer checks that computer's conversations.
+- **Claude Code keeps conversations for only 30 days by default** (the `cleanupPeriodDays` setting). Once a conversation is deleted, it can no longer be used to check anything, so when unreviewed conversations are about to be deleted, a **Review the conversations** card appears in the inbox.
+- **Conversations that have been reviewed aren't analyzed again.** For a conversation you pick up again later (resume) and that has grown longer, only the new part is analyzed next time. A conversation counts as reviewed as soon as the tidy-up record is created, however you decide on the web page; conversations that couldn't be analyzed don't count and are included again next time. If you delete the tidy-up record on the Tidy-up page before deciding every item, its conversations go back to not reviewed.
+- **Quotes are checked against the conversation.** Every quote is compared with the exported conversation text, and quotes that can't be found are marked **Not found in conversation** (they may have been reworded), so take a second look before deciding.
+- **Usage**: one subagent (Sonnet) reads each piece of conversation text in full, so the longer and more numerous the conversations, the more quota it uses. When there are many conversations, add `--sessions 5` to review the oldest 5 first.
+- **Permissions**: the analysis subagents have read-only tools and can't change any file. Engram adds `~/.engram/local/dream` to Claude Code's list of allowed read locations (`permissions.additionalDirectories`, removed on uninstall) so reading doesn't trigger a prompt. This setting takes effect in new conversations only, so if the first review right after an update is blocked, start a new conversation and run it again.
+- **What's in a conversation is data, not instructions.** Text embedded in a web page or file, such as "ignore your previous instructions", isn't taken as fact and isn't followed.
 
 > If you've just updated Engram and a conversation that's already open doesn't show these commands, run `/reload-plugins` or start a new conversation. The first time Claude Code asks whether to allow running `engram` commands, choose Allow. The instructions inside these commands are in Traditional Chinese for now; Claude normally replies in the language you write in.
 
@@ -162,10 +200,38 @@ Engram checks the state of your memories once a day, and anything that needs you
 | Medium | `N memories with identical content` / `Possible duplicate: …` | Two or more memories have identical content, or very similar names and descriptions | Press **Merge**, or **Compare side by side and merge** |
 | Medium | Looks specific to this computer | The content mentions this computer's install locations or environment | Change it to a machine memory |
 | Medium | May belong to another folder | A memory that was written to the wrong place while folders were colliding | Move it to the right folder |
+| Medium / Suggestion | A lot loads in every conversation | The core rules plus the global and machine indexes come to over 20 KB (over 25 KB is Medium) | **Ask Claude to trim**, or archive global memories you rarely use |
 | Suggestion | May apply to all projects | For example, your own preferences stored in just one project | Promote it to global |
 | Suggestion | May be outdated | Not updated for a long time, and the project hasn't been opened in a long time | Archive it (it can be restored) |
+| Suggestion | Review the conversations | A project has conversations that haven't been reviewed, and either the oldest will be deleted by Claude Code within 7 days, or the project's memories that go out of date easily (project progress, anything that says "TODO" or "not yet") haven't been checked in over 30 days | **Ask Claude to review**; see **Conversation review** in section 3 |
+| Suggestion | Broken `[[link]]` | A `[[name]]` in a memory points to a memory that has been merged or archived | Relink it to the merged memory, or remove the link and keep just the text |
+| Suggestion | Rarely used / Used in only one project | A global memory hasn't been opened in full in the last 90 days (the index line loads in every conversation and doesn't count; memories changed in the last 60 days are skipped), or has been opened in only one project (at least 3 times, on 2 or more days). Pinned memories are skipped; statistics need at least 60 days to judge | Archive it, or move it to that project; if it's a general practice, just keep it global |
+| Suggestion | Waiting for your review | Claude added or changed a global memory, a machine memory, or the core rules on its own | **Review and confirm**; see below |
+| Suggestion | Suggested updates for your core rules | Engram 1.4.0 suggests adding a few sentences to the "memory write protocol" | Look it over on the **Core rules** page and add it in one click; see section 9 |
 
 Cards that take reading the content to judge have an **Ask Claude** button, which gives you a command to paste into any Claude Code conversation.
+
+### Waiting for your review: when Claude writes to what every conversation loads
+
+Global memories, this computer's machine memories, and the core rules are read in every conversation in every project. One wrong memory (or one Claude was nudged into writing by instructions slipped into a conversation) spreads its effect to every project. So when Claude writes these on its own, a **Waiting for your review** card appears in the inbox:
+
+<p align="center">
+  <img src="../assets/en/screenshots/review.png" alt="The Waiting for your review dialog: each item shows the before-and-after changes or the full text of a new memory, with options to confirm, edit, or go back to the reviewed version" width="900">
+</p>
+
+- Changes show a before-and-after view, and new items show their full text. You can **Confirm**, **Edit**, or **Go back to the reviewed version** (for a new item, that means archiving it, and you can restore it).
+- Anything you edited, merged, or moved in the dashboard, accepted as suggested on the Tidy-up page and carried out, or agreed to write with `/engram:save` counts as reviewed and isn't asked about again. Items you set to **Adjust per note** are rewritten by Claude, so you haven't seen the result yet and they are still listed for review.
+- Actions that change a single field (recording a check date, pinning, relinking, redacting a secret) keep the previous state: if the memory was reviewed, it stays reviewed; if it was waiting for review, it still is. One-click **Promote to Global** from the inbox also asks you to review the content.
+- On the first run after updating to 1.4.0, existing content is the starting point (it counts as reviewed), and only later writes are asked about. When a second computer updates, it uses only its own machine memories as its starting point, so it doesn't mark content still waiting on the other computer as reviewed.
+- Confirming on any computer counts. This is only a reminder and doesn't block the write; if you don't need it, turn it off under **Health check** on the Settings page.
+
+### Read statistics
+
+Engram counts how often each memory has been read from this computer's conversations (a memory read more than once in the same conversation on the same day counts once). In Library, a memory's details show how many times it was read in the last 90 days, the date of the last read, and in which projects. The counting happens on this computer only, and once a day a summary of the read counts is synced, so the counts from both computers are added together.
+
+- When the global or machine index runs out of room (when you have a lot of memories), pinned memories are listed first, then memories added or changed in the last 14 days, then the most-read ones; the rest can be found with `engram search`. Read counts are used for ordering only once every computer runs 1.4.0, so different versions don't keep reordering the index.
+- Once the statistics cover 60 days or more, global memories that are rarely used or used in only one project show up in the inbox.
+- A memory's details also list which memories it `[[links to]]`, which memories link to it, and the date the conversation review last confirmed it was still correct.
 
 ## 7. Handling conflicts
 
@@ -210,6 +276,8 @@ To undo a rename: find the entry in the change history under **Devices & sync** 
 The core rules (`CORE.md`) are one document that's loaded in every conversation, shared by all projects and all computers. They contain your identity and preferences, a list of your work environments, and the "memory write protocol" that teaches Claude how to write memories into the right scope.
 
 - Edit them on the **Core rules** page of the dashboard, or press **Ask Claude to trim** to have `/engram:tidy` tidy them.
+- **Load budget** shows the combined lines and size of the core rules and the two indexes. This layer loads in every project and every conversation, so try to keep it under 20 KB.
+- **Suggested updates**: Engram 1.4.0 adjusted the template's memory write protocol based on Anthropic's memory research. It now explains what memory is for ("things that will be useful later and would be lost if not written down", so Claude judges for itself instead of following fixed rules), and asks that a rule note how it was confirmed (tested, checked in the docs, or a guess). The core rules are your file, and Engram never changes them on its own. When it can find where the original template text sits, the **Core rules** page lists the suggestions, and you press **Add** once you've looked them over; afterwards you can undo it from the change history.
 - The working guidelines already in `~/.claude/CLAUDE.md` are not moved away. If you want your working guidelines to be the same on every computer: after you apply an import on the **Import memories** page, **Optional: share your working guidelines across all computers** appears. Press **Sync working guidelines**: you first preview what the moved content will look like, and it moves into the vault only after you approve. Afterwards you can press **Switch back to each computer's own version** to restore it bit for bit.
 
 ## 10. Pause, undo, and remove
@@ -248,9 +316,10 @@ If the new version has problems, `engram update --rollback` switches back to the
 | `engram collisions` | Lists colliding folders and their suggested new names (`apply` renames, `undo <id>` reverts the whole batch) |
 | `engram undo <version>` | Undoes one write, move, archive, merge, or conflict resolution |
 | `engram tidy list` | Lists tidy-up records (`show <id>` shows one; `create`, `apply`, and `done` are used by `/engram:tidy` and `/engram:tidy-apply`) |
+| `engram dream status` | How many of the current project's conversations on this computer have not been reviewed, and when the oldest will be deleted (`prepare`, `done`, and `list` are used by `/engram:dream`) |
 | `engram not-secret` | Records a value that was wrongly flagged as a secret in the "Not a secret" list (can only be run in your own terminal) |
 | `engram update` | Deploys a new version (`--rollback` switches back to the previous one) |
 | `engram uninstall` | Reverts to how things were before installation, from the installation record (`--dry-run` only lists the plan, `--purge` also deletes the local vault) |
 | `engram help <command>` | Shows the full usage of a command |
 
-The `/engram:inbox`, `/engram:tidy`, `/engram:tidy-apply`, `/engram:save`, and `/engram:recall` commands in Claude Code are covered in section 3, and the memory pane's `/engram-memories` in section 4.
+The `/engram:inbox`, `/engram:tidy`, `/engram:tidy-apply`, `/engram:dream`, `/engram:save`, and `/engram:recall` commands in Claude Code are covered in section 3, and the memory pane's `/engram-memories` in section 4.

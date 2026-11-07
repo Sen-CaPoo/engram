@@ -5,6 +5,7 @@ import { cmdInbox } from './commands/inbox.mjs';
 import { cmdCore, cmdMemory, cmdNotSecret, cmdRemember, cmdSearch, cmdUndo } from './commands/memory.mjs';
 import { cmdAgent, cmdDoctor, cmdHook, cmdInstall, cmdMergeDriver, cmdSchedule, cmdUi, cmdUninstall, cmdUpdate, cmdVersion } from './commands/system.mjs';
 import { cmdTidy } from './commands/tidy.mjs';
+import { cmdDream } from './commands/dream.mjs';
 import { cmdBind, cmdCollisions, cmdImport, cmdProjects, cmdStatus, cmdSync, cmdUnbind } from './commands/vault.mjs';
 import { loadEngine } from './engine.mjs';
 import { CliError } from './errors.mjs';
@@ -23,9 +24,9 @@ export const COMMANDS = {
   search: { run: cmdSearch, options: { limit: str }, usage: 'search <關鍵字> [--limit 10]', summary: '搜尋所有範圍的記憶' },
   remember: {
     run: cmdRemember,
-    options: { scope: str, name: str, description: str, type: str, body: str, project: str, file: str },
-    usage: 'remember --scope global|machine|project --name <名稱> --type user|feedback|project|reference --description <說明> [--project <pid>] [--body <內文> | --file <檔案>]',
-    summary: '寫入一筆記憶（內文可從標準輸入或 --file 傳入）',
+    options: { scope: str, name: str, description: str, type: str, body: str, project: str, file: str, reviewed: bool },
+    usage: 'remember --scope global|machine|project --name <名稱> --type user|feedback|project|reference --description <說明> [--project <pid>] [--body <內文> | --file <檔案>] [--reviewed]',
+    summary: '寫入一筆記憶（內文可從標準輸入或 --file 傳入）；--reviewed：使用者已經看過並同意這段內容',
   },
   inbox: {
     run: cmdInbox,
@@ -35,8 +36,8 @@ export const COMMANDS = {
   },
   memory: {
     run: cmdMemory,
-    options: { scope: str, project: str, type: str, base: str, to: str, into: str, file: str },
-    usage: 'memory list [--project <pid> | --scope global|machine|project] [--type <類型>] | show <ref>... | write <ref> [--base <版本>] [--file <檔案>] | move <ref> --to global|machine[:<mid>]|project:<pid> | remove <ref> | merge <ref> <ref>... [--into <ref>] [--base <版本,...>] [--file <檔案>]',
+    options: { scope: str, project: str, type: str, base: str, to: str, into: str, file: str, reviewed: bool },
+    usage: 'memory list [--project <pid> | --scope global|machine|project] [--type <類型>] | show <ref>... | write <ref> [--base <版本>] [--file <檔案>] [--reviewed] | move <ref> --to global|machine[:<mid>]|project:<pid> | remove <ref> | merge <ref> <ref>... [--into <ref>] [--base <版本,...>] [--file <檔案>]',
     summary: '列出、讀取（遮蔽金鑰）、改寫、移動、封存、合併記憶；write 與 merge 的內容從標準輸入或 --file 傳入（~/.engram/local/drafts/ 底下的草稿用完即刪）',
   },
   tidy: {
@@ -44,6 +45,12 @@ export const COMMANDS = {
     options: { file: str, undo: str, skip: bool, message: str },
     usage: 'tidy create --file <計畫.json> | list | show <id> | apply <id> | done <id> <項目> [--undo <版本,...>] [--skip] [--message <說明>]',
     summary: '記憶整理：把 Claude 的整理計畫存成整理記錄，使用者在管理介面逐項決定後照決定執行（/engram:tidy、/engram:tidy-apply 技能使用）',
+  },
+  dream: {
+    run: cmdDream,
+    options: { sessions: str, since: str, skip: str },
+    usage: 'dream status [project:<pid>] | prepare [project:<pid>] [--sessions 20] [--since YYYY-MM-DD] | done <回顧編號> [--skip <session,...>] | reset <回顧編號> | list',
+    summary: '對話回顧：把這台電腦還沒回顧的對話轉成精簡文字（只在本機），讓 Claude 拿來驗證記憶、補上漏記的事（/engram:dream 技能使用）',
   },
   core: { run: cmdCore, options: { base: str, file: str }, usage: 'core | core write [--base <版本>] [--file <檔案>]', summary: '讀取核心準則 CORE.md；write 從標準輸入或 --file 寫入' },
   undo: { run: cmdUndo, usage: 'undo <版本>', summary: '復原一次寫入、移動、封存、合併或衝突處理' },
@@ -75,7 +82,7 @@ export const COMMANDS = {
 
 const GROUPS = [
   ['記憶', ['search', 'remember']],
-  ['整理（給 Claude Code 的 /engram 技能使用，也可以自己執行）', ['inbox', 'tidy', 'memory', 'core', 'undo', 'not-secret']],
+  ['整理（給 Claude Code 的 /engram 技能使用，也可以自己執行）', ['inbox', 'tidy', 'dream', 'memory', 'core', 'undo', 'not-secret']],
   ['專案與同步', ['status', 'sync', 'bind', 'unbind', 'projects', 'import', 'collisions']],
   ['管理', ['ui', 'agent', 'doctor', 'schedule', 'install', 'update', 'uninstall']],
   ['其他', ['hook', 'merge-driver', 'version', 'help']],

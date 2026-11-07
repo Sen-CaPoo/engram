@@ -53,4 +53,8 @@ export default {
   'engram uninstall --dry-run   # 先看會還原哪些東西': 'engram uninstall --dry-run   # preview what will be reverted',
   'engram uninstall             # 逐項還原，保留記憶庫': 'engram uninstall             # revert each step, keep the vault',
   '會做的事：停止常駐程式並刪除登入工作、移除 Claude Code 外掛、把 junction 換回一般資料夾並放回記憶檔、撤銷 Engram 加入的權限設定、從 ~/.claude/CLAUDE.md 移除 Engram 區塊。加上 --purge 才會刪除記憶庫（GitHub 上的 repo 不受影響）。': 'What it does: stops the agent and deletes its sign-in task, removes the Claude Code plugin, turns junctions back into regular folders with your memory files, reverts the permission settings Engram added, and removes the Engram block from ~/.claude/CLAUDE.md. The vault is deleted only with --purge (the repo on GitHub is not affected).',
+  // 1.4.0
+  "已更新確認設定": "Review setting updated",
+  "Claude 寫入每次都會載入的內容時請我確認": "Ask me to review when Claude writes something that loads every time",
+  "全域記憶、這台電腦的單機記憶與核心準則會在每個專案的每次對話被讀到。Claude 自己寫入這些內容時，收件匣會列出「待你確認」，看過差異後確認、編輯或退回；你在介面、記憶整理或 /engram:save 同意過的不會再問。只是提醒，不會擋住寫入。": "Global memories, this computer's machine memories, and the core rules are read in every conversation in every project. When Claude writes these on its own, the inbox lists them as waiting for your review: look at the changes, then confirm, edit, or go back. Anything you already approved in the dashboard, in Tidy-up, or through /engram:save is not asked again. This is only a reminder; it does not block the write.",
 };

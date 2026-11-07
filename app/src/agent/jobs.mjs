@@ -217,6 +217,13 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
     },
 
     async health() {
+      // 1.4.0：先更新讀取統計（從對話紀錄增量計算、每天同步一次摘要）與確認紀錄的起點，再做健康檢查。失敗不影響健康檢查
+      if (typeof eg.usage?.refresh === 'function') await eg.usage.refresh().catch((err) => log.warn('usage', err));
+      if (typeof eg.review?.baseline === 'function') await eg.review.baseline().catch((err) => log.warn('review', err));
+      if (typeof eg.review?.prune === 'function') await eg.review.prune().catch((err) => log.warn('review', err));
+      if (typeof eg.dream?.ensureReadable === 'function') await eg.dream.ensureReadable().catch((err) => log.warn('dream', err));
+      // 放著沒完成的對話回顧：匯出的文字 14 天後清除
+      if (typeof eg.dream?.cleanup === 'function') await eg.dream.cleanup().catch((err) => log.warn('dream', err));
       const findings = (await eg.health()) ?? [];
       const high = findings.filter((f) => f.severity === 'high');
       events.emit('finding', { at: iso(now()), findings });

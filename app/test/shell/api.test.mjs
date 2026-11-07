@@ -111,7 +111,8 @@ describe('狀態與記憶', () => {
     const ref = 'global/powershell-bom.md';
     let r = await call('PUT', `/api/memory?ref=${encodeURIComponent(ref)}`, { frontmatter: { description: '新說明' }, body: '新內文' });
     assert.deepEqual(keys(r.json), ACTION);
-    assert.deepEqual(lastCall('memories.write').args, [ref, { frontmatter: { description: '新說明' }, body: '新內文', allowSecrets: false }]);
+    // 1.4.0：介面的寫入是使用者自己做的，記為確認過（H23）
+    assert.deepEqual(lastCall('memories.write').args, [ref, { frontmatter: { description: '新說明' }, body: '新內文', allowSecrets: false, reviewed: true }]);
     // 使用者在介面確認「不是金鑰」才帶 allowSecrets（只接受 true，其他值一律當成沒有確認）
     await call('PUT', `/api/memory?ref=${encodeURIComponent(ref)}`, { raw: '內文', allowSecrets: true });
     assert.equal(lastCall('memories.write').args[1].allowSecrets, true);
@@ -119,14 +120,15 @@ describe('狀態與記憶', () => {
     assert.equal(lastCall('memories.write').args[1].allowSecrets, false);
     r = await call('POST', '/api/memory/move', { ref, scope: 'machine:office-7k2q' });
     assert.deepEqual(keys(r.json), ACTION);
-    assert.deepEqual(lastCall('memories.move').args, [ref, { kind: 'machine', mid: 'office-7k2q' }]);
+    assert.deepEqual(lastCall('memories.move').args, [ref, { kind: 'machine', mid: 'office-7k2q' }, { reviewed: true }]);
     r = await call('POST', '/api/memory/move', { ref, scope: { kind: 'global' } });
     assert.deepEqual(lastCall('memories.move').args[1], { kind: 'global' });
     r = await call('POST', '/api/memory/merge', { refs: [ref, 'global/b.md'], into: ref, body: '合併' });
-    assert.deepEqual(lastCall('memories.merge').args, [[ref, 'global/b.md'], { into: ref, body: '合併' }]);
+    assert.deepEqual(lastCall('memories.merge').args, [[ref, 'global/b.md'], { into: ref, body: '合併', reviewed: true }]);
     r = await call('POST', '/api/memory/remove', { ref });
     assert.deepEqual(keys(r.json), ACTION);
     r = await call('POST', '/api/memory/restore', { ref, rev: 'a1b2c3d' });
+    // 從歷史還原的版本以前確認過就自動算確認過，不另外標（1.4.0）
     assert.deepEqual(lastCall('memories.restore').args, [ref, { rev: 'a1b2c3d' }]);
     assert.equal((await call('POST', '/api/memory/move', { ref, scope: 'planet' })).status, 400);
   });
@@ -135,7 +137,8 @@ describe('狀態與記憶', () => {
     const ref = 'global/powershell-bom.md';
     let r = await call('POST', '/api/memory/pin', { ref, pinned: true });
     assert.deepEqual(keys(r.json), ACTION);
-    assert.deepEqual(lastCall('memories.write').args, [ref, { frontmatter: { 'metadata.engram.pinned': true } }]);
+    // 釘選只改一個欄位：原本確認過才算確認過（1.4.0）
+    assert.deepEqual(lastCall('memories.write').args, [ref, { frontmatter: { 'metadata.engram.pinned': true }, carryReviewed: true }]);
     await call('POST', '/api/memory/pin', { ref, pinned: false });
     const fm = lastCall('memories.write').args[1].frontmatter;
     assert.ok('metadata.engram.pinned' in fm);
@@ -344,7 +347,7 @@ describe('審查修正後新增的端點', () => {
   test('PUT /api/memory { raw } → 以原始碼模式寫入整份檔案', async () => {
     const r = await call('PUT', '/api/memory?ref=global/powershell-bom.md', { raw: '---\nname: x\n---\n內文\n' });
     assert.equal(r.status, 200);
-    assert.deepEqual(lastCall('memories.write').args[1], { text: '---\nname: x\n---\n內文\n', allowSecrets: false });
+    assert.deepEqual(lastCall('memories.write').args[1], { text: '---\nname: x\n---\n內文\n', allowSecrets: false, reviewed: true });
   });
 
   test('POST /api/findings/dismiss：忽略或延後', async () => {
@@ -386,7 +389,7 @@ describe('審查修正後新增的端點', () => {
     const settings = createSettings(paths);
     const api2 = createApi({ eg, jobs, paths, info: { statusSummary: () => ({}) }, settings });
     const got = await api2.handle('GET', '/api/settings', new URLSearchParams(), {});
-    assert.deepEqual(keys(got), ['bindAuto', 'collisionRename', 'healthTime', 'machineLabel', 'paused', 'remote', 'syncIntervalMin']);
+    assert.deepEqual(keys(got), ['bindAuto', 'collisionRename', 'healthTime', 'machineLabel', 'paused', 'remote', 'reviewWrites', 'syncIntervalMin']);
     const put = await api2.handle('PUT', '/api/settings', new URLSearchParams(), { syncIntervalMin: 15, healthTime: '08:45', paused: true, machineLabel: '家裡電腦', bindAuto: 'ask' });
     assert.equal(put.syncIntervalMin, 15);
     assert.equal(put.healthTime, '08:45');
@@ -395,6 +398,8 @@ describe('審查修正後新增的端點', () => {
     assert.deepEqual(lastCall('settings.set').args, [{ bindAuto: 'ask' }]);
     await api2.handle('PUT', '/api/settings', new URLSearchParams(), { collisionRename: 'ask' });
     assert.deepEqual(lastCall('settings.set').args, [{ collisionRename: 'ask' }]);
+    await api2.handle('PUT', '/api/settings', new URLSearchParams(), { reviewWrites: 'off' });
+    assert.deepEqual(lastCall('settings.set').args, [{ reviewWrites: 'off' }]);
     const pausedFile = JSON.parse(fs.readFileSync(path.join(paths.local, 'paused.json'), 'utf8'));
     assert.deepEqual(pausedFile, { user: true, junction: true, normalize: true });
     await assert.rejects(() => api2.handle('PUT', '/api/settings', new URLSearchParams(), { syncIntervalMin: 7 }), /5、10、15 或 30/);

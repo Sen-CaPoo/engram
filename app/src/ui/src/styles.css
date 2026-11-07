@@ -455,6 +455,9 @@ html[lang="en"] .steps li::before { content: "Step " counter(st); }
 .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; font-size: var(--fs-sm); margin: 0; }
 .kv dt { color: var(--text-3); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
+/* 1.4.0 記憶詳情：驗證、讀取、連結 */
+.kv.insights { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.kv.insights dd.links { display: grid; gap: 2px; }
 
 /* ── 窄螢幕：導覽列收合為圖示 ─────────────────────── */
 @media (max-width: 960px) {
@@ -593,6 +596,21 @@ dialog.dialog[open] { display: flex; }
 .tidy-title { display: flex; gap: 6px; align-items: start; color: var(--text) !important; font-weight: 600; font-size: var(--fs-md) !important; }
 .tidy-title svg { width: 16px; height: 16px; flex: none; margin-top: 3px; color: var(--brand); }
 .tidy-reason { white-space: pre-wrap; }
+/* 1.4.0 對話回顧：對話裡的證據（逐字引句） */
+.tidy-evidence { display: grid; gap: 6px; }
+.tidy-evidence blockquote { margin: 0; padding: 6px 10px; border-left: 3px solid var(--ok); background: var(--panel-2); border-radius: 0 6px 6px 0; display: grid; gap: 2px; font-size: var(--fs-sm); }
+.tidy-evidence blockquote.contra { border-left-color: var(--danger); }
+.tidy-evidence blockquote > span:last-child { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tidy-evidence .ev-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: var(--fs-xs); }
+.chip.bad { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.seg.tidy-mode { flex-wrap: wrap; max-width: 100%; justify-self: start; width: fit-content; }
+.kv.insights .chip { white-space: normal; height: auto; min-height: 22px; }
+.act-chip.verify { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+/* 1.4.0 待你確認 */
+.review-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; }
+.review-item > header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 0; border: 0; }
+.review-item > header h3 { margin: 0; font-size: var(--fs-md); }
+.review-item > footer { display: flex; gap: 6px; flex-wrap: wrap; padding: 0; border: 0; justify-content: flex-start; }
 .act-chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 4px; font-size: 12px; font-weight: 600; white-space: nowrap; background: var(--panel-2); color: var(--text-2); border: 1px solid var(--border); }
 .act-chip.update, .act-chip.split, .act-chip.promote { background: var(--brand-soft); color: var(--brand-ink); border-color: transparent; }
 .act-chip.move { background: color-mix(in srgb, var(--scope-machine) 14%, transparent); color: var(--scope-machine); border-color: transparent; }

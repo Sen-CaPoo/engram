@@ -88,7 +88,7 @@ export function createFakeEngine({ home = path.join('C:', 'fake', '.engram'), cl
       },
       create: async (input) => rec('memories.create', [input], { ...action(), ref: `global/${input.name}.md` }),
       write: async (ref, input) => rec('memories.write', [ref, input], action()),
-      move: async (ref, scope) => rec('memories.move', [ref, scope], action()),
+      move: async (ref, scope, o) => rec('memories.move', o === undefined ? [ref, scope] : [ref, scope, o], action()),
       merge: async (refs, o) => rec('memories.merge', [refs, o], action()),
       remove: async (ref) => rec('memories.remove', [ref], action()),
       restore: async (ref, o) => rec('memories.restore', [ref, o], action()),

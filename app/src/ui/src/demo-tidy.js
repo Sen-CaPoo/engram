@@ -119,7 +119,107 @@ const EN = {
   kept: ['global/git-commit-style.md'],
 };
 
-/** 建立展示用的整理記錄：一份待你決定（全域），一份已完成（專案） */
+// 對話回顧（1.4.0）：拿對話紀錄驗證專案記憶的展示記錄
+const DREAM_ZH = {
+  summary: '回顧了這台電腦 6 個對話（10/28～11/06）：2 筆記憶已經過時、1 筆說得太肯定、2 筆被對話證實，另外有 1 件事值得記下來。',
+  highlights: ['部署指令在 11/02 改成 npm run release，記憶還寫著舊的 npm run deploy', '「API 每分鐘上限 60 次」是當時的推測，對話裡沒有驗證過', '11/03 會議決定報表一律輸出 CSV，還沒有任何記憶記下'],
+  groups: { changed: '已經改變的事', unsure: '說得太肯定', fresh: '新的記憶', same: '與對話一致' },
+  items: [
+    { name: 'deploy-notes', group: 'changed', action: 'update', type: 'project', title: '部署指令已改成 npm run release',
+      reason: '11/02 的對話把部署腳本改名，之後兩次部署都用 npm run release 成功；記憶還寫著 npm run deploy，照著做會找不到指令。保留一句舊說法的紀錄。',
+      evidence: [{ session: '7c2e91ab', date: '2026-11-02', quote: '把 package.json 的 deploy 改名成 release，順便加上版本號檢查', contradicts: true }, { session: 'a41f0d3c', date: '2026-11-05', quote: 'npm run release 跑完了，三台主機都更新成功' }],
+      before: '部署：npm run deploy（會先跑測試）。\n部署主機：app-01、app-02、app-03。',
+      after: '部署：npm run release（2026-11-02 起；之前是 npm run deploy）。會先跑測試與版本號檢查。\n部署主機：app-01、app-02、app-03。' },
+    { name: 'release-checklist-oct', group: 'changed', action: 'archive', type: 'project', title: '封存：10 月的上線清單已全部完成',
+      reason: '記憶是 10 月第二階段上線的待辦清單；11/04 的對話逐項確認都完成了，留著會讓 Claude 以為還有事沒做。',
+      evidence: [{ session: 'e09b44d2', date: '2026-11-04', quote: '清單上最後兩項（備份排程、監控告警）也都設好了，第二階段結案' }],
+      before: '第二階段上線待辦：\n- [ ] 備份排程\n- [ ] 監控告警' },
+    { name: 'api-rate-limit', group: 'unsure', action: 'update', type: 'reference', title: '「每分鐘 60 次」改成推測，並註明還沒驗證',
+      reason: '這筆寫得很肯定，但 10/29 的對話裡是 Claude 依錯誤訊息推測的，之後沒有查到文件或實測。改成實際的確定程度，免得之後被當成事實。',
+      evidence: [{ session: '3b8d1f60', date: '2026-10-29', quote: '看起來像是每分鐘 60 次的限制，不過文件沒寫，我先照這個假設調整重試間隔' }],
+      before: '供應商 API 每分鐘上限 60 次。',
+      after: '供應商 API 每分鐘上限推測是 60 次（2026-10-29 依 429 錯誤推測，尚未查到文件或實測確認）。' },
+    { name: 'report-csv-only', group: 'fresh', action: 'create', type: 'project', title: '新增：報表一律輸出 CSV（客戶 11/03 決定）',
+      reason: '11/03 的對話記錄了客戶會議的決定，之後的報表功能都要照這個做，但還沒有任何記憶寫下來；對話紀錄 30 天後就會被清除。',
+      evidence: [{ session: 'c5a7e210', date: '2026-11-03', quote: '客戶說報表不要 Excel 了，一律給 CSV，欄位用英文代碼' }],
+      after: '客戶在 2026-11-03 的會議決定：報表一律輸出 CSV，欄位名稱用英文代碼，不再提供 Excel。\n\n**Why:** 客戶的下游系統只吃 CSV。\n**How to apply:** 新的報表功能預設 CSV；遇到要做 Excel 的需求先確認。' },
+    { name: 'api-auth', group: 'same', action: 'verify', type: 'reference', title: '仍然正確',
+      reason: '11/05 照這筆的步驟換發權杖，一次成功。',
+      evidence: [{ session: 'a41f0d3c', date: '2026-11-05', quote: '照記憶裡的步驟到後台重新產生權杖，存到認證管理員，測試呼叫 200' }],
+      before: '權杖在供應商後台產生，存在 Windows 認證管理員的「vendor-api」。' },
+    { name: 'db-backup', group: 'same', action: 'verify', type: 'project', title: '仍然正確',
+      reason: '11/04 檢查備份時，路徑與排程都和記憶相同。',
+      evidence: [{ session: 'e09b44d2', date: '2026-11-04', quote: '備份在 D:\\backup\\db，每天 02:00，最近七天都有檔案' }],
+      before: '資料庫每天 02:00 備份到 D:\\backup\\db，保留 14 天。' },
+  ],
+};
+const DREAM_EN = {
+  summary: 'Reviewed 6 conversations on this computer (10/28–11/06): 2 memories are out of date, 1 is too confident, 2 were confirmed by the conversations, and 1 thing is worth remembering.',
+  highlights: ['The deploy command changed to npm run release on 11/02; the memory still says npm run deploy', '"60 requests per minute" was a guess at the time and was never verified', 'The 11/03 meeting decided reports are always CSV; no memory records it yet'],
+  groups: { changed: 'What changed', unsure: 'Too confident', fresh: 'New memories', same: 'Matches the conversations' },
+  items: [
+    { name: 'deploy-notes', group: 'changed', action: 'update', type: 'project', title: 'The deploy command is now npm run release',
+      reason: 'On 11/02 the deploy script was renamed, and both deployments after that used npm run release successfully. The memory still says npm run deploy, which no longer exists. The old wording is kept in one sentence.',
+      evidence: [{ session: '7c2e91ab', date: '2026-11-02', quote: 'Rename deploy to release in package.json and add a version check', contradicts: true }, { session: 'a41f0d3c', date: '2026-11-05', quote: 'npm run release finished; all three hosts are updated' }],
+      before: 'Deploy: npm run deploy (runs the tests first).\nHosts: app-01, app-02, app-03.',
+      after: 'Deploy: npm run release (since 2026-11-02; previously npm run deploy). Runs the tests and a version check first.\nHosts: app-01, app-02, app-03.' },
+    { name: 'release-checklist-oct', group: 'changed', action: 'archive', type: 'project', title: 'Archive: the October launch checklist is done',
+      reason: 'This memory is the to-do list for the phase 2 launch in October. The 11/04 conversation confirmed every item is done; keeping it would make Claude think work is still open.',
+      evidence: [{ session: 'e09b44d2', date: '2026-11-04', quote: 'The last two items (backup schedule, monitoring alerts) are set up too; phase 2 is closed' }],
+      before: 'Phase 2 launch to-do:\n- [ ] Backup schedule\n- [ ] Monitoring alerts' },
+    { name: 'api-rate-limit', group: 'unsure', action: 'update', type: 'reference', title: 'Mark "60 per minute" as a guess that is not verified',
+      reason: 'The memory states this as fact, but in the 10/29 conversation Claude guessed it from an error message and never found docs or tested it. Reword it to match how sure we really are.',
+      evidence: [{ session: '3b8d1f60', date: '2026-10-29', quote: "It looks like a 60-per-minute limit, though the docs don't say; I'll tune the retry interval on that assumption" }],
+      before: 'The vendor API allows 60 requests per minute.',
+      after: 'The vendor API limit is probably 60 requests per minute (guessed from a 429 error on 2026-10-29; not confirmed by docs or testing).' },
+    { name: 'report-csv-only', group: 'fresh', action: 'create', type: 'project', title: 'Add: reports are always CSV (client decision on 11/03)',
+      reason: 'The 11/03 conversation recorded the decision from the client meeting. Every report feature should follow it, but no memory has it yet, and the conversation will be deleted after 30 days.',
+      evidence: [{ session: 'c5a7e210', date: '2026-11-03', quote: 'The client no longer wants Excel; always CSV, with English column codes' }],
+      after: 'At the 2026-11-03 meeting the client decided: reports are always CSV with English column codes; no more Excel.\n\n**Why:** The client\'s downstream system only reads CSV.\n**How to apply:** New report features default to CSV; confirm before building anything in Excel.' },
+    { name: 'api-auth', group: 'same', action: 'verify', type: 'reference', title: 'Still correct',
+      reason: 'On 11/05 the token was renewed by following these steps, first time.',
+      evidence: [{ session: 'a41f0d3c', date: '2026-11-05', quote: 'Regenerated the token in the vendor console per the memory, stored it in Credential Manager, test call returned 200' }],
+      before: 'Tokens are generated in the vendor console and stored in Windows Credential Manager under "vendor-api".' },
+    { name: 'db-backup', group: 'same', action: 'verify', type: 'project', title: 'Still correct',
+      reason: 'When the backups were checked on 11/04, the path and schedule matched this memory.',
+      evidence: [{ session: 'e09b44d2', date: '2026-11-04', quote: 'Backups are in D:\\backup\\db at 02:00 daily; the last seven days are all there' }],
+      before: 'The database is backed up daily at 02:00 to D:\\backup\\db and kept for 14 days.' },
+  ],
+};
+
+function buildDream({ en, pid, ago }) {
+  const D = en ? DREAM_EN : DREAM_ZH;
+  const texts = {};
+  const items = D.items.map((x, i) => {
+    const ref = `projects/${pid}/memory/${x.name}.md`;
+    const desc = (en ? {
+      'deploy-notes': 'How to deploy and which hosts', 'release-checklist-oct': 'Phase 2 launch checklist (October)', 'api-rate-limit': 'Vendor API rate limit',
+      'report-csv-only': 'Reports are always CSV (client decision)', 'api-auth': 'Where the vendor API token comes from', 'db-backup': 'Database backup schedule and location',
+    } : {
+      'deploy-notes': '部署方式與主機', 'release-checklist-oct': '第二階段上線清單（10 月）', 'api-rate-limit': '供應商 API 的呼叫上限',
+      'report-csv-only': '報表一律輸出 CSV（客戶決定）', 'api-auth': '供應商 API 權杖的取得方式', 'db-backup': '資料庫備份的排程與位置',
+    })[x.name] ?? x.title;
+    const before = x.before !== undefined ? fm(x.name, desc, x.type, x.before) : null;
+    if (before) texts[ref] = before;
+    let ops = [];
+    if (x.action === 'update') ops = [{ op: 'write', ref, base: 'demo', content: fm(x.name, desc, x.type, x.after) }];
+    else if (x.action === 'archive') ops = [{ op: 'remove', ref, base: 'demo' }];
+    else if (x.action === 'create') ops = [{ op: 'create', scope: `project:${pid}`, ref, name: x.name, type: x.type, content: fm(x.name, desc, x.type, x.after) }];
+    else if (x.action === 'verify') ops = [{ op: 'verify', ref, base: 'demo', date: x.evidence?.map((e) => e.date).sort().slice(-1)[0] ?? '2026-11-07' }];
+    return {
+      id: `i${i + 1}`, ref: x.action === 'create' ? null : ref, name: x.name, scope: `project:${pid}`, type: x.type, description: '',
+      group: D.groups[x.group], action: x.action, title: x.title, reason: x.reason, evidence: x.evidence, base: 'demo', ops,
+      decision: null, note: '', result: null, changed: [],
+    };
+  });
+  return {
+    v: 1, id: '20261107-091530-d7r2', createdAt: ago(3), updatedAt: ago(3), machine: 'demo', scope: `project:${pid}`, request: '',
+    summary: D.summary, highlights: D.highlights, status: 'pending', items, kept: [], texts,
+    kind: 'dream', dream: { id: 'dr-20261107-091200-q8w3', sessions: 6, from: '2026-10-28T02:10:00.000Z', to: '2026-11-06T09:40:00.000Z', remaining: 0 },
+  };
+}
+
+/** 建立展示用的整理記錄：一份對話回顧（專案）、一份待你決定（全域）、一份已完成（專案） */
 export function buildTidySample({ en = false, pid = 'order-system-x1y2z', now = Date.now() } = {}) {
   const S = en ? EN : ZH;
   const ago = (m) => new Date(now - m * 60000).toISOString();
@@ -152,14 +252,14 @@ export function buildTidySample({ en = false, pid = 'order-system-x1y2z', now = 
     { id: 'i3', ref: `projects/${pid}/memory/api-notes.md`, name: 'api-notes', scope: `project:${pid}`, type: 'reference', group: null, action: 'keep', title: en ? 'Keep' : '保留', reason: en ? 'Still valid.' : '仍然有效。', base: 'demo', ops: [], decision: 'keep', note: '', result: { status: 'kept', at: ago(60 * 26) }, changed: [] },
   ];
   const done = { v: 1, id: '20261023-091544-m2x7', createdAt: ago(60 * 27), updatedAt: ago(60 * 26), appliedAt: ago(60 * 26), machine: 'demo', scope: `project:${pid}`, request: '', summary: en ? 'Two of the project\'s memories were outdated; one rewritten and one archived.' : '專案裡有 2 筆過時；改寫 1 筆、封存 1 筆。', highlights: [], status: 'done', items: doneItems, kept: [], texts: {}, backup: 'C:\\Users\\Demo\\.engram\\local\\backups\\2026-10-23T01-15-44-120Z-tidy-20261023-091544-m2x7' };
-  return [pending, done];
+  return [buildDream({ en, pid, ago }), pending, done];
 }
 
 /** 與 app/src/tidy/store.mjs 的 counts 相同 */
 export function tidyCounts(rec) {
   const c = { items: rec.items.length, suggested: 0, decided: 0, accept: 0, keep: 0, archive: 0, custom: 0, done: 0, kept: 0, failed: 0, skipped: 0, undone: 0, waiting: 0 };
   for (const it of rec.items) {
-    if (it.action !== 'keep') c.suggested++;
+    if (it.action !== 'keep' && it.action !== 'verify') c.suggested++;
     if (it.decision) { c.decided++; c[it.decision]++; }
     const r = it.result?.status;
     if (r === 'needs-claude') c.waiting++;

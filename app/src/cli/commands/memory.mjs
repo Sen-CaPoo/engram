@@ -107,6 +107,8 @@ export async function cmdRemember(ctx) {
     description: opts.description.trim(),
     body,
     project: scope.kind === 'project' ? undefined : opts.project,
+    // --reviewed：使用者已經看過並同意這段內容（save 技能在同意後帶）；全域與單機記憶不會出現在「待你確認」
+    ...(opts.reviewed ? { reviewed: true } : {}),
   });
   await content?.done();
   ctx.out.result(res, [`已記住：${res.ref}（${scopeLabel(scope)}）`, await heldNote(eg, res.ref, body)]);
@@ -167,7 +169,7 @@ export async function cmdMemory(ctx) {
     await assertUnchanged(eg, [ref], opts.base);
     const cur = await eg.memories.read(ref);
     assertNoNewRedaction(text, [cur.raw]);
-    const r = await eg.memories.write(ref, { text });
+    const r = await eg.memories.write(ref, { text, ...(opts.reviewed ? { reviewed: true } : {}) });
     await done();
     // 內容仍疑似含有金鑰時檔案沒有 commit（可能只 commit 了索引），不給 engram undo
     const held = await heldNote(eg, ref, text);

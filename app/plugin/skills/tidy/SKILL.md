@@ -25,6 +25,8 @@ allowed-tools: Bash(engram memory list) Bash(engram memory list *) Bash(engram m
    - core：`engram core`（附載入預算）、全域與單機的清單。
    - all：全域、單機，再用 `engram projects` 列出專案，逐一 `engram memory list --project <pid>`。
    - 也看一下收件匣的健康檢查：`engram inbox`（清單裡每筆記憶後面的 H 代碼也是線索）。
+   - `engram memory list --json` 的每一筆有 `usage`（近 90 天所有電腦讀過幾次、最後讀取日；統計還沒開始時為 null）。全域記憶每次對話都會列在索引裡：很久沒被讀過的可以考慮搬到相關的專案或封存，但只是線索，內容仍有長期價值的照樣保留。
+   - 整理的是專案、而且使用者想確認記憶與實際情況是否一致時，建議改用 `/engram:dream`（拿對話紀錄當證據驗證）。
 2. **讀內容**：`engram memory show <ref> [<ref> ...]`，一次 5～10 筆。內容已在本機遮蔽疑似金鑰；每筆附「版本」，寫計畫時要用。範圍超過 40 筆時，先從清單與說明挑出可能有問題的，只讀那些的全文。整理的是目前資料夾的專案時，可以對照程式碼與 `git log` 確認記憶是否已過時。需要比對其他範圍時用 `engram search <關鍵字>`。
 3. **判斷**，逐筆檢查：
    - **重複或該合併**：同一件事分散在幾筆、或兩筆講的是同一個主題。

@@ -8,7 +8,7 @@ import { claudeHome as defaultClaudeHome } from '../cli/paths.mjs';
 import { buildCoreChain } from './corechain.mjs';
 import { claudePluginStatus } from './plugin.mjs';
 import { undoItem } from '../tidy/apply.mjs';
-import { deleteRecord, listRecords, markReady, setDecisions } from '../tidy/store.mjs';
+import { deleteRecord, listRecords, markReady, readRecord, setDecisions } from '../tidy/store.mjs';
 import { recordView, tidySummary } from '../tidy/view.mjs';
 import { HttpError } from './server.mjs';
 
@@ -82,9 +82,9 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     'GET /api/memory': ({ q }) => eg.memories.read(need(q('ref'), 'ref')),
     // body.raw：原始碼模式，整份檔案（含 frontmatter）直接寫入；frontmatter 格式有誤時介面會改用這個（R-28）
     // allowSecrets：使用者確認內容裡被判定為疑似金鑰的值不是金鑰（引擎記入「不是金鑰」清單後寫入）
-    'PUT /api/memory': async ({ q, body }) => done(await eg.memories.write(need(q('ref'), 'ref'), { ...(typeof body.raw === 'string' ? { text: body.raw } : { frontmatter: body.frontmatter, body: body.body }), allowSecrets: body.allowSecrets === true })),
-    'POST /api/memory/move': async ({ body }) => done(await eg.memories.move(need(body.ref, 'ref'), need(parseScope(body.scope), 'scope'))),
-    'POST /api/memory/merge': async ({ body }) => done(await eg.memories.merge(need(body.refs, 'refs'), { into: body.into, body: body.body })),
+    'PUT /api/memory': async ({ q, body }) => done(await eg.memories.write(need(q('ref'), 'ref'), { ...(typeof body.raw === 'string' ? { text: body.raw } : { frontmatter: body.frontmatter, body: body.body }), allowSecrets: body.allowSecrets === true, reviewed: true })),
+    'POST /api/memory/move': async ({ body }) => done(await eg.memories.move(need(body.ref, 'ref'), need(parseScope(body.scope), 'scope'), { reviewed: true })),
+    'POST /api/memory/merge': async ({ body }) => done(await eg.memories.merge(need(body.refs, 'refs'), { into: body.into, body: body.body, reviewed: true })),
     'POST /api/memory/remove': async ({ body }) => done(await eg.memories.remove(need(body.ref, 'ref'))),
     'POST /api/memory/restore': async ({ body }) => done(await eg.memories.restore(need(body.ref, 'ref'), { rev: body.rev })),
     'POST /api/memory/pin': async ({ body }) => {
@@ -92,8 +92,11 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       await eg.memories.read(ref); // 先確認存在；不存在時引擎丟 E_NOT_FOUND
       // 只改 metadata.engram.pinned 這一個鍵（點分隔路徑），其餘 frontmatter 原樣保留；取消釘選時移除該鍵。
       // 內容沒有變化時引擎直接回傳 { ok: true }，不產生 commit。
-      return done(await eg.memories.write(ref, { frontmatter: { 'metadata.engram.pinned': body.pinned ? true : undefined } }));
+      return done(await eg.memories.write(ref, { frontmatter: { 'metadata.engram.pinned': body.pinned ? true : undefined }, carryReviewed: true }));
     },
+    // 1.4.0：讀取統計與 [[名稱]] 連結（記憶詳情）
+    'GET /api/memory/usage': ({ q }) => engineFn(eg.usage?.get, '讀取統計', 'read statistics')(need(q('ref'), 'ref')),
+    'GET /api/memory/links': ({ q }) => engineFn(eg.memories?.links, '記憶連結', 'memory links')(need(q('ref'), 'ref')),
     'GET /api/search': ({ q }) => eg.search(q('q') ?? '', { limit: toInt(q('limit'), 20) }),
 
     'GET /api/projects': () => eg.projects.list(),
@@ -114,6 +117,7 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     'POST /api/secrets/redact': async ({ body }) => done(await eg.secrets.redact(need(body.ref, 'ref'))),
     'POST /api/secrets/allow': async ({ body }) => done(await eg.secrets.allow(need(body.ref, 'ref'), body.line)),
     // 引擎遇到 merge、edit、open-* 時回傳 { ok:false, needsUi:true, action, args }，原樣轉回給介面處理
+    // 收件匣的一鍵修正：使用者沒有看過全文（例如「升級為全域」），搬進每次都會載入的範圍後留在「待你確認」
     'POST /api/apply': async ({ body }) => done(await eg.apply(need(body.fix, 'fix'))),
     'GET /api/conflicts': () => eg.conflicts.list(),
     'POST /api/conflicts/resolve': async ({ body }) => done(await eg.conflicts.resolve(need(body.id, 'id'), { choice: need(body.choice, 'choice'), body: body.body })),
@@ -131,8 +135,17 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     },
     'PUT /api/core': async ({ body }) => {
       if (typeof body.text !== 'string') throw new HttpError(400, 'E_INVALID', '缺少 text').withEn('Missing text');
-      return done(await eg.core.write(body.text, { allowSecrets: body.allowSecrets === true }));
+      return done(await eg.core.write(body.text, { allowSecrets: body.allowSecrets === true, reviewed: true }));
     },
+    // 1.4.0：核心準則的建議更新（H24）
+    'GET /api/core/suggestions': () => engineFn(eg.core?.suggestions, '核心準則建議', 'core rule suggestions')(),
+    'POST /api/core/suggestions/apply': async ({ body }) => done(await engineFn(eg.core?.applySuggestions, '加入核心準則建議', 'adding core rule suggestions')(need(body.ids, 'ids'))),
+    // 1.4.0：待你確認的寫入（H23）
+    'GET /api/review': () => engineFn(eg.review?.list, '待確認清單', 'the review list')(),
+    'POST /api/review/confirm': async ({ body }) => done(await engineFn(eg.review?.confirm, '確認', 'confirming')(need(body.items, 'items'))),
+    'POST /api/review/revert': async ({ body }) => done(await engineFn(eg.review?.revert, '退回', 'reverting')(need(body.ref, 'ref'), body.sha)),
+    // 1.4.0：對話回顧（專案頁顯示上次回顧與未回顧的對話數）
+    'GET /api/dream/status': ({ q }) => engineFn(eg.dream?.status, '對話回顧狀態', 'conversation review status')(need(q('pid'), 'pid')),
     // 41 號 §11：把 ~/.claude/CLAUDE.md 的工作準則搬進 vault，讓所有電腦共用
     'GET /api/core/guidelines': () => eg.core.guidelines.preview(),
     'POST /api/core/guidelines/adopt': async () => done(await eg.core.guidelines.adopt()),
@@ -142,12 +155,13 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     'GET /api/settings': async () => {
       const st = await eg.status();
       const engineSettings = typeof eg.settings?.get === 'function' ? await eg.settings.get() : {};
-      return { machineLabel: st.machine?.label ?? eg.machine?.label, remote: st.vault?.remote ?? null, bindAuto: engineSettings.bindAuto ?? 'confident', collisionRename: engineSettings.collisionRename ?? 'ask', ...(settings?.get() ?? {}) };
+      return { machineLabel: st.machine?.label ?? eg.machine?.label, remote: st.vault?.remote ?? null, bindAuto: engineSettings.bindAuto ?? 'confident', collisionRename: engineSettings.collisionRename ?? 'ask', reviewWrites: engineSettings.reviewWrites ?? 'on', ...(settings?.get() ?? {}) };
     },
     'PUT /api/settings': async ({ body }) => {
       if (body.machineLabel !== undefined) await engineFn(eg.machine?.rename, '電腦改名', 'renaming this computer')(String(body.machineLabel).trim());
       if (body.bindAuto !== undefined) await engineFn(eg.settings?.set, '自動綁定設定', 'the auto-bind setting')({ bindAuto: body.bindAuto });
       if (body.collisionRename !== undefined) await engineFn(eg.settings?.set, '撞名資料夾改名設定', 'the colliding folder rename setting')({ collisionRename: body.collisionRename });
+      if (body.reviewWrites !== undefined) await engineFn(eg.settings?.set, '確認寫入設定', 'the review setting')({ reviewWrites: body.reviewWrites });
       const local = {};
       for (const k of ['syncIntervalMin', 'healthTime', 'paused']) if (body[k] !== undefined) local[k] = body[k];
       if (Object.keys(local).length) {
@@ -177,7 +191,14 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     },
     'POST /api/tidy/ready': ({ body }) => markReady(tidyLocal(), need(body.id, 'id')),
     'POST /api/tidy/undo': ({ body }) => undoItem(eg, need(body.id, 'id'), need(body.item, 'item')),
-    'POST /api/tidy/delete': ({ body }) => deleteRecord(tidyLocal(), need(body.id, 'id')),
+    'POST /api/tidy/delete': async ({ body }) => {
+      // 1.4.0：還沒決定就刪掉的對話回顧記錄，那批對話改回「未回顧」，下次再分析
+      const id = need(body.id, 'id');
+      const rec = await readRecord(tidyLocal(), id).catch(() => null);
+      const r = await deleteRecord(tidyLocal(), id);
+      if (rec?.dream?.id && rec.status === 'pending' && typeof eg.dream?.reset === 'function') await eg.dream.reset(rec.dream.id).catch(() => {});
+      return r;
+    },
 
     // 「交給 Claude」的引導：外掛是否已安裝並啟用、有哪些 /engram 技能（唯讀）
     'GET /api/claude-plugin': () => claudePluginStatus({ claudeHome, installFile: paths.installFile }),

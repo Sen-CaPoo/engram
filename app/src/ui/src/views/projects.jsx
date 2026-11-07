@@ -4,7 +4,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { api } from '../api.js';
 import { useApp, useData, Empty, Skeleton, Meter, Dialog, ErrorBanner, useAction, When } from '../components.jsx';
 import { relTime, fmtBytes } from '../util.js';
-import { IconFolder, IconChevronDown, IconChevronRight, IconCheck, IconAlert, IconEdit, IconLibrary, IconLink, IconArchive, IconSparkle } from '../icons.jsx';
+import { IconFolder, IconChevronDown, IconChevronRight, IconCheck, IconAlert, IconEdit, IconLibrary, IconLink, IconArchive, IconSparkle, IconHistory } from '../icons.jsx';
 import { t, N_ } from '../i18n.js';
 
 export function Projects({ go, params = {} }) {
@@ -147,6 +147,9 @@ function PathCell({ x }) {
 }
 
 function ProjectDetail({ p, devices, go, onRename, onLink }) {
+  // 1.4.0：這台電腦上這個專案的對話回顧狀態
+  const dream = useData(() => api.dreamStatus(p.pid), [p.pid]);
+  const d = dream.data;
   return (
     <div style={{ display: 'grid', gap: 12, padding: '4px 0 8px' }}>
       <div class="btn-row">
@@ -154,6 +157,7 @@ function ProjectDetail({ p, devices, go, onRename, onLink }) {
         <button class="btn sm" onClick={onRename}><IconEdit />{t('改名')}</button>
         <button class="btn sm" onClick={onLink}><IconLink />{t('併入另一個專案')}</button>
         {p.counts.memories > 0 && <button class="btn sm" onClick={() => go('tidy', { scope: `project:${p.pid}` })} title={t('到「記憶整理」產生給 Claude 的指令')}><IconSparkle />{t('請 Claude 整理')}</button>}
+        {d?.sessions > 0 && <button class="btn sm" onClick={() => go('tidy', { scope: `project:${p.pid}`, mode: 'dream' })} title={t('拿這台電腦最近的對話紀錄驗證這個專案的記憶')}><IconHistory />{t('回顧對話')}</button>}
       </div>
       <dl class="kv">
         {devices.map((d) => (
@@ -165,6 +169,14 @@ function ProjectDetail({ p, devices, go, onRename, onLink }) {
         <dt>git remote</dt><dd>{p.remotes?.length ? p.remotes.map((r) => <code key={r}>{r}</code>) : <span class="faint">{t('不是 git 專案，以 .claude/engram.json 標記檔識別')}</span>}</dd>
         {p.aliases?.length > 0 && <><dt>{t('別名')}</dt><dd>{p.aliases.join(t('、'))}</dd></>}
         <dt>{t('索引')}</dt><dd>{t('MEMORY.md 共 {lines} 行、{size}。Claude Code 每次只載入前 200 行或 25 KB。', { lines: p.index?.lines ?? '—', size: fmtBytes(p.index?.bytes) })}</dd>
+        {d && (
+          <>
+            <dt>{t('對話回顧')}</dt>
+            <dd>{!d.sessions ? <span class="faint">{t('這台電腦沒有這個專案的對話紀錄')}</span>
+              : d.pending ? <>{t('這台電腦有 {n} 個對話還沒回顧{expire}。', { n: d.pending, expire: d.expiresInDays === null ? '' : d.expiresInDays <= 0 ? t('，最早的一個很快就會被 Claude Code 清除') : t('，最早的一個 {d} 天後會被 Claude Code 清除', { d: d.expiresInDays }) })}{' '}<span class="faint">{d.lastRunAt ? t('上次回顧 {when}', { when: relTime(d.lastRunAt).toLowerCase() }) : t('還沒有回顧過')}</span></>
+              : t('這台電腦的 {n} 個對話都已回顧過（上次 {when}）', { n: d.sessions, when: d.lastRunAt ? relTime(d.lastRunAt).toLowerCase() : '—' })}</dd>
+          </>
+        )}
       </dl>
     </div>
   );

@@ -64,6 +64,12 @@ function assertMemoryRef(ref) {
   return scope;
 }
 
+/** metadata.engram.verified：對話回顧確認仍正確的日期（YYYY-MM-DD）；格式不對時當作沒有。 */
+export function verifiedDate(v) {
+  const s = v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s)) ? s : null;
+}
+
 /** 解析檔案，整理成 MemorySummary 需要的欄位。 */
 export function summarize(ref, text, { mtime = 0, indexed = false } = {}) {
   const parsed = parseMemoryFile(text);
@@ -79,6 +85,7 @@ export function summarize(ref, text, { mtime = 0, indexed = false } = {}) {
     size: Buffer.byteLength(text, 'utf8'),
     updatedAt: modified ? String(modified) : (mtime ? new Date(mtime).toISOString() : null),
     pinned: em.pinned === true || em.pinned === 'true',
+    verified: verifiedDate(em.verified),
     tags: Array.isArray(em.tags) ? em.tags.map(String) : [],
     project: em.project ? String(em.project) : null,
     indexed,
@@ -151,7 +158,9 @@ export async function refreshIndex(ctx, scope) {
   const projectNames = await ctx.projectNames();
   const label = scope.kind === 'machine' ? (await ctx.machineLabel(scope.mid)) : undefined;
   const budget = (await computeIndexBudget(ctx.vault))[scope.kind];
-  const r = await rebuildScopeIndex({ kind: scope.kind, dir, userHome: ctx.homes.userHome, label, projectNames, budget });
+  const { readsForScope } = await import('./usage.mjs');
+  const reads = await readsForScope(ctx.vault, scope.kind === 'global' ? 'global' : `machines/${scope.mid}`);
+  const r = await rebuildScopeIndex({ kind: scope.kind, dir, userHome: ctx.homes.userHome, label, projectNames, budget, reads });
   return r.changed ? [toRef(ctx.vault, path.join(dir, SCOPE_INDEX))] : [];
 }
 
@@ -170,6 +179,15 @@ function result(commit) {
   return { ok: true, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
 }
 
+/**
+ * 確認紀錄（1.4.0）：使用者核可過的寫入（介面、記憶整理、save 技能帶 --reviewed）把新內容記為確認過；
+ * 其他寫入只清掉已經不存在的檔案的紀錄。回傳要放進同一個 commit 的路徑。
+ */
+async function reviewPaths(ctx, refs, reviewed) {
+  const { markReviewed } = await import('./review.mjs');
+  return markReviewed(ctx, reviewed ? refs : refs.filter((r) => !exists(fromRef(ctx.vault, r))));
+}
+
 /** HEAD 裡這個檔案的內容（沒有進過 git 時為 null） */
 async function headText(ctx, ref) {
   const r = await git(['show', `HEAD:${ref}`], { cwd: ctx.vault, allowFail: true });
@@ -180,7 +198,7 @@ async function headText(ctx, ref) {
  * 新增一筆記憶（engram remember 的實作，R-05）。
  * text：整份內容（含 frontmatter）原樣寫入，例如使用者在記憶整理頁核可過的內容；省略時由 name、description、type、body 組成。
  */
-export async function createMemory(ctx, { scope, name, type, description, body = '', project, allowSecrets = false, text: rawText }) {
+export async function createMemory(ctx, { scope, name, type, description, body = '', project, allowSecrets = false, text: rawText, reviewed = false }) {
   invariant(scope && ['global', 'project', 'machine'].includes(scope.kind), '請指定範圍：global、project 或 machine', undefined, { message: 'Specify a scope: global, project, or machine' });
   invariant(name && String(name).trim(), '請提供 name', undefined, { message: 'Provide a name' });
   invariant(MEMORY_TYPES.includes(type), `type 必須是 ${MEMORY_TYPES.join('、')} 之一`, undefined, { message: `type must be one of ${MEMORY_TYPES.join(', ')}` });
@@ -205,7 +223,8 @@ export async function createMemory(ctx, { scope, name, type, description, body =
     const allowed = await assertNoNewSecrets(ctx.local, ref, text, { allowSecrets });
     await safeWrite(abs, text, { expectHash: null });
     const idx = await refreshIndex(ctx, sc);
-    const commit = await commitPaths(ctx.vault, [ref, ...idx, ...allowed], `remember ${ref}`, { action: 'create', refs: [ref], mid: ctx.mid });
+    const rv = await reviewPaths(ctx, [ref], reviewed);
+    const commit = await commitPaths(ctx.vault, [ref, ...idx, ...allowed, ...rv], `remember ${ref}`, { action: 'create', refs: [ref], mid: ctx.mid });
     return { ...result(commit), ref };
   });
 }
@@ -233,18 +252,29 @@ export async function writeMemory(ctx, ref, input) {
         next = `${head}${input.body.replace(/\r\n/g, '\n').replace(/\n*$/, '\n')}`;
       }
     }
-    if (next === cur) return { ok: true };
+    if (next === cur) {
+      // 內容沒有變化：只補確認紀錄（使用者同意的 --reviewed 寫入，內容剛好和現在相同）
+      if (input?.reviewed) {
+        const rv = await reviewPaths(ctx, [ref], true);
+        if (rv.length) return result(await commitPaths(ctx.vault, rv, `review ${ref}`, { action: 'review', refs: [ref], mid: ctx.mid }));
+      }
+      return { ok: true };
+    }
     const allowed = await assertNoNewSecrets(ctx.local, ref, next, { before: cur, allowSecrets: !!input?.allowSecrets });
     const ok = await safeWrite(abs, next, { expectHash: sha1(cur) });
     if (!ok) throw new EngramError(E.CONFLICT, '這筆記憶剛被其他程式修改，已放棄這次寫入', '重新讀取後再試一次').withEn('This memory was just modified by another program, so this write was abandoned', 'Reload it and try again');
     const idx = await refreshIndex(ctx, scope);
-    const commit = await commitPaths(ctx.vault, [ref, ...idx, ...allowed], `edit ${ref}`, { action: 'edit', refs: [ref], mid: ctx.mid });
+    // carryReviewed：機械式的改寫（記下驗證日期、改連結、遮蔽金鑰）：改之前確認過才算確認過，不會把沒看過的內容一起確認掉
+    const rv = input?.carryReviewed
+      ? await (await import('./review.mjs')).carryReviewed(ctx, new Map([[ref, cur]]))
+      : await reviewPaths(ctx, [ref], !!input?.reviewed);
+    const commit = await commitPaths(ctx.vault, [ref, ...idx, ...allowed, ...rv], `edit ${ref}`, { action: 'edit', refs: [ref], mid: ctx.mid });
     return result(commit);
   });
 }
 
 /** 移動到其他範圍。 */
-export async function moveMemory(ctx, ref, toScope) {
+export async function moveMemory(ctx, ref, toScope, { reviewed = false } = {}) {
   const from = assertMemoryRef(ref);
   const to = normalizeScope(toScope, ctx.mid);
   return ctx.locked('memories.move', async () => {
@@ -259,7 +289,8 @@ export async function moveMemory(ctx, ref, toScope) {
     const destRef = toRef(ctx.vault, dest);
     const idx = [...await refreshIndex(ctx, from), ...await refreshIndex(ctx, to)];
     const label = to.kind === 'global' ? 'global' : to.kind === 'project' ? `projects/${to.pid}` : `machines/${to.mid}`;
-    const commit = await commitPaths(ctx.vault, [ref, destRef, ...idx], `move ${label} ← ${ref}`, { action: 'move', refs: [ref, destRef], mid: ctx.mid });
+    const rv = await reviewPaths(ctx, [ref, destRef], reviewed);
+    const commit = await commitPaths(ctx.vault, [ref, destRef, ...idx, ...rv], `move ${label} ← ${ref}`, { action: 'move', refs: [ref, destRef], mid: ctx.mid });
     return { ...result(commit), ref: destRef };
   });
 }
@@ -268,7 +299,7 @@ export async function moveMemory(ctx, ref, toScope) {
  * 合併多筆記憶：into（其中一筆或既有記憶）寫入 text，其他刪除。
  * text 沒有 frontmatter 時（介面的合併對話框只送內文）沿用目標檔的 frontmatter，只換內文。
  */
-export async function mergeMemories(ctx, refs, { into, text }) {
+export async function mergeMemories(ctx, refs, { into, text, reviewed = false }) {
   invariant(Array.isArray(refs) && refs.length >= 2, '至少要兩筆記憶才能合併', undefined, { message: 'At least two memories are needed to merge' });
   invariant(typeof text === 'string' && text.trim(), '請提供合併後的內容', undefined, { message: 'Provide the merged content' });
   const target = into ?? refs[0];
@@ -300,7 +331,8 @@ export async function mergeMemories(ctx, refs, { into, text }) {
     for (const r of [target, ...others]) { const s = scopeOfRef(r); scopes.set(JSON.stringify(s), s); }
     const idx = [];
     for (const s of scopes.values()) idx.push(...await refreshIndex(ctx, s));
-    const commit = await commitPaths(ctx.vault, [target, ...others, ...idx], `merge ${refs.length} → ${target}`, { action: 'merge', refs: [target, ...others], mid: ctx.mid });
+    const rv = await reviewPaths(ctx, [target, ...others], reviewed);
+    const commit = await commitPaths(ctx.vault, [target, ...others, ...idx, ...rv], `merge ${refs.length} → ${target}`, { action: 'merge', refs: [target, ...others], mid: ctx.mid });
     return { ...result(commit), ref: target };
   });
 }
@@ -314,13 +346,14 @@ export async function removeMemory(ctx, ref) {
     await assertNotHeld(ctx.local, ref, await readText(abs), '封存', { headRaw: await headText(ctx, ref) });
     await fsp.rm(abs, { force: true });
     const idx = await refreshIndex(ctx, scope);
-    const commit = await commitPaths(ctx.vault, [ref, ...idx], `remove ${ref}`, { action: 'remove', refs: [ref], mid: ctx.mid });
+    const rv = await reviewPaths(ctx, [ref], false);
+    const commit = await commitPaths(ctx.vault, [ref, ...idx, ...rv], `remove ${ref}`, { action: 'remove', refs: [ref], mid: ctx.mid });
     return result(commit);
   });
 }
 
 /** 從歷史還原；rev 省略時取「最後一次刪除它之前」的版本。 */
-export async function restoreMemory(ctx, ref, { rev } = {}) {
+export async function restoreMemory(ctx, ref, { rev, reviewed = false } = {}) {
   const scope = assertMemoryRef(ref);
   // R-45：rev 會交給 git，只接受 commit sha（可加 ^ 或 ~N），避免被當成選項
   if (rev !== undefined && rev !== null) invariant(/^[0-9a-f]{7,40}(\^+|~\d{1,4})?$/i.test(String(rev)), `不合法的版本：${String(rev).slice(0, 60)}`, undefined, { message: `Invalid version: ${String(rev).slice(0, 60)}` });
@@ -338,7 +371,8 @@ export async function restoreMemory(ctx, ref, { rev } = {}) {
     await fsp.mkdir(path.dirname(abs), { recursive: true });
     await safeWrite(abs, show.stdout);
     const idx = await refreshIndex(ctx, scope);
-    const commit = await commitPaths(ctx.vault, [ref, ...idx], `restore ${ref} @${String(at).slice(0, 7)}`, { action: 'restore', refs: [ref], mid: ctx.mid });
+    const rv = await reviewPaths(ctx, [ref], reviewed);
+    const commit = await commitPaths(ctx.vault, [ref, ...idx, ...rv], `restore ${ref} @${String(at).slice(0, 7)}`, { action: 'restore', refs: [ref], mid: ctx.mid });
     return result(commit);
   });
 }

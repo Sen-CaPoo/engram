@@ -165,11 +165,14 @@ export async function normalizeProjectIndex(memDir, { appendOnly = false, skipRe
  * 產生全域或單機 INDEX.md 的內容（不含時間戳記，R-13）。
  * @param {{ kind: 'global'|'machine', dir: string, userHome: string, label?: string, projectNames?: Map<string,string> }} o
  */
-export async function renderScopeIndex({ kind, dir, userHome, label, projectNames = new Map(), budget: lineBudget }) {
+export async function renderScopeIndex({ kind, dir, userHome, label, projectNames = new Map(), budget: lineBudget, reads }) {
   const entries = await readDirEntries(dir);
   // 預算是整份 INDEX.md 的行數；扣掉檔頭 4 行、溢出說明 2 行後才是可列的筆數
   const total = lineBudget ?? INDEX_BUDGET[kind] ?? 60;
   const budget = Math.max(1, entries.length + 4 <= total ? entries.length : total - 6);
+  // 1.4.0：放不下時，依「釘選 → 近 90 天讀取次數（所有電腦合計，同步的摘要）→ 修改時間」挑出要列的；
+  // 列出來的仍依「釘選 → 修改時間」排序。讀取統計只在放不下時才有影響，平常不會因為統計更新而改寫索引。
+  const readsOf = (e) => (typeof reads === 'function' ? Number(reads(e.file)) || 0 : 0);
   // 排序只用會同步的內容（釘選 → metadata.modified 新到舊 → 檔名），兩台電腦結果一致
   entries.sort((a, b) => (Number(b.pinned) - Number(a.pinned)) || b.modified.localeCompare(a.modified) || a.file.localeCompare(b.file));
   const title = kind === 'global' ? '全域記憶' : `單機記憶 · ${label ?? ''}`.trim();
@@ -191,7 +194,16 @@ export async function renderScopeIndex({ kind, dir, userHome, label, projectName
   // R-18：單機記憶裡標了 engram.project 的，只在開那個專案時由 SessionStart 注入，不佔其他專案的上下文
   const listed = kind === 'machine' ? entries.filter((e) => !e.project) : entries;
   const projectOnly = entries.length - listed.length;
-  const shown = listed.slice(0, budget);
+  let shown = listed.slice(0, budget);
+  if (listed.length > budget) {
+    // 近 14 天新增或修改的先保留：新記憶還沒人讀過，不能因為 0 次就被擠出索引（不在索引裡就更不會被讀到）
+    const cut = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
+    const recent = (e) => Number(String(e.modified).slice(0, 10) >= cut);
+    const chosen = new Set([...listed]
+      .sort((a, b) => (Number(b.pinned) - Number(a.pinned)) || (recent(b) - recent(a)) || (readsOf(b) - readsOf(a)) || b.modified.localeCompare(a.modified) || a.file.localeCompare(b.file))
+      .slice(0, budget));
+    shown = listed.filter((e) => chosen.has(e));
+  }
   body.push(...shown.map(line));
   if (listed.length > budget) body.push('', `- 另有 ${listed.length - budget} 筆未列出，可用 \`engram search <關鍵字>\` 查詢。`);
   if (projectOnly) body.push('', `- 另有 ${projectOnly} 筆只與特定專案有關，開啟該專案時會自動列出。`);

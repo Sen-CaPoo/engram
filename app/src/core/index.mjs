@@ -28,6 +28,12 @@ import { allowJunctionRead, revokeAll } from './claudesettings.mjs';
 import { addAllow, allowEntries, listAllowed, loadAllow, scanWithAllow } from './secretallow.mjs';
 import { redactSecrets, secretHash } from './secrets.mjs';
 import { guidelines } from './guidelines.mjs';
+import { parseMemoryFile } from './frontmatter.mjs';
+import { linkGraph, nameIndex, rewriteLinks } from './links.mjs';
+import { loadUsage, localDetail, scanUsage, writeUsageSummary } from './usage.mjs';
+import { baselineRefs, blobSha, blobText, markReviewed, needsBaseline, pendingReviews, pruneReviews, recordBaseline } from './review.mjs';
+import { cleanupRuns, dreamStatus, ensureReadable, listRuns, markDreamed, prepareDream, readRun, resetDream, runText } from './dream.mjs';
+import { applySuggestions, suggestionsFor } from './coresuggest.mjs';
 import {
   allBindingViews, bindingsForPid, commitPaths, ENGINE_VERSION, initVault, listMachineIds, listProjectIds, loadTemplate, machineDir, projectMemoryDir,
   readBindings, readLocalMachine, readProject, readState, renderTemplate, writeBindings, writeProject,
@@ -204,11 +210,14 @@ export async function open(opts = {}) {
         return {
           bindAuto: ['confident', 'ask', 'off'].includes(s.bindAuto) ? s.bindAuto : 'confident',
           collisionRename: ['auto', 'ask', 'off'].includes(s.collisionRename) ? s.collisionRename : 'ask',
+          // 1.4.0：Claude 寫入每次都會載入的內容（全域、單機、核心準則）時，在收件匣請你確認（H23）
+          reviewWrites: s.reviewWrites === 'off' ? 'off' : 'on',
         };
       },
       async set(patch = {}) {
         if (patch.bindAuto !== undefined) invariant(['confident', 'ask', 'off'].includes(patch.bindAuto), "bindAuto 必須是 'confident'、'ask' 或 'off'", undefined, { message: "bindAuto must be 'confident', 'ask' or 'off'" });
         if (patch.collisionRename !== undefined) invariant(['auto', 'ask', 'off'].includes(patch.collisionRename), "collisionRename 必須是 'auto'、'ask' 或 'off'", undefined, { message: "collisionRename must be 'auto', 'ask' or 'off'" });
+        if (patch.reviewWrites !== undefined) invariant(['on', 'off'].includes(patch.reviewWrites), "reviewWrites 必須是 'on' 或 'off'", undefined, { message: "reviewWrites must be 'on' or 'off'" });
         const p = path.join(homes.local, 'settings.json');
         const next = { ...((await readJson(p, null)) ?? {}), ...patch };
         await writeJson(p, next);
@@ -351,12 +360,19 @@ export async function open(opts = {}) {
         const cache = await healthCache();
         const byRef = new Map();
         for (const f of cache?.findings ?? []) for (const r of f.refs ?? []) { if (!byRef.has(r)) byRef.set(r, new Set()); byRef.get(r).add(f.code); }
+        const usage = await loadUsage(homes.vault);
+        const readsOf = (ref) => usage.refs.get(ref)?.reads ?? 0;
         const cmp = {
           updated: (a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')),
           name: (a, b) => a.name.localeCompare(b.name),
           size: (a, b) => b.size - a.size,
+          reads: (a, b) => readsOf(b.ref) - readsOf(a.ref) || a.name.localeCompare(b.name),
         }[sort] ?? (() => 0);
-        return mems.sort(cmp).map((m) => ({ ...publicSummary(m), findings: [...(byRef.get(m.ref) ?? [])] }));
+        // 讀取統計（1.4.0）：近 90 天所有電腦合計；統計還沒開始時 usage 為 null
+        return mems.sort(cmp).map((m) => {
+          const u = usage.refs.get(m.ref);
+          return { ...publicSummary(m), findings: [...(byRef.get(m.ref) ?? [])], usage: usage.machines ? { reads: u?.reads ?? 0, last: u?.last ?? null } : null };
+        });
       },
       async read(ref, o) {
         const mem = await readMemory(ctx, ref, o);
@@ -365,12 +381,63 @@ export async function open(opts = {}) {
         mem.secretRanges = scanWithAllow(mem.raw, ref, allow).map(({ line, column, offset, length, kind }) => ({ line, column, offset, length, kind }));
         return mem;
       },
+      /** [[名稱]] 連結關係（1.4.0）：連到誰、被誰連結 */
+      async links(ref) {
+        return linkGraph(await ctx.scan(), ref);
+      },
       create: (input) => createMemory(ctx, input),
       write: (ref, input) => writeMemory(ctx, ref, input),
-      move: (ref, scope) => moveMemory(ctx, ref, scope),
-      merge: (refs, o) => mergeMemories(ctx, refs, { into: o?.into, text: o?.text ?? o?.body }),
+      move: (ref, scope, o) => moveMemory(ctx, ref, scope, { reviewed: !!o?.reviewed }),
+      merge: (refs, o) => mergeMemories(ctx, refs, { into: o?.into, text: o?.text ?? o?.body, reviewed: !!o?.reviewed }),
       remove: (ref) => removeMemory(ctx, ref),
-      restore: (ref, o) => restoreMemory(ctx, ref, o),
+      restore: (ref, o) => restoreMemory(ctx, ref, { rev: o?.rev, reviewed: !!o?.reviewed }),
+    },
+
+    /** 對話回顧（1.4.0，/engram:dream）：挑出還沒回顧的對話、轉成文字；分析由使用者的 Claude Code 進行。 */
+    dream: {
+      status: (pid, o) => dreamStatus(ctx, pid, o),
+      prepare: (o) => prepareDream(ctx, o),
+      read: (id) => readRun(ctx, id),
+      done: (id, o) => markDreamed(ctx, id, o),
+      /** 撤銷一次回顧的「已回顧」記號（刪掉還沒決定的回顧記錄時） */
+      reset: (id) => resetDream(ctx, id),
+      /** 匯出的對話文字（整理計畫對照引句用） */
+      text: (id) => runText(ctx, id),
+      list: () => listRuns(ctx),
+      /** 讓回顧用的子代理讀取匯出的文字時不跳權限詢問（加進 additionalDirectories；常駐程式每天確認一次） */
+      ensureReadable: () => ensureReadable(ctx),
+      /** 超過 14 天的回顧資料夾（放著沒完成的）清掉 */
+      cleanup: () => cleanupRuns(homes.local),
+    },
+
+    /** 讀取統計（1.4.0）：從這台電腦的對話紀錄增量計算，摘要每天同步一次。 */
+    usage: {
+      /** 掃描新的對話紀錄；commit 時寫入這台電腦的同步摘要（每天最多一次），放不下的索引依新統計重建。 */
+      async refresh({ commit = true, force = false, now = Date.now() } = {}) {
+        const r = await scanUsage(ctx, { now });
+        if (!commit) return r;
+        return ctx.locked('usage', async () => {
+          const rel = await writeUsageSummary(ctx, { now, force });
+          if (!rel) return { ...r, written: false };
+          const idx = [...await refreshIndex(ctx, { kind: 'global' }), ...await refreshIndex(ctx, { kind: 'machine', mid: ctx.mid })];
+          const commitInfo = await commitPaths(homes.vault, [rel, ...idx], 'usage summary', { action: 'usage', mid: ctx.mid });
+          return { ...r, written: true, commit: commitInfo ?? undefined };
+        });
+      },
+      /** 單一記憶：所有電腦合計（近 90 天）與這台電腦每天的次數 */
+      async get(ref) {
+        const u = await loadUsage(homes.vault);
+        const e = u.refs.get(ref) ?? null;
+        return {
+          tracking: u.machines > 0,
+          since: u.since,
+          reads: e?.reads ?? 0,
+          last: e?.last ?? null,
+          projects: e?.projects ?? {},
+          byMachine: e?.byMachine ?? {},
+          daily: await localDetail(ctx, ref),
+        };
+      },
     },
 
     async search(query, { limit = 20 } = {}) {
@@ -406,7 +473,98 @@ export async function open(opts = {}) {
 
     sync: (o) => sync(ctx, o),
 
+    /**
+     * 待你確認的寫入（1.4.0，H23）：Claude 改了每次都會載入的內容（全域、這台的單機記憶、核心準則），使用者還沒看過。
+     * 介面的寫入、記憶整理、save 技能（--reviewed）會自動記為確認過。
+     */
+    review: {
+      /** 起點：這台電腦第一次執行時，現有內容全部記為確認過（只做一次） */
+      async baseline() {
+        if (!(await needsBaseline(ctx))) return { ok: true, skipped: true };
+        return ctx.locked('review.baseline', async () => {
+          if (!(await needsBaseline(ctx))) return { ok: true, skipped: true };
+          const rv = await markReviewed(ctx, await baselineRefs(ctx));
+          const commit = rv.length ? await commitPaths(homes.vault, rv, 'review baseline', { action: 'review', mid: ctx.mid }) : null;
+          await recordBaseline(ctx);
+          return { ok: true, commit: commit ?? undefined };
+        });
+      },
+      /** 每筆記憶這台只留最近 20 個確認過的版本（常駐程式每日健康檢查時做，獨立的 commit，不能復原也不必復原） */
+      async prune() {
+        return ctx.locked('review.prune', async () => {
+          const removed = await pruneReviews(ctx);
+          const commit = removed.length ? await commitPaths(homes.vault, removed, `review prune ${removed.length}`, { action: 'review', mid: ctx.mid }) : null;
+          return { ok: true, removed: removed.length, commit: commit ?? undefined };
+        });
+      },
+      /** 還沒確認的內容，附目前與上次確認的版本（疑似金鑰已遮蔽） */
+      async list() {
+        await eg.review.baseline();
+        const allow = await loadAllow(homes.local);
+        const out = [];
+        for (const p of await pendingReviews(ctx)) {
+          const raw = (await readText(path.join(homes.vault, ...p.ref.split('/')))) ?? '';
+          const prevRaw = p.previous ? await blobText(homes.vault, p.previous) : null;
+          const red = (t) => redactSecrets(t, allowEntries(allow, p.ref)).text;
+          const fm = /^core\//.test(p.ref) ? {} : (parseMemoryFile(raw).data ?? {});
+          const last = (await history(ctx, { ref: p.ref, limit: 1 }).catch(() => []))[0] ?? null;
+          out.push({
+            ref: p.ref,
+            kind: p.previous ? 'changed' : 'new',
+            sha: p.sha,
+            name: /^core\//.test(p.ref) ? path.posix.basename(p.ref) : String(fm.name ?? path.posix.basename(p.ref, '.md')),
+            description: red(String(fm.description ?? '')),
+            current: red(raw),
+            previous: prevRaw === null ? null : red(prevRaw),
+            previousMissing: !!p.previous && prevRaw === null,
+            changedAt: last?.at ?? null,
+            machine: last?.machine ?? null,
+          });
+        }
+        return out;
+      },
+      /** 確認：items 帶當時看到的 sha，內容剛好又變了的不算（回傳在 stale） */
+      async confirm(items) {
+        invariant(Array.isArray(items) && items.length, '沒有要確認的項目', undefined, { message: 'Nothing to confirm' });
+        return ctx.locked('review.confirm', async () => {
+          const ok = [];
+          const stale = [];
+          for (const it of items) {
+            const ref = String(it?.ref ?? '');
+            const raw = /^(global|machines|core)\//.test(ref) && !ref.split('/').includes('..') ? await readText(path.join(homes.vault, ...ref.split('/'))) : null;
+            if (raw !== null && blobSha(raw) === String(it?.sha ?? '')) ok.push(ref); else stale.push(ref);
+          }
+          const rv = await markReviewed(ctx, ok);
+          const commit = rv.length ? await commitPaths(homes.vault, rv, `review ${ok.length}`, { action: 'review', refs: ok, mid: ctx.mid }) : null;
+          return { ok: true, confirmed: ok, stale, commit: commit ?? undefined };
+        });
+      },
+      /** 退回：改回最近一次確認的版本；新增的封存（可從歷史還原）。sha：使用者看到的版本，內容之後又變了就不退回 */
+      async revert(ref, sha) {
+        const p = (await pendingReviews(ctx)).find((x) => x.ref === ref);
+        invariant(p, `「${ref}」不需要確認`, '重新整理清單', { message: `"${ref}" does not need review`, hint: 'Refresh the list' });
+        if (sha !== undefined && sha !== null && sha !== '' && String(sha) !== p.sha) throw new EngramError(E.CONFLICT, `「${ref}」在你檢視之後又被修改，沒有退回`, '重新整理清單再看一次').withEn(`"${ref}" changed after you looked at it, so it was not reverted`, 'Refresh the list and look again');
+        if (!p.previous) {
+          invariant(!/^core\//.test(ref), '核心準則沒有確認過的版本可以退回', '請改用編輯', { message: 'There is no reviewed version of the core rules to go back to', hint: 'Edit it instead' });
+          return removeMemory(ctx, ref);
+        }
+        const prev = await blobText(homes.vault, p.previous);
+        invariant(prev !== null, '找不到確認過的版本', '請改用編輯或歷史還原', { message: 'The reviewed version could not be found', hint: 'Edit it, or restore it from its history' });
+        if (ref === 'core/CORE.md') return eg.core.write(prev, { reviewed: true });
+        if (CORE_RULE_REF.test(ref)) {
+          return ctx.locked('review.revert', async () => {
+            await safeWrite(path.join(homes.vault, ...ref.split('/')), prev);
+            const rv = await markReviewed(ctx, [ref]);
+            const commit = await commitPaths(homes.vault, [ref, ...rv], `edit ${ref}`, { action: 'edit', refs: [ref], mid: ctx.mid });
+            return { ok: true, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
+          });
+        }
+        return writeMemory(ctx, ref, { text: prev, reviewed: true });
+      },
+    },
+
     async health({ includeDismissed = false } = {}) {
+      // 確認紀錄的起點不在這裡建立（會產生 commit）：由常駐程式的每日健康檢查與「待確認」清單建立，起點建立前 H23 不判斷
       const mems = await ctx.scan();
       const all = await runHealth(ctx, { memories: mems });
       const dismissed = await readDismissed();
@@ -446,15 +604,18 @@ export async function open(opts = {}) {
       async redact(ref) {
         const p = await eg.secrets.preview(ref);
         if (!p.matches.length) return { ok: true };
-        if (ref === 'core/CORE.md') return eg.core.write(p.after);
+        if (ref === 'core/CORE.md') return eg.core.write(p.after, { carryReviewed: true });
         if (CORE_RULE_REF.test(ref)) {
           return ctx.locked('secrets.redact', async () => {
             await safeWrite(path.join(homes.vault, ...ref.split('/')), p.after);
-            const commit = await commitPaths(homes.vault, [ref], `edit ${ref}`, { action: 'edit', refs: [ref], mid: ctx.mid });
+            const { carryReviewed } = await import('./review.mjs');
+            const rv = await carryReviewed(ctx, new Map([[ref, p.before]]));
+            const commit = await commitPaths(homes.vault, [ref, ...rv], `edit ${ref}`, { action: 'edit', refs: [ref], mid: ctx.mid });
             return { ok: true, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
           });
         }
-        return writeMemory(ctx, ref, { text: p.after });
+        // 遮蔽是機械式的改寫：改之前確認過才算確認過（Claude 寫進來的其他內容不會因此被確認掉）
+        return writeMemory(ctx, ref, { text: p.after, carryReviewed: true });
       },
       /** 「這不是金鑰」（介面的按鈕、engram not-secret <ref> --line）：清單檔與這個檔案放在同一個 commit，另一台電腦同時收到兩者 */
       async allow(ref, line) {
@@ -496,7 +657,8 @@ export async function open(opts = {}) {
       },
     },
 
-    async apply(fix) {
+    /** reviewed：目前沒有呼叫端帶 true。收件匣的一鍵動作（管理介面或 /engram:inbox）不代表使用者讀過全文，搬移後的內容不會被記為確認過 */
+    async apply(fix, { reviewed = false } = {}) {
       invariant(fix && fix.action, '缺少 fix.action', undefined, { message: 'Missing fix.action' });
       const a = fix.args ?? {};
       // R-45：args 可能來自介面的請求，路徑類參數一律對照引擎自己的紀錄，不接受任意路徑
@@ -505,7 +667,7 @@ export async function open(opts = {}) {
       switch (fix.action) {
         case 'normalize': return eg.normalize();
         case 'sync': return eg.sync();
-        case 'move': return eg.memories.move(a.ref, a.scope);
+        case 'move': return eg.memories.move(a.ref, a.scope, { reviewed });
         case 'remove': return eg.memories.remove(a.ref);
         case 'rebind': {
           const b = (await bindingsNow()).find((v) => v.path && a.dir && v.path.toLowerCase() === String(a.dir).toLowerCase());
@@ -537,7 +699,7 @@ export async function open(opts = {}) {
           const res = await resolveIdentity(ctx, a.root);
           const target = res.pid ?? null;
           const b = await bind(ctx, a.root, target ? { pid: target } : { create: { name: path.basename(a.root) } }, { mode: 'safe' });
-          return eg.memories.move(a.ref, { kind: 'project', pid: b.pid });
+          return eg.memories.move(a.ref, { kind: 'project', pid: b.pid }, { reviewed });
         }
         case 'reconcile-bindings': return reconcile(ctx, { force: !!a.force });
         case 'rename-collisions': {
@@ -546,6 +708,17 @@ export async function open(opts = {}) {
           const paths = (Array.isArray(a.paths) ? a.paths : []).filter((p) => plan.some((it) => it.to && !it.blocked && it.path.toLowerCase() === String(p).toLowerCase()));
           invariant(paths.length, '這些資料夾目前不需要或不能改名，請重新整理收件匣', undefined, { message: 'These folders do not need renaming or cannot be renamed right now. Refresh the inbox' });
           return renameCollisions(ctx, { paths });
+        }
+        case 'relink':
+        case 'unlink': {
+          // H21：改寫指向被合併或封存記憶的連結。只改內文裡的 [[from]]；to 必須是目前存在的記憶
+          invariant(typeof a.from === 'string' && a.from.trim(), '缺少連結名稱', undefined, { message: 'Missing the link name' });
+          const mems = await ctx.scan();
+          if (fix.action === 'relink') invariant(typeof a.to === 'string' && nameIndex(mems).has(a.to.trim().toLowerCase()), `找不到記憶：${a.to}`, undefined, { message: `Memory not found: ${a.to}` });
+          const mem = await readMemory(ctx, a.ref);
+          const r = rewriteLinks(mem.raw, a.from.trim(), fix.action === 'relink' ? a.to.trim() : null);
+          invariant(r.count > 0, `「${a.ref}」裡已經沒有 [[${a.from}]] 連結`, '重新整理收件匣', { message: `"${a.ref}" no longer has a [[${a.from}]] link`, hint: 'Refresh the inbox' });
+          return writeMemory(ctx, a.ref, { text: r.text, carryReviewed: true });
         }
         case 'restore-deletions': return restoreDeletions(ctx, a.pid);
         case 'confirm-deletions': return confirmDeletions(ctx, a.pid);
@@ -586,13 +759,32 @@ export async function open(opts = {}) {
         const p = path.join(homes.vault, 'core', 'CORE.md');
         return { path: p, text: (await readText(p)) ?? '', stats: await indexStats(p) };
       },
-      async write(markdown, { allowSecrets = false } = {}) {
+      /** 1.4.0 的建議更新（H24）：找得到原本範本的位置、而且還沒加過的才列 */
+      async suggestions() {
+        return suggestionsFor((await readText(path.join(homes.vault, 'core', 'CORE.md'))) ?? '');
+      },
+      /** 使用者在介面按「加入」：插入選定的建議（記為確認過，可用 engram undo 復原） */
+      async applySuggestions(ids) {
+        invariant(Array.isArray(ids) && ids.length, '沒有選擇要加入的建議', undefined, { message: 'No suggestions were selected' });
+        const cur = (await readText(path.join(homes.vault, 'core', 'CORE.md'))) ?? '';
+        const next = applySuggestions(cur, ids.map(String));
+        invariant(next !== null, '這些建議已經加過，或核心準則裡找不到原本的位置', '重新整理頁面', { message: 'These suggestions were already added, or the core rules no longer have the original place for them', hint: 'Refresh the page' });
+        // 只插入使用者看過的那幾句：其他部分原本確認過才算確認過；寫入時比對讀取時的內容，避免連按兩次互相覆蓋
+        return eg.core.write(next, { carryReviewed: true, expect: cur });
+      },
+      async write(markdown, { allowSecrets = false, reviewed = false, carryReviewed = false, expect } = {}) {
         invariant(typeof markdown === 'string', '內容必須是文字', undefined, { message: 'The content must be text' });
         return ctx.locked('core.write', async () => {
+          if (typeof expect === 'string' && ((await readText(path.join(homes.vault, 'core', 'CORE.md'))) ?? '') !== expect) {
+            throw new EngramError(E.CONFLICT, '核心準則剛被修改，這次沒有寫入', '重新整理頁面再試一次').withEn('The core rules were just changed, so nothing was written', 'Refresh the page and try again');
+          }
           const { assertNoNewSecrets } = await import('./secretallow.mjs');
           const allowed = await assertNoNewSecrets(homes.local, 'core/CORE.md', markdown.replace(/\r\n/g, '\n'), { before: await readText(path.join(homes.vault, 'core', 'CORE.md')), allowSecrets, what: '核心準則' });
+          const before = await readText(path.join(homes.vault, 'core', 'CORE.md'));
           await safeWrite(path.join(homes.vault, 'core', 'CORE.md'), markdown.replace(/\r\n/g, '\n'));
-          const commit = await commitPaths(homes.vault, ['core/CORE.md', ...allowed], 'edit core/CORE.md', { action: 'edit', refs: ['core/CORE.md'], mid: ctx.mid });
+          const rv = reviewed ? await markReviewed(ctx, ['core/CORE.md'])
+            : carryReviewed ? await (await import('./review.mjs')).carryReviewed(ctx, new Map([['core/CORE.md', before]])) : [];
+          const commit = await commitPaths(homes.vault, ['core/CORE.md', ...allowed, ...rv], 'edit core/CORE.md', { action: 'edit', refs: ['core/CORE.md'], mid: ctx.mid });
           return { ok: true, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
         });
       },
@@ -617,6 +809,11 @@ export async function open(opts = {}) {
       const attrs = await readText(path.join(homes.vault, '.gitattributes'));
       add('gitattributes', !!attrs && attrs.includes('merge=engram-md'), '.gitattributes 合併規則');
       try { const t = path.join(homes.local, 'tmp', '.probe'); fs.writeFileSync(t, 'x'); fs.rmSync(t); add('tmp', true, '暫存資料夾可寫入'); } catch (e) { add('tmp', false, '暫存資料夾可寫入', e.message); }
+      // 1.4.0：對話回顧的子代理要能讀 local/dream（常駐程式啟動時加入；這裡順手補上，新對話才生效）
+      const dreamDir = path.join(homes.local, 'dream');
+      const { isJunctionReadAllowed } = await import('./claudesettings.mjs');
+      const dreamOk = exists(dreamDir) && (await isJunctionReadAllowed(homes, dreamDir).catch(() => false));
+      add('dream-dir', dreamOk, '對話回顧資料夾可讓 Claude 讀取', dreamOk ? dreamDir : '還沒加入 Claude Code 的 permissions.additionalDirectories：常駐程式啟動時會自動加入（engram agent 或重新登入）');
       const bindings = await readBindings(homes.vault, ctx.mid);
       for (const b of allBindingViews(bindings)) {
         if (b.method !== 'junction') continue;
@@ -650,7 +847,10 @@ export async function open(opts = {}) {
         const next = text.replace(re, `$1${lines.join('\n')}\n$3`);
         if (next === text) return { ok: true };
         await safeWrite(p, next);
-        const commit = await commitPaths(homes.vault, ['core/CORE.md'], 'update environments', { action: 'tidy', mid: ctx.mid });
+        // 電腦清單由 Engram 維護：改之前確認過的核心準則，改之後也算確認過（不會因為加了一台電腦就跳出「待你確認」）
+        const { carryReviewed } = await import('./review.mjs');
+        const rv = await carryReviewed(ctx, new Map([['core/CORE.md', text]]));
+        const commit = await commitPaths(homes.vault, ['core/CORE.md', ...rv], 'update environments', { action: 'tidy', mid: ctx.mid });
         return { ok: true, commit: commit ?? undefined };
       });
     },

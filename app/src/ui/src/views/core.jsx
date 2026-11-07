@@ -1,28 +1,47 @@
 // 核心準則：編輯每次對話都會載入的 CORE.md，並看清楚它是怎麼被載入的、佔了多少預算。
 import { h } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { api } from '../api.js';
 import { useApp, useData, Skeleton, Meter, ErrorBanner, Banner, useAction, Section, Markdown, useDirty, useSaveShortcut, drafts, ConfirmDialog } from '../components.jsx';
 import { Editor } from '../lazy-editor.jsx';
 import { fmtBytes, relTime } from '../util.js';
-import { IconEye, IconEdit, IconSparkle } from '../icons.jsx';
+import { IconEye, IconEdit, IconSparkle, IconPlus } from '../icons.jsx';
 import { t, N_, local } from '../i18n.js';
 
 const KIND = { user: N_('使用者層'), import: N_('引用'), project: N_('專案'), rule: N_('kind::規則') };
 
-export function Core() {
+export function Core({ params = {} }) {
   const { go } = useApp();
   const core = useData(() => api.core(), []);
+  const sugg = useData(() => api.coreSuggestions(), []);
   const act = useAction();
   const [text, setText] = useState(null);
   const [view, setView] = useState('edit');
   const [err, setErr] = useState(null);
   const [stash, setStash] = useState(() => drafts.get('core'));
   const [ask, setAsk] = useState(false);
-  useEffect(() => { if (core.data && text === null) setText(core.data.text); }, [core.data]);
+  // 伺服器的內容變了（加入建議、復原、另一台電腦同步過來）：沒有修改中的內容時，編輯器跟著更新
+  const synced = useRef(null);
+  // 跟著更新的那一次 render，編輯器還是舊內容、看起來像「有修改」：不要把舊內容存成草稿
+  const following = useRef(false);
+  useEffect(() => {
+    if (!core.data) return;
+    if (text === null || text === synced.current) {
+      if (text !== null && text !== core.data.text) following.current = true;
+      setText(core.data.text);
+    }
+    synced.current = core.data.text;
+  }, [core.data?.text]);
+  const [adding, setAdding] = useState(false);
+  const suggRef = useRef(null);
+  const ready = !!core.data && text !== null;
+  useEffect(() => { if (params.suggestions && sugg.data?.length && ready) suggRef.current?.scrollIntoView({ block: 'start' }); }, [params.suggestions, sugg.data?.length, ready]);
   const dirty = !!(core.data && text !== null && text !== core.data.text);
   useDirty(dirty, t('核心準則的修改'));
-  useEffect(() => { if (dirty) drafts.set('core', { text }); }, [text, dirty]);
+  useEffect(() => {
+    if (following.current) { following.current = false; return; }
+    if (dirty) drafts.set('core', { text });
+  }, [text, dirty]);
   const [secret, setSecret] = useState(null);
   const save = async (allowSecrets = false) => {
     if (!dirty) return;
@@ -38,6 +57,16 @@ export function Core() {
   const lines = text.split('\n').length;
   const bytes = new TextEncoder().encode(text).length;
   const chainLines = core.data.chain.reduce((a, f) => a + (f.depth > 0 ? (f.path.endsWith('CORE.md') ? lines : f.lines) : 0), 0);
+  const chainBytes = core.data.chain.reduce((a, f) => a + (f.depth > 0 ? (f.path.endsWith('CORE.md') ? bytes : f.bytes || 0) : 0), 0);
+  // 1.4.0：加入建議更新（H24）。編輯中有沒儲存的修改時先不加，避免兩邊的內容打架
+  const addSuggestions = async (ids) => {
+    if (adding) return;
+    setAdding(true);
+    try {
+      const r = await act(() => api.applyCoreSuggestions(ids), t('已加入核心準則，下一次對話生效'));
+      if (r) { drafts.clear('core'); core.reload(); sugg.reload(); }
+    } finally { setAdding(false); }
+  };
 
   return (
     <div class="page">
@@ -66,10 +95,29 @@ export function Core() {
         </Section>
 
         <div class="grid">
+          {sugg.data?.length > 0 && (
+            <div ref={suggRef}><Section title={t('建議更新')}>
+              <div class="panel-body" style={{ display: 'grid', gap: 12 }}>
+                <p class="muted" style={{ fontSize: 13, margin: 0 }}>{t('依 Anthropic 的記憶研究調整了「記憶寫入協定」。這是你的檔案，Engram 不會自己改；看過覺得合適再加入，之後可以用變更歷史復原。')}</p>
+                {sugg.data.map((x) => (
+                  <div key={x.id} class="review-item">
+                    <header><h3>{local(x, 'title')}</h3></header>
+                    <p class="muted" style={{ fontSize: 13, margin: 0 }}>{local(x, 'reason')}</p>
+                    <pre class="frontmatter" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{x.text}</pre>
+                    <footer><button class="btn sm" disabled={dirty || adding} onClick={() => addSuggestions([x.id])} aria-label={t('加入：{name}', { name: local(x, 'title') })}><IconPlus />{t('加入')}</button></footer>
+                  </div>
+                ))}
+                {dirty && <p class="faint" style={{ fontSize: 12, margin: 0 }}>{t('左邊有尚未儲存的修改，先儲存或放棄後再加入。')}</p>}
+                {sugg.data.length > 1 && <div><button class="btn sm primary" disabled={dirty || adding} onClick={() => addSuggestions(sugg.data.map((x) => x.id))}><IconPlus />{t('全部加入')}</button></div>}
+              </div>
+            </Section></div>
+          )}
           <Section title={t('載入預算')}>
             <div class="panel-body" style={{ display: 'grid', gap: 14 }}>
               <Meter label={t('核心準則＋兩份索引')} value={chainLines} max={200} unit={t(' 行')} />
+              <Meter label={t('每次載入的大小')} value={Math.round(chainBytes / 102.4) / 10} max={25} unit=" KB" warnAt={0.8} />
               <p class="muted" style={{ fontSize: 13 }}>{t('官方建議 CLAUDE.md 與它匯入的檔案合計不超過 200 行。內容越精簡，Claude 越能確實遵守。細節規則可以移到 {rules}，用 {paths} 限定只在相關檔案時載入。', { rules: <code>core/rules/</code>, paths: <code>paths:</code> })}</p>
+              <p class="muted" style={{ fontSize: 13 }}>{t('這一層每個專案、每次對話都會載入，建議維持在 20 KB 以內；很少用到的全域記憶可以搬到相關的專案。')}</p>
               <div><button class="btn sm" onClick={() => go('tidy', { scope: 'core' })} title={t('到「記憶整理」產生給 Claude 的指令')}><IconSparkle />{t('請 Claude 精簡')}</button></div>
             </div>
           </Section>

@@ -97,7 +97,7 @@ export function busy() {
 export function counts(rec) {
   const c = { items: rec.items.length, suggested: 0, decided: 0, accept: 0, keep: 0, archive: 0, custom: 0, done: 0, kept: 0, failed: 0, skipped: 0, undone: 0, waiting: 0 };
   for (const it of rec.items) {
-    if (it.action !== 'keep') c.suggested++;
+    if (it.action !== 'keep' && it.action !== 'verify') c.suggested++; // 確認仍正確只記驗證日期，不算建議變更
     if (it.decision) { c.decided++; c[it.decision]++; }
     const r = it.result?.status;
     if (r === 'needs-claude') c.waiting++;
@@ -114,7 +114,7 @@ export async function listRecords(localDir) {
   for (const n of names) {
     const rec = await readJson(path.join(dir, n));
     if (!rec || rec.v !== RECORD_VERSION || !Array.isArray(rec.items)) continue;
-    out.push({ id: rec.id, createdAt: rec.createdAt, updatedAt: rec.updatedAt, appliedAt: rec.appliedAt ?? null, scope: rec.scope, request: rec.request ?? '', summary: rec.summary, status: rec.status, counts: counts(rec) });
+    out.push({ id: rec.id, createdAt: rec.createdAt, updatedAt: rec.updatedAt, appliedAt: rec.appliedAt ?? null, scope: rec.scope, request: rec.request ?? '', summary: rec.summary, status: rec.status, counts: counts(rec), ...(rec.kind ? { kind: rec.kind } : {}), ...(rec.dream ? { dream: rec.dream } : {}) });
   }
   return out.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }

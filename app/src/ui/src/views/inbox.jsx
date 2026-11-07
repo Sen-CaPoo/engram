@@ -3,11 +3,12 @@
 import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api } from '../api.js';
-import { useData, Empty, Skeleton, Dialog, ConfirmDialog, ErrorBanner, useAction, ScopeLabel, Markdown, SevChip, useDirty } from '../components.jsx';
+import { useData, Empty, Skeleton, Dialog, ConfirmDialog, ErrorBanner, useAction, ScopeLabel, Markdown, SevChip, useDirty, Banner } from '../components.jsx';
 import { Merge } from '../lazy-editor.jsx';
 import { relTime } from '../util.js';
-import { IconCheckCircle, IconMerge, IconChevronRight, IconShield } from '../icons.jsx';
+import { IconCheckCircle, IconMerge, IconChevronRight, IconShield, IconCheck, IconUndo, IconEdit } from '../icons.jsx';
 import { AskClaudeButton } from '../askclaude.jsx';
+import { DiffView } from './tidy.jsx';
 import { t, N_, local } from '../i18n.js';
 
 const GROUPS = [
@@ -18,7 +19,7 @@ const GROUPS = [
   { key: 'low', label: N_('tab::建議') },
 ];
 // 規則只能找出候選、要讀內容才能判斷的卡片：提供「交給 Claude」（/engram:inbox <id>）
-const AI_CODES = new Set(['H01', 'H07', 'H08', 'H09', 'H10', 'H11', 'H12', 'H16', 'H19']);
+const AI_CODES = new Set(['H01', 'H07', 'H08', 'H09', 'H10', 'H11', 'H12', 'H16', 'H19', 'H22']);
 
 // 執行前需要確認的動作（會改內容、設定或綁定）；值是中文原文，顯示時經過 t()
 const CONFIRM = {
@@ -28,6 +29,8 @@ const CONFIRM = {
   remove: N_('把這筆記憶移到歷史（封存）；之後仍可從歷史還原。'),
   'forget-binding': N_('移除這台電腦上已失效的綁定紀錄；記憶本身不受影響。'),
   'allow-read': N_('在你的使用者設定中加入這個記憶資料夾，讓 Claude 讀取時不再跳出權限詢問。'),
+  relink: N_('把這筆記憶內文裡指向舊名稱的 [[連結]] 改成指向合併後的記憶；其他內容不變，可以復原。'),
+  unlink: N_('拿掉這筆記憶內文裡指向已封存記憶的 [[連結]] 括號，只留下文字；可以復原。'),
   'reconcile-bindings': N_('依這台電腦目前的權限模式重新設定資料夾綁定：auto 模式補上 junction，其他模式改用專案根目錄的設定檔，避免讀寫記憶時跳出權限詢問。記憶本身不受影響。'),
   'rename-collisions': N_('依命名規則在資料夾原名後面加 4 碼代號（例如「照片優化-66ca」），讓它們在 Claude Code 裡不再共用同一份紀錄。改名後重新綁定，這台電腦寫的記憶裡的舊路徑一併更新；已收編完的共用舊記憶資料夾移到備份。改名前的對話不會出現在 /resume 清單。完成後可以按「復原」整批還原。'),
 };
@@ -65,7 +68,10 @@ export function Inbox({ params, go }) {
       : f.code === 'H10' ? setOpen({ kind: 'guide', item: f, guide: 'split' })
       : go('library', { ref: f.fix.args?.ref || f.refs?.[0], edit: '1' })),
     'open-conflict': (f) => { const c = conflicts.find((x) => x.id === f.fix.args?.id); if (c) setOpen({ kind: 'conflict', item: c }); },
-    'open-core': () => go('core'),
+    'open-core': (f) => go('core', f.fix?.args?.suggestions ? { suggestions: '1' } : {}),
+    'open-tidy': (f) => go('tidy', { scope: f.fix?.args?.scope || 'core' }),
+    'open-dream': (f) => go('tidy', { scope: `project:${f.fix?.args?.pid || f.pid}`, mode: 'dream' }),
+    'open-review': () => setOpen({ kind: 'review' }),
     'open-project': (f) => go('projects', { focus: f.fix.args?.pid || f.pid }),
     'open-rename': (f) => setOpen({ kind: 'guide', item: f, guide: 'rename' }),
   };
@@ -135,7 +141,7 @@ export function Inbox({ params, go }) {
                 {fixes.map((fx, i) => <button key={fx.action + i} class={`btn sm${i === 0 ? ' primary' : ''}`} onClick={() => run(f, fx)}>{local(fx, 'label')}</button>)}
                 {AI_CODES.has(f.code) && <AskClaudeButton cls="btn sm ghost" title={t('交給 Claude：{title}', { title: local(f, 'title') })} command={`/engram:inbox ${f.id}`}
                   intro={t('Claude 會讀這張卡片相關的記憶內容，說明判斷的依據，建議要套用修正、改寫、合併還是忽略。')} />}
-                {f.refs?.[0] && /^(global|projects|machines)\//.test(f.refs[0]) && <button class="btn sm ghost" onClick={() => go('library', { ref: f.refs[0] })}>{t('在記憶庫開啟')}<IconChevronRight /></button>}
+                {f.refs?.[0] && /^(global|projects|machines)\/.+\.md$/.test(f.refs[0]) && <button class="btn sm ghost" onClick={() => go('library', { ref: f.refs[0] })}>{t('在記憶庫開啟')}<IconChevronRight /></button>}
                 <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                   <button class="btn sm ghost" onClick={() => act(() => api.dismissFinding(f.id, new Date(Date.now() + 7 * 864e5).toISOString()), t('七天後再提醒'))}>{t('七天後提醒')}</button>
                   <button class="btn sm ghost" onClick={() => act(() => api.dismissFinding(f.id), t('已忽略這項，之後不再提醒'))}>{t('忽略')}</button>
@@ -150,6 +156,8 @@ export function Inbox({ params, go }) {
       {open?.kind === 'merge' && <MergeDialog f={open.item} onClose={() => setOpen(null)} />}
       {open?.kind === 'secret' && <SecretDialog f={open.item} onClose={() => setOpen(null)} />}
       {open?.kind === 'guide' && <GuideDialog f={open.item} guide={open.guide} onClose={() => setOpen(null)} />}
+      {open?.kind === 'review' && <ReviewDialog go={go} onClose={() => { setOpen(null); data.reload(); }} />}
+
       {open?.kind === 'confirm' && (
         <ConfirmDialog title={t('{label}？', { label: local(open.fix, 'label') })} desc={t(CONFIRM[open.fix.action])} confirmLabel={local(open.fix, 'label')}
           onConfirm={async () => { await act(() => api.apply(open.fix), t('已{label}', { label: local(open.fix, 'label') })); setOpen(null); }} onClose={() => setOpen(null)}>
@@ -292,6 +300,70 @@ function SecretDialog({ f, onClose }) {
           <div class="diff">{prev.data.after}</div>
           <p class="faint" style={{ fontSize: 12 }}>{t('建議把金鑰本身存在 Windows 認證管理員或密碼管理工具，記憶裡只寫「存放在哪裡、怎麼取得」。')}</p>
         </>
+      )}
+    </Dialog>
+  );
+}
+
+// 待你確認（H23）：Claude 寫入的全域、單機記憶與核心準則。每一筆看差異後確認、編輯或退回
+function ReviewDialog({ go, onClose }) {
+  const act = useAction();
+  const list = useData(() => api.reviewList(), []);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [handled, setHandled] = useState(() => new Set()); // 已經處理、等清單重新載入的（先在畫面上拿掉，避免重複按）
+  const [asking, setAsking] = useState(null);
+  const items = (list.data || []).filter((x) => !handled.has(`${x.ref}@${x.sha}`));
+  const hide = (xs) => setHandled((h) => new Set([...h, ...xs.map((x) => `${x.ref}@${x.sha}`)]));
+  const confirm = async (subset) => {
+    setErr(null);
+    setBusy(true);
+    try {
+      const r = await act(() => api.reviewConfirm(subset.map((x) => ({ ref: x.ref, sha: x.sha }))), (res) => (res?.confirmed?.length ? (res.confirmed.length === 1 ? t('已確認') : t('已確認 {n} 筆', { n: res.confirmed.length })) : null), { rethrow: true });
+      hide(subset.filter((x) => r?.confirmed?.includes(x.ref)));
+      if (r?.stale?.length) setErr({ message: t('{n} 筆在你檢視之後又被修改，請重新檢視', { n: r.stale.length }) });
+      list.reload();
+    } catch (e) { setErr(e); } finally { setBusy(false); }
+  };
+  const revert = async (x) => {
+    setAsking(null);
+    setErr(null);
+    setBusy(true);
+    try {
+      await act(() => api.reviewRevert(x.ref, x.sha), x.kind === 'new' ? t('已封存（可從歷史還原）') : t('已退回確認過的版本'), { rethrow: true });
+      hide([x]);
+      list.reload();
+    } catch (e) { setErr(e); } finally { setBusy(false); }
+  };
+  useEffect(() => { if (list.data && !items.length && !list.loading) onClose(); }, [list.data, items.length, list.loading]);
+  return (
+    <Dialog wide title={t('待你確認的內容')} desc={t('這些是 Claude 新增或修改、每次對話都會載入的內容（全域記憶、這台電腦的單機記憶、核心準則）。看一下是否正確；寫錯的記憶會在每個專案被讀到。')} onClose={onClose}
+      footer={<><button class="btn" onClick={onClose}>{t('關閉')}</button><button class="btn primary" disabled={busy || !items.length} onClick={() => confirm(items)}><IconCheck />{t('全部確認（{n}）', { n: items.length })}</button></>}>
+      <ErrorBanner error={err || list.error} onDismiss={err ? () => setErr(null) : undefined} />
+      {!list.data ? <Skeleton rows={4} /> : items.map((x) => (
+        <article class="review-item" key={x.ref}>
+          <header>
+            <span class={`chip ${x.kind === 'new' ? 'brand' : 'warn'}`}>{x.kind === 'new' ? t('review::新增') : t('review::修改')}</span>
+            <h3><code>{x.name}</code></h3>
+            <code class="faint">{x.ref}</code>
+            {x.changedAt && <span class="faint" style={{ fontSize: 12 }}>{relTime(x.changedAt)}{x.machine ? ` · ${x.machine}` : ''}</span>}
+          </header>
+          {x.description && <p class="muted" style={{ margin: 0, fontSize: 13 }}>{x.description}</p>}
+          {x.previousMissing && <Banner tone="warn" title={t('找不到確認過的版本')}>{t('只能顯示目前的內容。')}</Banner>}
+          {x.previous != null ? <DiffView a={x.previous} b={x.current} /> : <pre class="diff" style={{ maxHeight: 260 }}>{x.current}</pre>}
+          <footer>
+            <button class="btn sm primary" disabled={busy} onClick={() => confirm([x])} aria-label={t('確認：{name}', { name: x.name })}><IconCheck />{t('確認')}</button>
+            {!x.ref.startsWith('core/') && <button class="btn sm" onClick={() => { onClose(); go('library', { ref: x.ref, edit: '1' }); }} aria-label={t('編輯：{name}', { name: x.name })}><IconEdit />{t('編輯')}</button>}
+            {x.ref === 'core/CORE.md' && <button class="btn sm" onClick={() => { onClose(); go('core'); }} aria-label={t('編輯：{name}', { name: x.name })}><IconEdit />{t('編輯')}</button>}
+            {(x.kind === 'changed' && x.previous != null) || (x.kind === 'new' && !x.ref.startsWith('core/'))
+              ? <button class="btn sm ghost" disabled={busy} onClick={() => setAsking(x)} aria-label={x.kind === 'new' ? t('封存：{name}', { name: x.name }) : t('退回確認過的版本：{name}', { name: x.name })}><IconUndo />{x.kind === 'new' ? t('封存') : t('退回確認過的版本')}</button> : null}
+          </footer>
+        </article>
+      ))}
+      {asking && (
+        <ConfirmDialog title={asking.kind === 'new' ? t('封存「{name}」？', { name: asking.name }) : t('退回「{name}」確認過的版本？', { name: asking.name })}
+          desc={asking.kind === 'new' ? t('這筆是 Claude 新增的，封存後移到歷史，之後仍可還原。') : t('Claude 這次的修改會被改回你上次確認的版本；之後仍可從歷史復原。')}
+          confirmLabel={asking.kind === 'new' ? t('封存') : t('退回確認過的版本')} onConfirm={() => revert(asking)} onClose={() => setAsking(null)} />
       )}
     </Dialog>
   );

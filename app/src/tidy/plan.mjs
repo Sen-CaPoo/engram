@@ -9,17 +9,56 @@ import { CliError } from '../cli/errors.mjs';
 import { parseMemoryFile } from '../core/frontmatter.mjs';
 import { memoryFileName } from '../core/ids.mjs';
 import { MEMORY_TYPES, scopeOfRef } from '../core/memories.mjs';
-import { allowEntries, assertNoNewSecrets, loadAllow } from '../core/secretallow.mjs';
-import { newId, RECORD_VERSION, writeRecord } from './store.mjs';
+import { allowEntries, assertNoNewSecrets, loadAllow, scanWithAllow } from '../core/secretallow.mjs';
+import { listRecords, newId, RECORD_VERSION, writeRecord } from './store.mjs';
+
+/** 比對引句用：空白（含換行）收成一個空格 */
+/** 引句比對用：去掉所有空白（匯出時很長的行會被折開，空白與換行不同不算不符） */
+const flat = (t) => String(t ?? '').replace(/\s+/g, '');
+
+/**
+ * skipped：子代理沒分析到的對話（session id 或至少前 8 碼，也接受 prepare 給的檔名）。回傳完整 session id。
+ * 全部都沒分析到時不該建立記錄（技能會改成告訴使用者），這裡也擋下。
+ */
+export function resolveSkipped(value, manifest) {
+  const errs = [];
+  const sids = [];
+  if (value === undefined || value === null) return { sids, errs };
+  if (!Array.isArray(value)) return { sids, errs: ['skipped 要是陣列（沒分析到的對話的 session，前 8 碼即可）'] };
+  for (const raw of value) {
+    const v = String(raw ?? '').trim().toLowerCase();
+    const s = manifest.sessions.find((x) => String(x.sid).toLowerCase() === v) || (v.length >= 8 && manifest.sessions.find((x) => String(x.sid).toLowerCase().startsWith(v) || x.files.some((f) => f.toLowerCase().includes(v))));
+    if (!s) errs.push(`skipped：這次回顧沒有這個對話：${String(raw).slice(0, 60)}`);
+    else if (!sids.includes(s.sid)) sids.push(s.sid);
+  }
+  if (manifest.sessions.length && sids.length === manifest.sessions.length) errs.push('所有對話都沒分析到：不要建立整理記錄，請使用者開新對話後再執行一次 /engram:dream');
+  return { sids, errs };
+}
 
 export const CORE_REF = 'core/CORE.md';
-export const ACTIONS = ['keep', 'update', 'move', 'archive', 'merge', 'create', 'split', 'promote'];
-export const OPS = ['write', 'move', 'remove', 'merge', 'create', 'core'];
+// verify（1.4.0 對話回顧）：對話紀錄證實這筆記憶仍然正確，只在 metadata.engram.verified 記下日期
+export const ACTIONS = ['keep', 'update', 'move', 'archive', 'merge', 'create', 'split', 'promote', 'verify'];
+export const OPS = ['write', 'move', 'remove', 'merge', 'create', 'core', 'verify'];
+const MAX_EVIDENCE = 6;
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const MAX_ITEMS = 300;
 const MAX_CONTENT = 256 * 1024;
-const LIMIT = { summary: 1000, request: 4000, title: 120, reason: 4000, group: 40, highlight: 300 };
+const LIMIT = { summary: 1000, request: 4000, title: 120, reason: 4000, group: 40, highlight: 300, quote: 600, session: 80 };
+
+/** 本地時區的今天（YYYY-MM-DD）：verify 寫入的日期 */
+function today(now) {
+  const d = new Date(now);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** 真的存在的日期（2026-02-31、2026-00-10 這類不算；Date.parse 會把 02-31 默默換成 03-03） */
+function isDay(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
 
 /**
  * 範圍參數：global、machine、machine:<mid>、project:<pid>（或只寫 pid）、core、all、記憶 ref。
@@ -125,6 +164,29 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
   const highlights = Array.isArray(plan.highlights) ? plan.highlights.filter((h) => typeof h === 'string' && h.trim()).map((h) => h.trim()) : [];
   if (highlights.length > 8) errs.push('highlights 最多 8 點');
   highlights.forEach((h, i) => tooLong(h, LIMIT.highlight, `highlights[${i}]`, '內容'));
+  // 1.4.0：對話回顧產生的計畫帶 dream（engram dream prepare 的編號）；範圍必須是那個專案
+  let dream = null;
+  let dreamText = null;
+  let skipped = [];
+  if (plan.dream !== undefined && plan.dream !== null && plan.dream !== '') {
+    try {
+      dream = await eg.dream.read(String(plan.dream));
+      if (scope && !(scope.kind === 'project' && scope.pid === dream.pid)) errs.push(`dream ${dream.id} 回顧的是專案 ${dream.pid}，scope 要寫 project:${dream.pid}`);
+      const dup = (await listRecords(eg.paths.local)).find((r) => r.dream?.id === dream.id);
+      if (dup) errs.push(`對話回顧 ${dream.id} 已經建立過整理記錄 ${dup.id}；要重新回顧請再執行一次 engram dream prepare`);
+      dreamText = await eg.dream.text(dream.id).then(flat).catch(() => null);
+      // 沒分析到的對話（子代理失敗）：不要記為已回顧，下次再分析
+      const r = resolveSkipped(plan.skipped, dream);
+      skipped = r.sids;
+      errs.push(...r.errs);
+    } catch (err) {
+      errs.push(`dream：${err.message}`);
+    }
+  } else if (plan.skipped !== undefined) errs.push('skipped 只用在對話回顧（要同時寫 dream）');
+  const dreamRefOk = (ref) => {
+    const sc = scopeOfRef(ref);
+    return !!sc && ((sc.kind === 'project' && sc.pid === dream?.pid) || sc.kind === 'global' || (sc.kind === 'machine' && sc.mid === L.mid));
+  };
   if (!Array.isArray(plan.items) || !plan.items.length) errs.push('items 至少要有一項');
   if (Array.isArray(plan.items) && plan.items.length > MAX_ITEMS) errs.push(`items 最多 ${MAX_ITEMS} 項；範圍很大時只列有建議的記憶，其餘放 kept`);
 
@@ -139,6 +201,9 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
     const ref = raw.ref == null || raw.ref === '' ? null : String(raw.ref);
     const where = ref ? `${where0}（${ref}）` : where0;
     if (ref && ref !== CORE_REF && !isMemoryRef(ref)) { errs.push(`${where}：ref 不是記憶檔`); continue; }
+    // 常見的錯：新增的記憶也填了 ref。ref 指向既有記憶時更危險：使用者在網頁選「封存」會封存那筆既有記憶（1.4.0 審查）
+    const creates = Array.isArray(raw.ops) && raw.ops.length > 0 && raw.ops.every((o) => o?.op === 'create');
+    if (ref && creates) { errs.push(`${where}：新增記憶的項目不要寫 ref（ref 只用在已經存在的記憶），拿掉 ref 即可`); continue; }
     if (ref && (await L.raw(ref)) === null) { errs.push(`${where}：記憶不存在（engram memory list 可以列出所有 ref）`); continue; }
     const action = String(raw.action ?? '');
     if (!ACTIONS.includes(action)) errs.push(`${where}：action 要是 ${ACTIONS.join('、')} 其中之一`);
@@ -152,6 +217,29 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
     tooLong(group, LIMIT.group, where, 'group');
     const rawOps = Array.isArray(raw.ops) ? raw.ops : [];
     if (action === 'keep' && rawOps.length) errs.push(`${where}：建議保留（keep）的項目不能有 ops`);
+    if (action === 'verify' && (!ref || rawOps.length !== 1 || rawOps.some((o) => o?.op !== 'verify' || o?.ref !== ref))) errs.push(`${where}：確認仍正確（verify）的項目要有 ref，ops 只能是這筆記憶的一個 verify`);
+    if (dream && ref && ref !== CORE_REF && !dreamRefOk(ref)) errs.push(`${where}：對話回顧只處理這個專案、全域與這台電腦的記憶：${ref}`);
+    if (dream && ref === CORE_REF) errs.push(`${where}：對話回顧不改核心準則（核心準則請用 /engram:tidy core）`);
+    // 證據（對話回顧）：哪一個對話、哪一天、原文引句
+    const evidence = [];
+    if (raw.evidence !== undefined) {
+      if (!Array.isArray(raw.evidence)) errs.push(`${where}：evidence 要是陣列`);
+      else {
+        if (raw.evidence.length > MAX_EVIDENCE) errs.push(`${where}：evidence 最多 ${MAX_EVIDENCE} 則`);
+        for (const [k, e] of raw.evidence.slice(0, MAX_EVIDENCE).entries()) {
+          const quote = str(e?.quote).trim();
+          if (!quote) { errs.push(`${where} evidence[${k}]：缺少 quote（對話裡的原文）`); continue; }
+          tooLong(quote, LIMIT.quote, `${where} evidence[${k}]`, 'quote');
+          const session = str(e?.session).trim();
+          tooLong(session, LIMIT.session, `${where} evidence[${k}]`, 'session');
+          const date = str(e?.date).trim();
+          if (date && !isDay(date.slice(0, 10))) errs.push(`${where} evidence[${k}]：date 要是存在的日期（YYYY-MM-DD）`);
+          // 對話回顧：引句要能在這次匯出的對話文字裡找到（去掉空白後比對）；找不到的標出來，網頁會提醒
+          const found = dreamText === null ? null : dreamText.includes(flat(quote));
+          evidence.push({ quote: redactText(quote), ...(session ? { session } : {}), ...(date ? { date: date.slice(0, 10) } : {}), ...(typeof e?.contradicts === 'boolean' ? { contradicts: e.contradicts } : {}), ...(found === false ? { unmatched: true } : {}) });
+        }
+      }
+    }
     if (action && action !== 'keep' && !rawOps.length) errs.push(`${where}：action 不是 keep 時要有 ops`);
     if (!ref && !rawOps.some((o) => o?.op === 'create')) errs.push(`${where}：沒有 ref 的項目只能是新增記憶（ops 裡要有 create）`);
     if (ref) {
@@ -159,6 +247,7 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
       subjects.set(ref, n);
     }
 
+    if (dream && action === 'verify' && !evidence.length) errs.push(`${where}：確認仍正確（verify）要附對話裡的證據（evidence）`);
     const ops = [];
     const firstTouch = new Set();
     const gone = new Set();
@@ -190,6 +279,7 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
       if (o.op === 'write') {
         const r = String(o.ref ?? '');
         if (!isMemoryRef(r) || (await L.raw(r)) === null) { errs.push(`${ow}：write 的 ref 不存在或不是記憶檔：${r}`); continue; }
+        if (dream && !dreamRefOk(r)) { errs.push(`${ow}：對話回顧只處理這個專案、全域與這台電腦的記憶：${r}`); continue; }
         const first = touch(r, ow);
         const base = await baseFor(r, o.base, first, ow);
         const content = await readContent(o.file, ow);
@@ -207,6 +297,7 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
       } else if (o.op === 'move') {
         const r = String(o.ref ?? '');
         if (!isMemoryRef(r) || (await L.raw(r)) === null) { errs.push(`${ow}：move 的 ref 不存在或不是記憶檔：${r}`); continue; }
+        if (dream && !dreamRefOk(r)) { errs.push(`${ow}：對話回顧只處理這個專案、全域與這台電腦的記憶：${r}`); continue; }
         const to = parseTarget(o.to, L.mid);
         if (!to) { errs.push(`${ow}：to 要是 global、machine、machine:<mid> 或 project:<pid>`); continue; }
         if (to.kind === 'project' && !L.projects.has(to.pid)) { errs.push(`${ow}：沒有這個專案 ${to.pid}`); continue; }
@@ -222,6 +313,7 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
       } else if (o.op === 'remove') {
         const r = String(o.ref ?? '');
         if (!isMemoryRef(r) || (await L.raw(r)) === null) { errs.push(`${ow}：remove 的 ref 不存在或不是記憶檔：${r}`); continue; }
+        if (dream && !dreamRefOk(r)) { errs.push(`${ow}：對話回顧只處理這個專案、全域與這台電腦的記憶：${r}`); continue; }
         if (await pinned(r)) { errs.push(`${ow}：${r} 是使用者釘選的記憶，不要建議封存`); continue; }
         const first = touch(r, ow);
         const base = await baseFor(r, o.base, first, ow);
@@ -232,6 +324,7 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
         if (refs.length < 2 || new Set(refs).size !== refs.length) { errs.push(`${ow}：merge 的 refs 至少要兩筆不重複的記憶`); continue; }
         let ok = true;
         for (const r of refs) if (!isMemoryRef(r) || (await L.raw(r)) === null) { errs.push(`${ow}：${r} 不存在或不是記憶檔`); ok = false; }
+        for (const r of refs) if (ok && dream && !dreamRefOk(r)) { errs.push(`${ow}：對話回顧只處理這個專案、全域與這台電腦的記憶：${r}`); ok = false; }
         if (!ok) continue;
         const into = o.into == null ? refs[0] : String(o.into);
         if (!refs.includes(into)) { errs.push(`${ow}：into 要是 refs 其中一筆`); continue; }
@@ -261,6 +354,7 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
       } else if (o.op === 'create') {
         const to = parseTarget(o.scope, L.mid);
         if (!to || (to.kind === 'machine' && to.mid !== L.mid)) { errs.push(`${ow}：scope 要是 global、machine（這台電腦）或 project:<pid>`); continue; }
+        if (dream && to.kind === 'project' && to.pid !== dream.pid) { errs.push(`${ow}：對話回顧只能新增在這個專案（project:${dream.pid}）、全域或這台電腦`); continue; }
         if (to.kind === 'project' && !L.projects.has(to.pid)) { errs.push(`${ow}：沒有這個專案 ${to.pid}`); continue; }
         const content = await readContent(o.file, ow);
         if (content === null) continue;
@@ -277,7 +371,33 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
         tryCheck(() => assertNoNewRedaction(content, []), ow);
         await secretCheck(eg, target, content, null, ow, errs);
         ops.push({ op: 'create', scope: scopeKey(to), ref: target, name, type, description: String(p.data.description).trim(), body: p.body.trim(), content });
+      } else if (o.op === 'verify') {
+        // 只在 frontmatter 記下 metadata.engram.verified，其餘一字不改。不存內容（執行時用當下內容加上日期，
+        // 也就不會把未遮蔽的原文存進整理記錄）；日期是證據裡最新的那一天（沒有證據時是今天），不晚於今天
+        const r = String(o.ref ?? '');
+        if (!isMemoryRef(r) || (await L.raw(r)) === null) { errs.push(`${ow}：verify 的 ref 不存在或不是記憶檔：${r}`); continue; }
+        if (action !== 'verify') { errs.push(`${ow}：verify 只能用在「確認仍正確」（action: verify）的項目；有改寫時不必另外 verify`); continue; }
+        const first = touch(r, ow);
+        const base = await baseFor(r, o.base, first, ow);
+        const cur = await L.raw(r);
+        const parsedCur = parseMemoryFile(cur);
+        if (!parsedCur.hasFrontmatter || parsedCur.errors.length) { errs.push(`${ow}：${r} 沒有 frontmatter 或格式有誤，無法記下驗證日期（先修正格式）`); continue; }
+        if (scanWithAllow(cur, r, await loadAllow(eg.paths.local)).length) { errs.push(`${ow}：${r} 疑似含有金鑰，先到收件匣遮蔽再驗證`); continue; }
+        const todayStr = today(now);
+        const given = str(o.date).trim();
+        if (given && !isDay(given)) { errs.push(`${ow}：date 要是存在的日期（YYYY-MM-DD）`); continue; }
+        const fromEvidence = evidence.map((e) => e.date).filter((d) => d && isDay(d)).sort().slice(-1)[0];
+        const date = [given || fromEvidence || todayStr, todayStr].sort()[0];
+        const had = String(parsedCur.data?.metadata?.engram?.verified ?? '').slice(0, 10);
+        if (had && had >= date) { errs.push(`${ow}：${r} 已經記過 ${had} 的驗證日期；這筆不必再 verify，放進 kept 即可`); continue; }
+        // 比記憶最後一次被 Claude Code 寫入還早的對話，證明不了目前的內容
+        // metadata.modified 是 UTC 時間，證據日期是對話的本地日期：先換成本地日期再比
+        const modMs = Date.parse(String(parsedCur.data?.metadata?.modified ?? ''));
+        const modified = Number.isFinite(modMs) ? today(modMs) : null;
+        if (modified && date < modified) { errs.push(`${ow}：證據的日期（${date}）早於 ${r} 的最後修改（${modified}），證明不了目前的內容；這筆不要 verify，需要時放進 kept`); continue; }
+        ops.push({ op: 'verify', ref: r, ...(base ? { base } : {}), date });
       } else if (o.op === 'core') {
+        if (dream) { errs.push(`${ow}：對話回顧不改核心準則（核心準則請用 /engram:tidy core）`); continue; }
         const first = touch(CORE_REF, ow);
         const base = await baseFor(CORE_REF, o.base, first, ow);
         const content = await readContent(o.file, ow);
@@ -311,6 +431,7 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
       reason,
       base: curText !== null && curText !== undefined ? revOf(curText) : null,
       ops,
+      ...(evidence.length ? { evidence } : {}),
       decision: null,
       note: '',
       result: null,
@@ -355,8 +476,23 @@ export async function createFromPlan(eg, file, { now = new Date() } = {}) {
     items,
     kept,
     texts,
+    ...(dream ? {
+      kind: 'dream',
+      dream: {
+        id: dream.id,
+        sessions: dream.sessions.length,
+        from: dream.sessions.map((s) => s.startedAt).filter(Boolean).sort()[0] ?? null,
+        to: dream.sessions.map((s) => s.endedAt).filter(Boolean).sort().slice(-1)[0] ?? null,
+        remaining: dream.remaining ?? 0,
+        ...(skipped.length ? { skipped: skipped.length } : {}),
+      },
+    } : {}),
   };
   await writeRecord(eg.paths.local, rec);
+  // 對話回顧：記錄建立後，這批對話記為已回顧（使用者在網頁怎麼決定都算回顧過）；沒分析到的不記
+  if (dream) {
+    try { await eg.dream.done(dream.id, { recordId: rec.id, skip: skipped }); } catch (err) { rec.warning = `整理記錄已建立，但記錄回顧進度失敗：${err.message}`; }
+  }
 
   // 草稿資料夾裡的計畫與內容檔用完即刪；其他位置的檔案不動
   const drafts = path.join(eg.paths.local, 'drafts');

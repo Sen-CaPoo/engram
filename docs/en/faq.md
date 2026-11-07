@@ -30,7 +30,7 @@ No. Engram is an independently developed third-party tool. Claude and Claude Cod
 
 ### Where do my memories get sent?
 
-Only to **your own private GitHub repo**, `engram-vault` (or the repo you specified when you installed). Engram has no server and collects no data. Conversation transcripts are never synced.
+Only to **your own private GitHub repo**, `engram-vault` (or the repo you specified when you installed). Engram has no server and collects no data. Conversation transcripts are never synced; read statistics sync only how many times each memory was read.
 
 ### What if my company doesn't allow work data on a personal GitHub account?
 
@@ -54,6 +54,22 @@ Yes. They're sent to Claude just like in any other conversation, and they use yo
 ### Could a tidy-up mess up my memories?
 
 No. `/engram:tidy` only reads memories and creates a tidy-up record (the skill pre-allows only those commands): Claude saves its suggestions and the revised content as a tidy-up record, and the memories themselves stay as they are. Nothing runs until you decide on each item under **Tidy-up** in the dashboard and paste `/engram:tidy-apply` back into Claude Code. Accepted items are written exactly as you saw them on the page, never regenerated. A backup is made first, memories that changed after the suggestion are never overwritten, and every item can be undone from the results page.
+
+### Does conversation review send my conversations anywhere?
+
+Your conversations aren't synced, and they aren't uploaded to GitHub. When you type `/engram:dream`, Engram turns the conversations that haven't been reviewed into compact text on this computer (possible secrets are masked first) and puts it in `~/.engram/local/dream/`. Your own Claude Code reads and analyzes it, and, as in any conversation, that uses your Claude quota; the text is deleted as soon as the tidy-up record is created (or after 14 days if the run is never finished). Nothing is changed during the analysis, and the suggestions are carried out only after you decide on them on the Tidy-up page.
+
+### How much quota does conversation review use?
+
+One analysis subagent (Sonnet) reads each piece of conversation text in full (a very long conversation is split into several), so usage grows with how long and how many the conversations are. A run reviews 20 conversations by default (change it with `--sessions`, up to 100); when there are many or they're long, use `/engram:dream --sessions 5` to review the oldest few first and leave the rest for next time.
+
+### Why does "Waiting for your review" appear in the inbox?
+
+Claude wrote to a global memory, a machine memory, or the core rules on its own. These load in every conversation and affect every project, so you're asked to look at the changes and confirm, edit, or go back. Anything you changed in the dashboard, accepted as suggested on the Tidy-up page, or agreed to write with `/engram:save` isn't asked about again; content Claude rewrote for an **Adjust per note** item is still listed for review. If you don't need it, you can turn it off on the Settings page.
+
+### How are read statistics calculated?
+
+Engram looks through this computer's conversations to find which memories Claude read (with the Read tool, with `engram memory show`, or by reading the file in a terminal). A memory read more than once in the same conversation on the same day counts once. The counting happens on this computer and uses no Claude quota; once a day, the last 90 days' read counts are synced, so the counts from both computers are added together.
 
 ### Does the memory pane send my memories anywhere?
 

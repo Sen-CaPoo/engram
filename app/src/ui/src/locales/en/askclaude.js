@@ -30,5 +30,6 @@ export const SKILLS = {
   'tidy-apply': { description: 'Carry out the decisions you made on the Tidy-up page', argumentHint: '<tidy-up record id>' },
   save: { description: 'Save what is worth remembering from this conversation into Engram', argumentHint: '[what to remember; omit to review the whole conversation]' },
   recall: { description: 'Find relevant experience, decisions, and pitfalls across all Engram scopes and summarize them with sources', argumentHint: '<topic or question>' },
+  dream: { description: "Conversation review: check a project's memories against recent conversations and suggest updates you decide on in the dashboard", argumentHint: '[project:<pid>] [--sessions <count>] [notes]' },
   engram: { description: 'Use Engram to manage memories synced across computers', argumentHint: '' },
 };

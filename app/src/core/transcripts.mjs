@@ -46,12 +46,13 @@ async function scanOwn(claudeHome, encoded) {
   for (const e of entries) {
     if (!e.isFile() || !e.name.endsWith('.jsonl')) continue;
     const file = path.join(dir, e.name);
-    let mtimeMs = 0;
-    try { mtimeMs = fs.statSync(file).mtimeMs; } catch { continue; }
+    let st;
+    try { st = fs.statSync(file); } catch { continue; }
     const head = readTranscriptHead(file);
     // 路徑超過 200 字元時官方會加 hash，算不出來（null）：只能當作用的是自己這個資料夾
     const memEnc = head.cwd ? encodeProjectPath(memoryRootFor(head.cwd).root) : null;
-    sessions.push({ ...head, mtimeMs, memEnc });
+    // file、size：對話回顧（1.4.0）要讀的檔案與大小
+    sessions.push({ ...head, mtimeMs: st.mtimeMs, memEnc, file, size: st.size });
   }
   const memPath = path.join(dir, 'memory');
   const junction = isLink(memPath);

@@ -61,7 +61,7 @@ const REDACTED = EN_DATA ? '[redacted: stored in Windows Credential Manager]' : 
 let importState = { applied: false, tag: null };
 let guidelinesAdopted = false;
 let pendingList = projects.slice(0, 1).map((p) => ({ path: 'C:\\Users\\Demo\\Desktop\\' + (p.aliases?.[0] || p.name) + '-v2', pid: p.pid, encoded: 'C--Users-Demo-Desktop-example-v2', since: minutesAgo(35), reason: 'ask' }));
-const settings = { machineLabel: RAW.self.label, remote: 'https://github.com/demo/engram-vault.git', syncIntervalMin: 10, bindAuto: 'confident', collisionRename: 'ask', healthTime: '09:30', paused: false };
+const settings = { machineLabel: RAW.self.label, remote: 'https://github.com/demo/engram-vault.git', syncIntervalMin: 10, bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on', healthTime: '09:30', paused: false };
 
 const byRef = (ref) => memories.find((m) => m.ref === ref);
 const projectName = (pid) => projects.find((p) => p.pid === pid)?.name || pid;
@@ -123,6 +123,10 @@ const findings = [];
   }
   const stale = [...memories].filter((m) => !used.has(m.ref)).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))[0];
   if (stale) { used.add(stale.ref); add({ code: 'H11', severity: 'low', title: '可能過時', detail: '超過 90 天沒有更新，所屬專案也很久沒開過。封存後不再出現在索引裡，需要時可以還原。', refs: [stale.ref], fix: { action: 'remove', args: { ref: stale.ref }, label: '封存（可從歷史還原）', en: { label: 'Archive (restorable from history)' } }, en: { title: 'Possibly outdated', detail: 'Not updated for more than 90 days, and its project has not been opened for a long time. Once archived it no longer appears in the index; you can restore it when needed.' } }); }
+  // 1.4.0：建議回顧對話（H20）、待你確認的寫入（H23）
+  const p0 = projects[0];
+  if (p0) add({ code: 'H20', severity: 'low', title: `建議回顧「${p0.name}」的對話`, detail: '4 個對話還沒回顧，最早的一個 5 天後會被 Claude Code 清除（保留 30 天）；2 筆容易過時的記憶超過 30 天沒確認。回顧時 Claude 會拿對話紀錄驗證這個專案的記憶、補上漏記的事，所有建議都由你在網頁逐項決定。', refs: [`projects/${p0.pid}`], pid: p0.pid, fix: { action: 'open-dream', args: { pid: p0.pid }, label: '交給 Claude 回顧', en: { label: 'Ask Claude to review' } }, en: { title: `Review the conversations for "${p0.name}"`, detail: '4 conversations have not been reviewed, and the oldest will be deleted by Claude Code in 5 days (kept for 30 days); 2 memories that go out of date easily have not been checked in over 30 days. Claude checks this project\'s memories against the conversations and adds what was missed; you decide on every suggestion in the dashboard.' } });
+  add({ code: 'H23', severity: 'low', title: '2 筆每次對話都會載入的內容還沒經過你確認', detail: 'powershell-bom、meeting-notes-format。這些是 Claude 新增或修改的全域記憶、單機記憶或核心準則，會在每個專案的每次對話被讀到；看一下內容是否正確。', refs: ['global/powershell-bom.md', 'global/meeting-notes-format.md'], fix: { action: 'open-review', args: {}, label: '檢視與確認', en: { label: 'Review and confirm' } }, en: { title: '2 items that load in every conversation have not been reviewed', detail: 'powershell-bom, meeting-notes-format. Claude added or changed these global memories, machine memories, or core rules, and they are read in every conversation in every project. Check that they are correct.' } });
   add({ code: 'H05', severity: 'medium', title: '有 1 筆記憶還沒收編', detail: '這個資料夾在綁定生效前的那次對話裡寫了新記憶，還留在 Claude Code 的預設位置。收編後會複製進 vault，原檔保留到確認為止。', refs: ['~/.claude/projects/C--Users-Demo-Desktop-example/memory/new-note.md'], fix: { action: 'sweep', args: { encoded: 'C--Users-Demo-Desktop-example' }, label: '收編到 Engram', en: { label: 'Adopt into Engram' } }, en: { title: '1 memory has not been adopted yet', detail: 'This folder wrote a new memory in a conversation before its binding took effect, so it is still in the Claude Code default location. Adopting copies it into the vault; the original stays until you confirm.' } });
   for (const f of findings) {
     for (const r of f.refs) { const m = byRef(r); if (m) m.findings.push(f.code); }
@@ -547,7 +551,7 @@ export const demoApi = {
   // 記憶整理：與 app/src/tidy 的規則相同（決定只能在待決定或已產生指令時修改；依備註調整一定要有備註）
   async tidyList() {
     await wait(70);
-    return tidyRecords.map((r) => ({ id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, appliedAt: r.appliedAt ?? null, scope: r.scope, request: r.request, summary: r.summary, status: r.status, counts: tidyCounts(r) }));
+    return tidyRecords.map((r) => ({ id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, appliedAt: r.appliedAt ?? null, scope: r.scope, request: r.request, summary: r.summary, status: r.status, counts: tidyCounts(r), ...(r.kind ? { kind: r.kind, dream: r.dream } : {}) }));
   },
   async tidyRecord(id) {
     await wait(90);
@@ -593,8 +597,71 @@ export const demoApi = {
     emit('status', null);
     return { ok: true };
   },
+  // 1.4.0：讀取統計（依 ref 算出固定的合成數字）、[[連結]]、對話回顧狀態、待你確認、核心準則建議
+  async memoryUsage(ref) {
+    await wait(60);
+    const h = [...ref].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 997, 7);
+    const reads = h % 5 === 0 ? 0 : h % 13;
+    const pid = projects[h % projects.length]?.pid;
+    const day = (d) => new Date(NOW - d * 864e5).toISOString().slice(0, 10);
+    return { tracking: true, since: day(84), reads, last: reads ? day(h % 9) : null, projects: reads && pid ? { [pid]: reads } : {}, byMachine: reads ? { [self.id]: reads } : {}, daily: [] };
+  },
+  async memoryLinks(ref) {
+    await wait(50);
+    const me = byRef(ref);
+    const names = (b) => [...String(b || '').matchAll(/\[\[([^\]|#\n]+)/g)].map((x) => x[1].trim());
+    const find = (n) => memories.find((m) => m.name === n || m.ref.split('/').pop() === `${n}.md`);
+    return {
+      out: me ? [...new Set(names(me.body))].map((n) => ({ name: n, ref: find(n)?.ref ?? null })) : [],
+      in: memories.filter((m) => m.ref !== ref && me && names(m.body).includes(me.name)).map((m) => ({ ref: m.ref, name: m.name })),
+    };
+  },
+  async dreamStatus(pid) {
+    await wait(60);
+    const i = projects.findIndex((x) => x.pid === pid);
+    if (i < 0 || i > 2) return { pid, lastRunAt: null, pending: 0, oldestPendingAt: null, expiresInDays: null, retention: 30, sessions: 0 };
+    return { pid, lastRunAt: i === 0 ? new Date(NOW - 9 * 864e5).toISOString() : null, pending: [4, 7, 2][i], oldestPendingAt: new Date(NOW - [25, 18, 6][i] * 864e5).toISOString(), expiresInDays: [5, 12, 24][i], retention: 30, sessions: [11, 7, 2][i] };
+  },
+  async reviewList() { await wait(80); return clone(reviewItems); },
+  async reviewConfirm(items) {
+    await wait(120);
+    const refs = new Set(items.map((x) => x.ref));
+    reviewItems = reviewItems.filter((x) => !refs.has(x.ref));
+    const f = findings.find((x) => x.code === 'H23');
+    if (f && !reviewItems.length) dropFinding(f.id);
+    emit('finding', null);
+    return { ok: true, confirmed: [...refs], stale: [] };
+  },
+  async reviewRevert(ref) {
+    await wait(150);
+    reviewItems = reviewItems.filter((x) => x.ref !== ref);
+    const f = findings.find((x) => x.code === 'H23');
+    if (f && !reviewItems.length) dropFinding(f.id);
+    return action(`退回 ${ref}`, [ref]);
+  },
+  async coreSuggestions() { await wait(60); return clone(coreSuggestions); },
+  async applyCoreSuggestions(ids) {
+    await wait(140);
+    const add = coreSuggestions.filter((x) => ids.includes(x.id));
+    coreSuggestions = coreSuggestions.filter((x) => !ids.includes(x.id));
+    coreText = `${coreText.replace(/\n*$/, '')}\n\n${add.map((x) => x.text).join('\n')}\n`;
+    return action('加入核心準則建議', ['core/CORE.md']);
+  },
   subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 };
+
+// 待你確認（H23）的展示資料：一筆 Claude 修改的全域記憶、一筆新增的
+let reviewItems = EN_DATA ? [
+  { ref: 'global/powershell-bom.md', kind: 'changed', sha: 'demo1', name: 'powershell-bom', description: 'Chinese text in .ps1 needs a UTF-8 BOM', previous: '---\nname: powershell-bom\n---\n\nWindows PowerShell 5.1 reads .ps1 files without a BOM in the system code page.\n', current: '---\nname: powershell-bom\n---\n\nWindows PowerShell 5.1 reads .ps1 files without a BOM in the system code page.\nPowerShell 7 reads them as UTF-8, so the BOM is only needed for 5.1 (tested 2026-11-05).\n', previousMissing: false, changedAt: new Date(NOW - 26 * 3600e3).toISOString(), machine: 'office-7k2q' },
+  { ref: 'global/meeting-notes-format.md', kind: 'new', sha: 'demo2', name: 'meeting-notes-format', description: 'Meeting notes: decisions first, then action items', previous: null, current: '---\nname: meeting-notes-format\ndescription: Meeting notes: decisions first, then action items\nmetadata:\n  type: feedback\n---\n\nPut decisions at the top, then action items with owners and dates.\n', previousMissing: false, changedAt: new Date(NOW - 3 * 3600e3).toISOString(), machine: 'home-3f9a' },
+] : [
+  { ref: 'global/powershell-bom.md', kind: 'changed', sha: 'demo1', name: 'powershell-bom', description: '含中文的 .ps1 要加 UTF-8 BOM', previous: '---\nname: powershell-bom\n---\n\nWindows PowerShell 5.1 讀沒有 BOM 的 .ps1 會用系統編碼，中文會變亂碼。\n', current: '---\nname: powershell-bom\n---\n\nWindows PowerShell 5.1 讀沒有 BOM 的 .ps1 會用系統編碼，中文會變亂碼。\nPowerShell 7 預設用 UTF-8 讀，BOM 只有 5.1 需要（2026-11-05 實測）。\n', previousMissing: false, changedAt: new Date(NOW - 26 * 3600e3).toISOString(), machine: 'office-7k2q' },
+  { ref: 'global/meeting-notes-format.md', kind: 'new', sha: 'demo2', name: 'meeting-notes-format', description: '會議紀錄：決議在前、待辦在後', previous: null, current: '---\nname: meeting-notes-format\ndescription: 會議紀錄：決議在前、待辦在後\nmetadata:\n  type: feedback\n---\n\n會議紀錄先寫決議，再列待辦（負責人、期限）。\n', previousMissing: false, changedAt: new Date(NOW - 3 * 3600e3).toISOString(), machine: 'home-3f9a' },
+];
+// 核心準則建議（H24）：展示版預設沒有（?core=old 可以看到）
+let coreSuggestions = VARIANT.core === 'old' ? [
+  { id: 'memory-purpose', title: '說明記憶是為了什麼', reason: 'Anthropic 的記憶研究發現：告訴 Claude 記憶的用途、讓它自己判斷值得記什麼，比規定死規則效果好。', text: '記憶是寫給之後的對話用的：記下之後用得到、而且不寫下來就會遺失的事。', en: { title: 'Explain what memory is for', reason: "Anthropic's memory research found that telling Claude what memory is for works better than fixed rules." } },
+] : [];
 
 function CORE_TEXT() {
   return `# 核心準則

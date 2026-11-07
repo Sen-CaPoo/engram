@@ -292,6 +292,9 @@ export async function rewritePaths(ctx, fromPath, toPath) {
     throw err;
   }
   const touched = changes.map((c) => c.ref);
+  // 1.4.0：路徑由 Engram 更新，改之前確認過的全域／單機記憶，改之後也算確認過
+  const { carryReviewed } = await import('./review.mjs');
+  touched.push(...await carryReviewed(ctx, new Map(changes.filter((c) => !c.index).map((c) => [c.ref, c.cur]))));
   const scopes = new Map(changes.filter((c) => !c.index).map((c) => scopeOfRef(c.ref)).filter((s) => s.kind !== 'project').map((s) => [JSON.stringify(s), s]));
   for (const scope of scopes.values()) touched.push(...await refreshIndex(ctx, scope));
   return { files: changes.filter((c) => !c.index).map(({ ref, count }) => ({ ref, count })), touched };

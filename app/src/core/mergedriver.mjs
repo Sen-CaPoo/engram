@@ -143,6 +143,7 @@ async function resolveConflictsDir({ conflictsDir, git, cwd }) {
 
 const isTimeKey = (p) => p.length === 2 && p[0] === 'metadata' && (p[1] === 'modified' || p[1] === 'originSessionId');
 const isOursKey = (p) => p.length === 2 && p[0] === 'metadata' && p[1] === 'node_type';
+const isVerifiedKey = (p) => p.length === 3 && p[0] === 'metadata' && p[1] === 'engram' && p[2] === 'verified';
 
 /**
  * 逐鍵三方合併（遞迴到巢狀物件；陣列與純量視為葉）。路徑一律用陣列，含點的鍵不會被拆開。
@@ -161,6 +162,8 @@ function mergeData(base, ours, theirs) {
       else if (eq(vb, vo)) v = vt;
       else if (eq(vb, vt)) v = vo;
       else if (isObj(vo) && isObj(vt)) v = walk(isObj(vb) ? vb : {}, vo, vt, p);
+      // 1.4.0：兩台電腦各自做對話回顧、在不同天記下驗證日期：取較新的日期，不算衝突
+      else if (isVerifiedKey(p)) v = String(vt ?? '') > String(vo ?? '') ? vt : vo;
       else if (isTimeKey(p)) { v = newerTheirs ? vt : vo; conflictedKeys.push(p); }
       else { v = vo; conflictedKeys.push(p); }
       if (v !== undefined) safeAssign(out, k, v);

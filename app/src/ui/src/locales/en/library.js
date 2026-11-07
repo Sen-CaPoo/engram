@@ -89,4 +89,17 @@ export default {
   '復原這個變更？': 'Undo this change?',
   '{title}（{when}）會被撤銷，並產生一筆新的變更紀錄；之後仍可再復原。': 'This reverts "{title}" ({when}) and creates a new change record. You can undo it again later.',
   '已復原這個變更': 'Change undone',
+  // 1.4.0
+  "對話回顧": "Conversation review",
+  "{date} 確認仍正確": "Confirmed still correct on {date}",
+  "讀取": "Reads",
+  "讀取統計會在常駐程式下一次健康檢查後開始（從這台電腦的對話紀錄計算）。": "Read statistics start after the agent's next health check (calculated from this computer's conversations).",
+  "近 90 天被讀了 {n} 次，最後一次 {date}{where}": ({ n }) => plural(n, 'Read once in the last 90 days, last on {date}{where}', 'Read {n} times in the last 90 days, last on {date}{where}'),
+  "（{list}）": " ({list})",
+  "{name} {n} 次": "{name} {n}×",
+  "近 90 天沒有被讀過（統計從 {since} 開始）": "Not read in the last 90 days (statistics since {since})",
+  "連結": "Links",
+  "連到：": "Links to: ",
+  "被連結：": "Linked from: ",
+  "{name}（還沒有這筆記憶）": "{name} (no memory with this name yet)",
 };

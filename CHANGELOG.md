@@ -2,6 +2,62 @@
 
 版本號遵循[語意化版本](https://semver.org/lang/zh-TW/)。
 
+## 1.4.0（2026-11-07）
+
+對話回顧：拿對話紀錄驗證記憶。依 Anthropic〈Components of agent memory〉的研究，讓「每次對話都會載入的記憶」更精簡、更可信。
+
+### 對話回顧（Claude Code 外掛＋管理介面）
+
+<img src="docs/assets/screenshots/dream.png" alt="對話回顧的整理記錄" width="720">
+
+- 新技能 `/engram:dream`：Engram 把這台電腦上一個專案還沒回顧的對話紀錄轉成精簡的文字（疑似金鑰先在本機遮蔽；預設每次 20 個、由舊到新），Claude 把每一份對話文字交給一個分析用的子代理（`engram:dream-analyzer`，只有讀取工具），拿對話當證據逐筆檢查記憶：被證實、已經改變或過時、說得太肯定、互相矛盾，以及值得新增的事。
+- 建議存成整理記錄，沿用 1.3.0 的記憶整理流程：在管理介面逐項決定，再用 `/engram:tidy-apply` 執行。每一項附對話的原文引句與日期（紅線表示與記憶不符，綠線表示證實）；被改掉的舊說法用一句話留下日期，不讓事實無聲消失；看不出哪個對時兩種說法並列，請你判斷。
+- 新的整理動作「確認仍正確」：只在記憶的 `metadata.engram.verified` 記下驗證日期，內容不變。記憶庫的記憶詳情會顯示最後確認的日期。
+- 記憶整理首頁選專案時，可以選「只看記憶」或「對照對話紀錄」，並顯示這台電腦有幾個對話還沒回顧；專案頁新增「回顧對話」與回顧狀態。
+- 新指令 `engram dream`（`status`、`prepare`、`done`、`reset`、`list`）。轉出來的文字放在 `~/.engram/local/dream/`，整理記錄建立後就刪除，中途沒完成的 14 天後自動清除。回顧進度存在這台電腦：之後又接著聊（resume）的對話下次只分析新增的部分；沒分析成功的對話（`done --skip`）與還沒決定完就被刪掉的整理記錄，那些對話下次會再列入。
+- 每一則引句都會拿去比對匯出的對話文字，找不到的在網頁標成「找不到原文」。對話比記憶的最後修改還舊、說法又不同時，不改記憶，只在摘要提醒。
+- 為了讓子代理讀取時不跳出權限詢問，常駐程式啟動時把 `~/.engram/local/dream` 加進 Claude Code 的 `permissions.additionalDirectories`（記在安裝紀錄，解除安裝時移除）。
+
+### 每次都會載入的記憶：更精簡、更可信
+
+- **待你確認**：Claude 自己寫入全域記憶、單機記憶或核心準則時，收件匣出現「待你確認」，可以逐筆看差異，確認、編輯或退回（新增的則是封存）。你在管理介面改的、記憶整理頁採用建議的、`/engram:save` 同意寫入的（新選項 `--reviewed`）都算確認過（「依備註調整」由 Claude 改寫的仍待確認）；只改一個欄位的動作（驗證日期、釘選、改連結、遮蔽金鑰）沿用原本的狀態；任何一台電腦確認過都算。確認紀錄依內容版本只新增、不改寫，兩台電腦同時確認也不會衝突。設定頁可以關閉。升級後第一次執行時，現有內容當成確認過；第二台電腦只把自己的單機記憶當成起點。
+- **讀取統計**：從這台電腦的對話紀錄算出每筆記憶被讀了幾次（同一個對話同一天只算一次），只讀新增的部分；每天把近 90 天的次數同步一次，兩台電腦合計。記憶庫的記憶詳情顯示次數、最後一次與專案，`engram memory list --json` 也附上 `usage`。
+- 全域與單機索引放不下時，改成先列釘選的、再列最近 14 天新增或修改的、然後是近 90 天讀得最多的（顯示順序不變）；讀取次數要等所有電腦都更新到 1.4.0 才用來排序。放得下時統計不影響索引。
+- **核心準則建議更新**：範本的「記憶寫入協定」加入記憶的用途（「記下之後用得到、而且不寫下來就會遺失的事」，讓 Claude 自己判斷）與「註明怎麼確認的」。既有的核心準則由你決定：「核心準則」頁列出建議，按「加入」才寫入，可以復原。
+- 核心準則頁的載入預算新增「每次載入的大小」。
+
+### 收件匣新增的卡片
+
+- 建議回顧對話：專案有還沒回顧的對話，而且最早的一個 7 天內會被 Claude Code 清除（依 `cleanupPeriodDays`，預設 30 天），或專案裡容易過時的記憶超過 30 天沒確認。按「交給 Claude 回顧」會開啟記憶整理頁（已選好專案與「對照對話紀錄」），在那裡複製指令。
+- 連結斷了：`[[名稱]]` 指向已經合併或封存的記憶；一鍵改連到合併後的記憶，或拿掉連結只留文字。記憶詳情也會列出這筆記憶連到誰、被誰連結。
+- 很少用到／只在一個專案用到的全域記憶（讀取統計累積 60 天以上才判斷）：封存，或搬到那個專案。
+- 待你確認的內容、核心準則有建議更新。
+- 「核心準則過長」另外檢查大小：核心準則加兩份索引 20 KB 以上提醒、超過 25 KB 為中。
+
+### 其他
+
+- `/engram:save` 寫入前說明記憶的用途，寫下規則時註明怎麼確認的；使用者同意的寫入帶 `--reviewed`。
+- `/engram:tidy` 可以參考讀取統計；`/engram:inbox` 知道怎麼處理新卡片。
+- 整理計畫裡新增記憶的項目誤填 `ref` 時，錯誤訊息直接說明要拿掉。
+
+<details>
+<summary>English</summary>
+
+**Conversation review: check memories against your conversations. Based on Anthropic's research in "Components of agent memory", this release keeps what loads in every conversation smaller and more trustworthy.**
+
+- **`/engram:dream` (new skill):** Engram turns a project's not-yet-reviewed conversations on this computer into compact text (possible secrets masked locally first; 20 per run by default, oldest first). Claude gives each piece of conversation text to an analysis subagent (`engram:dream-analyzer`, read-only tools) that uses it as evidence to check every memory: confirmed, changed or out of date, too confident, contradictory, and worth adding.
+- **Same review flow as Tidy-up:** the suggestions are saved as a tidy-up record that you decide on item by item in the dashboard, then carry out with `/engram:tidy-apply`. Each item quotes the conversation with its date (red when it contradicts the memory, green when it confirms it). Replaced wording is kept in one dated sentence so facts never disappear silently, and when the evidence disagrees both versions are shown for you to decide.
+- **New action "Still correct":** records the check date in `metadata.engram.verified` without changing the content; Library shows the last check date.
+- **Tidy-up and Projects:** pick **Memories only** or **Check against conversations** for a project, with the number of conversations waiting to be reviewed on this computer; Projects has a **Review conversations** button and the review status.
+- **New command `engram dream`** (`status`, `prepare`, `done`, `reset`, `list`). The exported text lives in `~/.engram/local/dream/` and is deleted as soon as the tidy-up record is created (or after 14 days if the run is never finished). Review progress is kept on this computer: for a conversation you resume afterwards, only the new part is analyzed next time; conversations that couldn't be analyzed (`done --skip`), and those in a tidy-up record you delete before deciding every item, are reviewed again next time.
+- Every quote is checked against the exported conversation text, and quotes that can't be found are marked **Not found in conversation** on the web page. When a conversation is older than the memory's last change and says something different, the memory isn't changed; the summary just points it out.
+- **Waiting for your review:** when Claude writes global memories, machine memories, or core rules on its own, the inbox asks you to look at the changes and confirm, edit, or go back (new memories are archived). Edits in the dashboard, items you accepted as suggested in Tidy-up, and `/engram:save` writes you agreed to (new `--reviewed` option) count as reviewed, on any computer (content Claude rewrote for **Adjust per note** still needs review); actions that change a single field (check date, pin, relink, secret redaction) keep the previous state. Review records are added per content version and never rewritten, so reviewing on two computers at once doesn't conflict. You can turn it off in Settings. On first run after the update, existing content counts as reviewed; a second computer uses only its own machine memories as its starting point.
+- **Read statistics:** Engram counts how often each memory is read from this computer's conversations (once per conversation per day), reading only what's new, and syncs the last 90 days' counts once a day so both computers add up. Library shows the count, last read, and projects; `engram memory list --json` includes `usage`. When the global or machine index is over budget, pinned memories come first, then memories added or changed in the last 14 days, then the most-read ones; read counts are used for ordering only once every computer runs 1.4.0.
+- **Suggested core-rule updates:** the memory-writing protocol in the template now says what memory is for and asks to note how a rule was confirmed. Your existing core rules are yours: the Core rules page lists the suggestions and adds them only when you click **Add** (undoable). The load budget now also shows the size.
+- **New inbox cards:** review conversations (a project has unreviewed conversations, and the oldest is deleted by Claude Code within 7 days or the project's easily outdated memories are unchecked for 30+ days; the button opens Tidy-up with the project and **Check against conversations** selected), broken `[[links]]` to merged or archived memories (one-click relink), global memories that are rarely used or used in only one project (after 60+ days of statistics), waiting for your review, and suggested core-rule updates. "Core rules too long" now also checks size (20 KB and up; medium over 25 KB).
+
+</details>
+
 ## 1.3.0（2026-10-24）
 
 記憶整理：Claude 提出建議，你在管理介面逐項決定，再交回 Claude 執行。

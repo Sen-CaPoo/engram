@@ -39,7 +39,13 @@ function contentStep(f, fix) {
   switch (fix?.action) {
     case 'merge': return `合併內容：先用 engram inbox show ${f.id} 讀各筆內容，寫好合併後的內容，再執行 engram memory merge ${(fix.args?.refs ?? f.refs).join(' ')} --into <保留的 ref> --base <各筆版本>（內容從標準輸入傳入）。`;
     case 'open-conflict': return `處理衝突：engram inbox show ${fix.args?.id}，再用 engram inbox resolve ${fix.args?.id} --choice ours|theirs|both|manual。`;
-    case 'open-core': return '精簡核心準則：engram core 讀取，寫好後用 engram core write --base <版本> 寫回（內容從標準輸入傳入）。';
+    case 'open-core':
+      // H24：核心準則的建議更新由使用者在介面決定
+      if (fix.args?.suggestions) return '核心準則的建議更新要由使用者在管理介面（engram ui）的「核心準則」頁看過後按「加入」；不要自己改 CORE.md。';
+      return '精簡核心準則：engram core 讀取，寫好後用 engram core write --base <版本> 寫回（內容從標準輸入傳入）。';
+    case 'open-tidy': return `整體整理，不在收件匣處理：建議使用者執行 /engram:tidy ${fix.args?.scope ?? 'core'}（Claude 提出建議，使用者在管理介面逐項決定）。`;
+    case 'open-dream': return `對話回顧，不在收件匣處理：建議使用者在這個專案執行 /engram:dream project:${fix.args?.pid ?? f.pid}（Claude 拿對話紀錄驗證記憶，使用者在管理介面逐項決定）。`;
+    case 'open-review': return '待你確認的內容要由使用者本人看過：請使用者到管理介面（engram ui）的收件匣按「檢視與確認」；你不能代為確認。';
     case 'open-project': return `整理專案記憶：engram memory list --project ${fix.args?.pid ?? f.pid}，再合併、精簡或封存（或使用 /engram:tidy ${fix.args?.pid ?? f.pid}）。`;
     default:
       if (f.code === 'H08') return `請使用者確認這是哪一台電腦的環境，再用 engram memory move ${ref} --to machine:<mid> 搬過去（mid 見 engram status 第一行或管理介面的「裝置與同步」頁；--to machine 是目前這台）。`;
@@ -48,12 +54,12 @@ function contentStep(f, fix) {
 }
 /** 每種修正怎麼復原：只對真的能復原的動作給指令（綁定、索引、同步類的 commit 不能單獨 undo） */
 function restoreHint(action, r) {
-  if (['move', 'remove', 'reassign'].includes(action)) return undoHint(r);
+  if (['move', 'remove', 'reassign', 'relink', 'unlink'].includes(action)) return undoHint(r);
   if (action === 'sweep' && r?.restorePoint) return `需要還原時執行：engram import undo ${r.restorePoint}`;
   if (action === 'rename-collisions' && r?.id) return `需要還原時執行：engram collisions undo ${r.id}`;
   return null;
 }
-const CONTENT_ACTIONS = new Set(['merge', 'edit', 'open-conflict', 'open-core', 'open-project', 'open-rename']);
+const CONTENT_ACTIONS = new Set(['merge', 'edit', 'open-conflict', 'open-core', 'open-project', 'open-rename', 'open-tidy', 'open-dream', 'open-review']);
 
 /**
  * 卡片的文字也會交給 Claude：一律遮蔽（例如 H12 的 frontmatter 錯誤訊息會附上那一行原文）。
