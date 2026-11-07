@@ -443,6 +443,7 @@ describe('疑似金鑰', () => {
     assert.equal(await getSecret(eg.paths.local, 'deploy-github-token'), token);
     assert.equal((await listSecrets(eg.paths.local))[0].from, ref);
     assert.ok(!(await eg.health()).some((x) => x.code === 'H13' && x.refs[0] === ref), '不再有 H13');
+    assert.ok(!(await eg.health()).some((x) => x.code === 'H08' && x.refs[0] === ref), '結尾的說明不會讓記憶被當成只適用某台電腦（2026-11-07 第二輪真實執行發現）');
     assert.ok(r.run.actions.some((a) => a.kind === 'vault') && r.run.actions.some((a) => a.kind === 'not-secret'));
     // 標記不是金鑰可以從自動駕駛頁復原：雜湊從清單移除，這一行又會被當成疑似金鑰
     const i = r.run.actions.findIndex((a) => a.kind === 'not-secret');

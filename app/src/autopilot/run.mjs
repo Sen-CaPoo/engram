@@ -170,11 +170,11 @@ async function digest(eg, notifier, now) {
 
 /** 復原「金鑰移到保管區」：把記憶裡的保管區標記換回原值（檔案會回到疑似金鑰、不同步的狀態） */
 async function restoreFromVault(eg, ref, names) {
-  const { getSecret, placeholder, PLACEHOLDER_NOTE } = await import('../core/secretvault.mjs');
+  const { getSecret, placeholder, PLACEHOLDER_NOTE, LEGACY_NOTES } = await import('../core/secretvault.mjs');
   const raw = ref === 'core/CORE.md' ? (await eg.core.read()).text ?? '' : (await eg.memories.read(ref)).raw;
   let text = raw;
   for (const n of names) text = text.split(placeholder(n)).join(await getSecret(eg.paths.local, n));
-  if (!text.includes('<engram-secret:')) text = text.split(`\n\n${PLACEHOLDER_NOTE}\n`).join('\n');
+  if (!text.includes('<engram-secret:')) for (const note of [PLACEHOLDER_NOTE, ...LEGACY_NOTES]) text = text.split(`\n\n${note}\n`).join('\n');
   if (text === raw) throw Object.assign(new Error('記憶裡已經找不到保管區的標記（之後被修改過）'), { code: 'E_CONFLICT' });
   // 直接寫回檔案、不經過引擎的寫入（引擎會擋下金鑰；allowSecrets 則會把值記成「不是金鑰」而同步出去）：
   // 回到移入保管區之前的狀態——含疑似金鑰的檔案留在這台電腦、不同步。在 vault 鎖內比對讀取時的內容，避免蓋掉剛發生的修改

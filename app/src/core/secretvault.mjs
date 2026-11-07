@@ -167,4 +167,7 @@ export async function deleteBrokenSecret(local, name) {
 export const placeholder = (name) => `<engram-secret:${name}>`;
 
 /** 記憶結尾的說明（一筆記憶只加一次） */
-export const PLACEHOLDER_NOTE = '（`<engram-secret:名稱>` 是存放在這台電腦 Engram 本機保管區的值，用 `engram secret get 名稱` 取出；不會同步到其他電腦。）';
+// 不寫「這台電腦」：健康檢查會因此把整筆記憶當成只適用某台電腦（H08）
+export const PLACEHOLDER_NOTE = '（`<engram-secret:名稱>` 的值存放在 Engram 本機保管區，用 `engram secret get 名稱` 取出。）';
+/** 舊版的說明（復原時一併拿掉） */
+export const LEGACY_NOTES = ['（`<engram-secret:名稱>` 是存放在這台電腦 Engram 本機保管區的值，用 `engram secret get 名稱` 取出；不會同步到其他電腦。）'];
