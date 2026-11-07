@@ -6,8 +6,8 @@ import { createHash } from 'node:crypto';
 import { machineSpecific } from './classify.mjs';
 import { diagEn, semanticKey } from './frontmatter.mjs';
 import { exists, readJson, readText, sha1 } from './fsx.mjs';
-import { readSweepLog } from './sweep.mjs';
-import { JUNCTION_MODES, junctionState } from './identity.mjs';
+import { CANDIDATE_REASON, CANDIDATE_REASON_EN, readSweepLog } from './sweep.mjs';
+import { JUNCTION_MODES, junctionState, resolveIdentity } from './identity.mjs';
 import { defaultPermissionMode, isJunctionReadAllowed } from './claudesettings.mjs';
 import { indexStats, PROJECT_INDEX, SCOPE_INDEX } from './normalize.mjs';
 import { brokenLinks } from './links.mjs';
@@ -32,8 +32,28 @@ function fid(code, refs) {
  * key：refs 相同但對象不同時（例如每個綁定都指向 bindings.json），用來區分 id，避免「忽略」一張卡片連帶蓋掉別張。
  * en：英文版 { title, detail }（管理介面切到英文時顯示）；fix 的英文放在 fix.en.label。id 一律以中文標題計算。
  */
-function finding(code, severity, title, detail, { refs = [], pid, fix, key, en } = {}) {
-  return { id: fid(code, key ? [key] : refs.length ? refs : [title]), code, severity, title, detail, refs, ...(pid ? { pid } : {}), ...(fix ? { fix } : {}), ...(en ? { en } : {}) };
+function finding(code, severity, title, detail, { refs = [], pid, fix, fixes, key, en } = {}) {
+  return { id: fid(code, key ? [key] : refs.length ? refs : [title]), code, severity, title, detail, refs, ...(pid ? { pid } : {}), ...(fix ? { fix } : {}), ...(fixes?.length ? { fixes } : {}), ...(en ? { en } : {}) };
+}
+
+/**
+ * H05 的候選專案（1.4.1）：資料夾還在、身分判斷沒有確定的專案、但有中等信心的候選（remote、git 根 commit、名稱＋內容）。
+ * 確定的（設定檔、標記檔、唯一的 remote）收編時本來就會連到那個專案，不必另外選。最多兩個。
+ * liveHere：候選專案在這台電腦還有存在的資料夾（比較像另一份 clone 或 fork）。
+ */
+async function adoptCandidates(ctx, scan, bindings) {
+  const root = scan.roots?.[0];
+  if (!root || !exists(root)) return [];
+  let res;
+  try { res = await resolveIdentity(ctx, root); } catch { return []; }
+  if (res.pid || !res.candidates?.length) return [];
+  const views = allBindingViews(bindings);
+  const out = [];
+  for (const c of res.candidates.slice(0, 2)) {
+    const liveHere = views.some((v) => v.pid === c.pid && v.path && exists(v.path) && !samePath(v.path, root));
+    out.push({ pid: c.pid, name: c.name, reason: CANDIDATE_REASON[c.reason] ?? c.reason, reasonEn: CANDIDATE_REASON_EN[c.reason] ?? c.reason, liveHere });
+  }
+  return out;
 }
 
 /** 中英文都適用的雙字組集合（用於描述相似度）。 */
@@ -225,13 +245,24 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
         pending.push(f);
       }
       if (pending.length) {
+        const plain = { action: 'sweep', args: { encoded: s.encoded }, label: '收編到 Engram', en: { label: 'Adopt into Engram' } };
+        // 1.4.1：資料夾可能就是既有的專案（例如 GitHub 改名後 remote 不同、但 git 根 commit 相同）。
+        // 身分判斷只有中等信心時不會自動連結（避免 fork 被當成同一個專案），這裡讓使用者或 Claude 在收件匣選
+        const cands = await adoptCandidates(ctx, s, bindings);
+        const many = cands.length > 0;
+        const toExisting = cands.map((c) => ({ action: 'sweep', args: { encoded: s.encoded, pid: c.pid }, label: `收編到既有專案「${c.name}」`, en: { label: `Adopt into the existing project "${c.name}"` } }));
+        const asNew = { action: 'sweep', args: { encoded: s.encoded }, label: '收編成新專案', en: { label: 'Adopt as a new project' } };
+        // 候選專案在這台電腦還有存在的資料夾：比較像另一份 clone 或 fork，預設建新專案；否則多半是搬家或改名，預設收編到既有專案
+        const fixes = !many ? [plain] : cands.some((c) => c.liveHere) ? [asNew, ...toExisting] : [...toExisting, asNew];
+        const hintZh = many ? `這個資料夾可能就是既有專案${cands.map((c) => `「${c.name}」（${c.reason}）`).join('或')}；可以收編到那個專案，或收編成新專案。` : '';
+        const hintEn = many ? ` This folder may be the existing project ${cands.map((c) => `"${c.name}" (${c.reasonEn})`).join(' or ')}; adopt into that project, or as a new project.` : '';
         out.push(finding('H05', 'medium', `發現尚未納管的記憶：${s.roots[0] ?? s.encoded}`,
-          `${pending.length} 筆記憶還在 Claude Code 的本機資料夾，不會同步。`,
+          `${pending.length} 筆記憶還在 Claude Code 的本機資料夾，不會同步。${hintZh}`,
           {
-            refs: [s.encoded], fix: { action: 'sweep', args: { encoded: s.encoded }, label: '收編到 Engram', en: { label: 'Adopt into Engram' } },
+            refs: [s.encoded], fix: fixes[0], ...(many ? { fixes } : {}),
             en: {
               title: `Unmanaged memories found: ${s.roots[0] ?? s.encoded}`,
-              detail: `${pending.length === 1 ? '1 memory is' : `${pending.length} memories are`} still in Claude Code's local folder and will not sync.`,
+              detail: `${pending.length === 1 ? '1 memory is' : `${pending.length} memories are`} still in Claude Code's local folder and will not sync.${hintEn}`,
             },
           }));
       }

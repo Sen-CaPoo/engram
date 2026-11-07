@@ -10,7 +10,7 @@ import { machineSpecific, suggestScope } from '../../src/core/classify.mjs';
 import { encodeProjectPath } from '../../src/core/paths.mjs';
 import { isLink } from '../../src/core/fsx.mjs';
 import { cleanupFootprint } from '../../src/core/identity.mjs';
-import { addTranscript, age, machinePaths, makeRepo, memoryText, mkTmp, rmTmp, writeDriverCli } from './helpers.mjs';
+import { addTranscript, age, git, machinePaths, makeRepo, memoryText, mkTmp, rmTmp, writeDriverCli } from './helpers.mjs';
 
 let root; let m; let eg;
 const mem = (dir, file, opts) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, file), memoryText(opts)); };
@@ -454,5 +454,61 @@ describe('R-47／R-48：還原保留最新內容、不留足跡', () => {
       assert.equal(fs.existsSync(path.join(a, '.claude')), false, '甲方專案：Engram 建立的 .claude 與設定檔都移除');
       assert.equal(fs.readFileSync(path.join(a, '.git', 'info', 'exclude'), 'utf8'), excludeBefore, 'exclude 逐位元回到匯入前');
     } finally { rmTmp(r0); }
+  });
+});
+
+// 1.4.1：2026-11-07 用收件匣一鍵收編 10 個資料夾時發現：記憶被依猜測放到單機或全域；GitHub 改過名的 repo 被收編成新專案
+describe('一鍵收編（H05）', () => {
+  const h05Of = async (enc) => (await eg.health()).find((f) => f.code === 'H05' && f.refs.includes(enc));
+
+  test('記憶一律留在專案範圍（不依 user 型或主機名稱搬到全域／單機）', async () => {
+    const dir = makeRepo(path.join(m.userHome, 'Desktop', 'PocketTool'));
+    const t = addTranscript(m.claudeHome, dir);
+    mem(path.join(t.dir, 'memory'), 'pocket-owner.md', { name: 'pocket-owner', description: '誰在用這個工具', type: 'user', body: '使用者是這個工具的維護者。' });
+    mem(path.join(t.dir, 'memory'), 'pocket-install.md', { name: 'pocket-install', description: '安裝位置', type: 'project', body: 'MCP 安裝在 C:\\tools\\pocket-mcp，runtime 在 C:\\tools\\pocket-runtime' });
+    mem(path.join(t.dir, 'memory'), 'pocket-notes.md', { name: 'pocket-notes', description: '一般筆記', body: '一般筆記。' });
+    const h = await h05Of(t.enc);
+    assert.ok(h, '有尚未納管的記憶 → H05');
+    assert.equal(h.fixes, undefined, '沒有候選專案時只有一個修正');
+    const r = await eg.apply(h.fix);
+    assert.equal(r.ok, true);
+    const pid = (await eg.projects.list()).find((p) => p.name === 'PocketTool').pid;
+    for (const f of ['pocket-owner.md', 'pocket-install.md', 'pocket-notes.md']) {
+      assert.ok(fs.existsSync(path.join(eg.paths.vault, 'projects', pid, 'memory', f)), `${f} 留在專案`);
+      assert.equal(fs.existsSync(path.join(eg.paths.vault, 'global', f)), false, `${f} 不進全域`);
+      assert.equal(fs.existsSync(path.join(eg.paths.vault, 'machines', eg.machine.id, f)), false, `${f} 不進單機`);
+    }
+  });
+
+  test('GitHub 改名（remote 不同、git 根 commit 相同）：H05 提供「收編到既有專案」；舊資料夾還在時預設建新專案', async () => {
+    const oldDir = makeRepo(path.join(m.userHome, 'Desktop', 'Guild.Old'), { remote: 'https://github.com/example/Guild.Old.git' });
+    const oldPid = (await eg.identity.bind(oldDir, { create: { name: 'Guild.Old' } })).pid;
+    const newDir = path.join(m.userHome, 'Desktop', 'guild-renamed');
+    git(path.dirname(newDir), 'clone', '-q', oldDir, newDir);
+    git(newDir, 'remote', 'set-url', 'origin', 'https://github.com/example/guild-renamed.git');
+    const t = addTranscript(m.claudeHome, newDir);
+    mem(path.join(t.dir, 'memory'), 'guild-sync-bench.md', { name: 'guild-sync-bench', description: '同步效能基準', body: '同步 60 天約 12 秒。' });
+    // 舊資料夾還在：比較像另一份 clone 或 fork → 新專案排第一
+    let h = await h05Of(t.enc);
+    assert.equal(h.fixes.length, 2);
+    assert.deepEqual(h.fixes.map((x) => x.args.pid ?? null), [null, oldPid]);
+    assert.match(h.detail, /可能就是既有專案「Guild\.Old」（與既有專案有相同的第一個 commit/);
+    assert.match(h.en.detail, /may be the existing project "Guild\.Old"/);
+    // 舊資料夾不見了（搬家或改名）→ 收編到既有專案排第一
+    fs.rmSync(oldDir, { recursive: true, force: true });
+    h = await h05Of(t.enc);
+    assert.equal(h.fix.args.pid, oldPid);
+    assert.equal(h.fix.label, '收編到既有專案「Guild.Old」');
+    assert.equal(h.fixes[1].label, '收編成新專案');
+    // 不是候選的專案一律拒絕（介面送來的 args 不可信）
+    const other = (await eg.projects.list()).find((p) => p.name === 'PocketTool').pid;
+    await assert.rejects(eg.apply({ action: 'sweep', args: { encoded: t.enc, pid: other } }), /不是這個資料夾的候選專案/);
+    await assert.rejects(eg.apply({ action: 'sweep', args: { encoded: t.enc, pid: { toString: () => oldPid } } }), (e) => e.code === 'E_INVALID');
+    const r = await eg.apply(h.fix);
+    assert.equal(r.ok, true);
+    assert.ok(fs.existsSync(path.join(eg.paths.vault, 'projects', oldPid, 'memory', 'guild-sync-bench.md')), '收進既有專案');
+    assert.equal((await eg.projects.list()).filter((p) => /guild-renamed/i.test(p.name)).length, 0, '沒有另外建新專案');
+    const b = (await eg.identity.resolve(newDir));
+    assert.equal(b.pid, oldPid, '新資料夾綁定到既有專案');
   });
 });

@@ -18,6 +18,7 @@ import { scanAllMemories } from './memories.mjs';
 import { allowEntries, loadAllow } from './secretallow.mjs';
 import { redactSecrets } from './secrets.mjs';
 import { scanAll } from './transcripts.mjs';
+import { beforeRetired, readRetired, retiredEncodedFor } from './retired.mjs';
 import { readsInRecord, localDate } from './usage.mjs';
 import { allBindingViews, readBindings, readProject } from './vault.mjs';
 import { lastCheckedMs, uncheckedDays, volatility } from './volatile.mjs';
@@ -56,13 +57,21 @@ async function readState(local) {
  */
 export async function projectSessions(ctx, pid, { scans } = {}) {
   const views = allBindingViews(await readBindings(ctx.vault, ctx.mid)).filter((v) => v.pid === pid && v.encoded);
-  if (!views.length) return [];
+  // 1.4.1：已移除的綁定（H04）在舊資料夾留下的對話也算這個專案，但只算移除之前寫的
+  const retired = await retiredEncodedFor(ctx.local, pid);
+  if (!views.length && !retired.size) return [];
   const all = scans ?? await scanAll(ctx.homes.claudeHome);
   const encs = new Set(views.map((v) => v.encoded.toLowerCase()));
   const seen = new Map();
   for (const s of all) {
-    if (!encs.has(s.encoded.toLowerCase())) continue;
-    for (const t of s.users ?? []) if (t.file && !seen.has(t.file)) seen.set(t.file, t);
+    const k = s.encoded.toLowerCase();
+    const live = encs.has(k);
+    if (!live && !retired.has(k)) continue;
+    for (const t of s.users ?? []) {
+      if (!t.file || seen.has(t.file)) continue;
+      if (!live && !beforeRetired(t, retired.get(k))) continue;
+      seen.set(t.file, t);
+    }
   }
   return [...seen.values()].sort((a, b) => a.mtimeMs - b.mtimeMs);
 }
@@ -301,7 +310,9 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
   await fsp.mkdir(path.join(dir, 'sessions'), { recursive: true });
 
   const roots = { home: normPath(ctx.homes.userHome), vault: normPath(ctx.vault), claudeHome: normPath(ctx.homes.claudeHome) };
-  const encToPid = new Map(allBindingViews(await readBindings(ctx.vault, ctx.mid)).filter((v) => v.encoded && v.pid).map((v) => [v.encoded.toLowerCase(), v.pid]));
+  // 舊對話讀的是舊資料夾的記憶路徑：已移除的綁定也要對得回專案（目前的綁定優先）
+  const encToPid = new Map((await readRetired(ctx.local)).map((b) => [b.encoded.toLowerCase(), b.pid]));
+  for (const v of allBindingViews(await readBindings(ctx.vault, ctx.mid))) if (v.encoded && v.pid) encToPid.set(v.encoded.toLowerCase(), v.pid);
   const memories = await scanAllMemories(ctx.vault);
   const wroteBy = new Map(); // originSessionId → refs
   for (const m of memories) {

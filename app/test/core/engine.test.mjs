@@ -612,9 +612,11 @@ describe('健康檢查', () => {
     const calls = src.match(/finding\('H\d+'/g).length;
     assert.ok(calls >= 27, '找得到 finding 呼叫');
     assert.equal(src.match(/en: \{\s*title:/g).length, calls, '每個 finding 一份 en.title／en.detail');
-    const fixes = src.match(/fix: \{ action:/g).length;
-    assert.ok(fixes >= 24);
+    assert.ok(src.match(/fix: \{ action:/g).length >= 24);
+    // 修正物件不一定直接寫在 fix: 後面（1.4.1 起 H05 有多個修正，先組成物件再放進 fixes），所以數所有 { action: ... } 物件
+    const fixes = src.match(/\{ action: /g).length;
     assert.equal(src.match(/en: \{ label:/g).length, fixes, '每個 fix 一份 en.label');
+    for (const line of src.split('\n').filter((l) => /\{ action: /.test(l))) assert.match(line, /en: \{ label:/, `修正物件要在同一行帶 en.label：${line.trim().slice(0, 80)}`);
   });
 });
 

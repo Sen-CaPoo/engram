@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img alt="版本 1.4.0" src="https://img.shields.io/badge/version-1.4.0-0072CE">
+  <img alt="版本 1.4.1" src="https://img.shields.io/badge/version-1.4.1-0072CE">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-0072CE">
   <img alt="Claude Code 外掛" src="https://img.shields.io/badge/Claude%20Code-plugin-13202F">
   <img alt="MIT 授權" src="https://img.shields.io/badge/license-MIT-2E8B87">

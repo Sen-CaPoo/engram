@@ -2,6 +2,33 @@
 
 版本號遵循[語意化版本](https://semver.org/lang/zh-TW/)。
 
+## 1.4.1（2026-11-07）
+
+修正版。這些問題是在實際用 `/engram:inbox 自動` 一次整理 81 張卡片時發現的。
+
+### 修正
+
+- **多出來的參數不再被默默丟掉**：原本大部分指令只處理第一個參數，例如 `engram inbox dismiss a b` 只忽略 a，`engram memory remove a b` 只封存 a，而且不會報錯。現在每個指令都會檢查參數個數，多出來的一律回報錯誤（結束碼 2），不會只做一半。
+- **`engram inbox dismiss` 可以一次忽略多張卡片**：`engram inbox dismiss <id> <id> …`。會先確認每個 id 都找得到，有任何一個找不到就一張都不處理。
+- **移除舊綁定後，舊資料夾的對話仍可以回顧**：收件匣的「資料夾不見了」按「移除這個舊綁定」之後，`/engram:dream` 原本就找不到舊資料夾留下的對話紀錄（Claude Code 還沒清除的那些）。現在 Engram 會在這台電腦記下被移除的綁定（`~/.engram/local/retired-bindings.json`，不同步），對話回顧會把移除之前的對話一併算進那個專案。
+- **一鍵收編一律放在專案範圍**：收件匣的「發現尚未納管的記憶」按「收編到 Engram」時，原本會用匯入精靈的猜測，把 user 類型的記憶放到全域、提到電腦名稱的放到單機，而一鍵收編不會先給你看計畫。現在一律收進專案，之後收件匣會另外建議要不要升級為全域或移到單機。
+- **收編時提示可能就是既有的專案**：GitHub 改過名的 repo（remote 不同，但第一個 commit 相同），原本會被收編成新專案。現在卡片會說明「可能就是既有專案 X」，並提供「收編到既有專案」與「收編成新專案」兩個選項。舊資料夾已經不在時，預設收編到既有專案；兩個資料夾都還在時（比較像另一份 clone 或 fork），預設建新專案。只接受這個資料夾的候選專案。
+- **Engram 程式資料夾搬走後可以更新**：`engram update` 原本會因找不到安裝時記錄的資料夾而直接報錯。現在會說明要用 `--from` 指定新位置，更新成功後會記住新位置。
+
+<details>
+<summary>English</summary>
+
+**Bug fix release. These issues turned up while tidying 81 inbox cards in one go with `/engram:inbox auto`.**
+
+- **Extra arguments are no longer silently dropped:** most commands used only their first argument, so `engram inbox dismiss a b` dismissed only `a` and `engram memory remove a b` archived only `a`, with no error. Every command now checks how many arguments it takes and rejects extras (exit code 2) instead of doing half the work.
+- **`engram inbox dismiss` takes several cards:** `engram inbox dismiss <id> <id> …`. Every id is checked first; if any is not found, nothing is dismissed.
+- **Conversations from a removed binding can still be reviewed:** after **Remove this old binding** on a "folder is gone" card, `/engram:dream` could no longer find the conversations left in the old folder (the ones Claude Code hasn't deleted yet). Engram now remembers removed bindings on this computer (`~/.engram/local/retired-bindings.json`, not synced), and conversation review counts the conversations from before the removal toward that project.
+- **One-click adoption keeps memories in the project:** **Adopt into Engram** on an "unmanaged memories" card used the import wizard's guesses (user-type memories to global, memories mentioning a computer name to that machine) without showing you a plan. Everything now goes into the project; the inbox then suggests separately whether to promote a memory or move it to a machine.
+- **Adoption points out a likely existing project:** a repo renamed on GitHub (different remote, same first commit) was adopted as a new project. The card now says it may be the existing project and offers **Adopt into the existing project** and **Adopt as a new project**. When the old folder is gone the existing project comes first; when both folders exist (more like another clone or a fork) a new project comes first. Only candidates for that folder are accepted.
+- **Updating after the Engram folder moves:** `engram update` failed when the folder recorded at install time no longer existed. It now explains to use `--from` with the new location and remembers it after a successful update.
+
+</details>
+
 ## 1.4.0（2026-11-07）
 
 對話回顧：拿對話紀錄驗證記憶。依 Anthropic〈Components of agent memory〉的研究，讓「每次對話都會載入的記憶」更精簡、更可信。

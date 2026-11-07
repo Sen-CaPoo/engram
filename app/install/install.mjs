@@ -298,8 +298,15 @@ export async function runUpdate(opts = {}, io) {
     io.print(`✗ 記錄的原始程式位置 ${from} 是部署的複本，從這裡更新不會拿到新版。請用 --from 指定 Engram 程式資料夾裡的 app，例如 engram update --from "<Engram 資料夾>\\app"。`);
     return { ok: false };
   }
+  // 1.4.1：原始程式資料夾搬走後（例如整理到 Github 資料夾），原本會在讀 package.json 時直接報 ENOENT
+  if (!opts.rollback && !fs.existsSync(path.join(from, 'package.json'))) {
+    io.print(`✗ 找不到 Engram 程式資料夾：${from}${opts.from ? '' : '（安裝時記錄的位置，資料夾可能搬走了）'}。請用 --from 指定 Engram 程式資料夾裡的 app，例如 engram update --from "<Engram 資料夾>\\app"；更新成功後會記住新的位置。`);
+    return { ok: false };
+  }
   const r = opts.rollback ? await rollback(home) : await deploy(home, from);
-  await fsp.writeFile(installJson, JSON.stringify({ ...info, version: activeVersion(home), updatedAt: new Date().toISOString() }, null, 2));
+  // --from 部署成功：記住新的原始程式位置，下次直接 engram update 即可（部署的複本在上面已經擋掉）
+  const moved = !opts.rollback && opts.from ? { sourceDir: path.resolve(opts.from) } : {};
+  await fsp.writeFile(installJson, JSON.stringify({ ...info, ...moved, version: activeVersion(home), updatedAt: new Date().toISOString() }, null, 2));
   io.print(opts.rollback ? `✓ 已切回 ${r.version}（原本是 ${r.previous}）` : `✓ 已更新到 ${r.version}${r.previous ? `（原本是 ${r.previous}）` : ''}`);
   // npm 全域指令指向實際的版本資料夾，換版後要重新連結
   const npmCli = (await readSteps(home))?.steps?.some((s) => s.kind === 'cli-link') ? npmCliPath() : null;

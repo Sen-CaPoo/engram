@@ -76,6 +76,8 @@ Engram 的健康檢查只用規則判斷，卡片只是「候選」。你的工�
 - **綁定與同步類（H04、H05、H06、H14、H17、H18）**：規則已經判斷好了，照 `engram inbox show` 的說明用白話解釋會發生什麼，使用者同意後 `engram inbox apply <id> --yes`。
   - H06 會改資料夾名稱：那些資料夾不能有開著的 Claude Code 對話（包括目前這個對話所在的資料夾）。有疑慮就建議使用者關掉其他對話，或改到管理介面操作。
   - H18 大量刪除：列出被刪除的記憶，問使用者是不是他要刪的；預設建議還原。
+  - H05 收編：記憶一律收進專案範圍，之後收件匣會另外出現 H08／H09 建議要不要搬。卡片有兩個修正（「收編到既有專案「X」」與「收編成新專案」）時，表示這個資料夾可能就是既有專案（例如 repo 改名、搬家），依卡片說明判斷：既有專案原本的資料夾已不存在、名稱相近，通常選既有專案；兩個資料夾都還在（另一份 clone 或 fork）選新專案。第二個修正用 `--fix 2`。
+  - H04 移除舊綁定：舊資料夾留下的對話紀錄仍可以用 `/engram:dream` 回顧，不必先回顧再移除。
 
 ## 指令
 
@@ -83,7 +85,7 @@ Engram 的健康檢查只用規則判斷，卡片只是「候選」。你的工�
 engram inbox                          # 列出（--all 連已忽略、延後的也列出）
 engram inbox show <id> [<id> ...]     # 完整內容、可用的修正、相關記憶（附版本）
 engram inbox apply <id> --yes         # 套用卡片上的修正；第二個修正加 --fix 2
-engram inbox dismiss <id> [--days 7]  # 忽略；加 --days 是延後
+engram inbox dismiss <id> [<id> ...] [--days 7]  # 忽略（可以一次多張）；加 --days 是延後
 engram inbox resolve <cf_id> --choice ours|theirs|both
 engram memory show <ref> [<ref> ...]
 engram search <關鍵字>

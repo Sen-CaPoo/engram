@@ -433,4 +433,53 @@ describe('對話回顧', () => {
     assert.equal(h, undefined, '保留 90 天：還早，不提示');
     fs.writeFileSync(sp, JSON.stringify(s));
   });
+
+  // 1.4.1：2026-11-07 套用 H04「移除舊綁定」後，舊資料夾的對話（還沒被 Claude Code 清除）就回顧不到了
+  test('H04 移除舊綁定後，舊資料夾在移除之前的對話仍算這個專案', async () => {
+    const oldRepo = makeRepo(path.join(root, 'work', 'old-place'));
+    const pidOld = (await eg.identity.bind(oldRepo, { create: { name: '搬家前' } })).pid;
+    writeTranscript('moved-1', [user('舊位置的第一段對話'), said('好')], { ageMs: 20 * DAY, cwd: oldRepo });
+    writeTranscript('moved-2', [user('舊位置的第二段對話'), said('好')], { ageMs: 2 * DAY, cwd: oldRepo });
+    assert.equal((await eg.dream.status(pidOld)).pending, 2);
+    fs.rmSync(oldRepo, { recursive: true, force: true });
+    const h04 = (await codes('H04')).find((f) => f.pid === pidOld);
+    assert.ok(h04, '資料夾不見了 → H04');
+    assert.equal(h04.fix.action, 'forget-binding');
+    await eg.apply(h04.fix);
+    assert.equal((await codes('H04')).find((f) => f.pid === pidOld), undefined, '綁定已移除');
+    const st = await eg.dream.status(pidOld);
+    assert.equal(st.pending, 2, '移除綁定後仍找得到舊資料夾的對話');
+    const run = await eg.dream.prepare({ pid: pidOld });
+    assert.deepEqual(run.sessions.map((s) => s.sid), ['moved-1', 'moved-2']);
+    await eg.dream.reset(run.id);
+    // 綁定移除之後才寫進同一個編碼資料夾的對話，不屬於已經不存在的舊資料夾
+    const rf = path.join(eg.paths.local, 'retired-bindings.json');
+    const saved = fs.readFileSync(rf, 'utf8');
+    const j = JSON.parse(saved);
+    const entry = j.bindings.find((b) => b.pid === pidOld);
+    assert.ok(entry && entry.encoded === encodeProjectPath(oldRepo));
+    entry.retiredAt = new Date(Date.now() - 10 * DAY).toISOString();
+    fs.writeFileSync(rf, JSON.stringify(j));
+    assert.equal((await eg.dream.status(pidOld)).pending, 1, '只算移除之前（10 天前）就寫好的 moved-1');
+    fs.writeFileSync(rf, saved);
+    // 別的專案不會撿到這些對話
+    assert.ok(!(await eg.dream.prepare({ pid })).sessions.some((s) => /^moved-/.test(s.sid)));
+  });
+
+  test('退役紀錄：同一個綁定再移除以最新為準；舊資料夾已經沒有對話紀錄的項目順便清掉', async () => {
+    const { readRetired, retireBinding } = await import('../../src/core/retired.mjs');
+    const local = path.join(root, 'retired-local');
+    const claudeHome = path.join(root, 'retired-claude');
+    fs.mkdirSync(path.join(claudeHome, 'projects', 'C--keep'), { recursive: true });
+    fs.writeFileSync(path.join(claudeHome, 'projects', 'C--keep', 's.jsonl'), '{}\n');
+    await retireBinding(local, { key: 'C--keep', pid: 'p1', encoded: 'C--keep' }, { now: Date.parse('2026-11-01T00:00:00Z') });
+    await retireBinding(local, { key: 'C--gone', pid: 'p2', encoded: 'C--gone' }, { now: Date.parse('2026-11-02T00:00:00Z') });
+    assert.equal((await readRetired(local)).length, 2);
+    await retireBinding(local, { key: 'C--keep', pid: 'p1', encoded: 'C--keep' }, { now: Date.parse('2026-11-03T00:00:00Z'), claudeHome });
+    const list = await readRetired(local);
+    assert.deepEqual(list.map((b) => [b.key, b.retiredAt]), [['C--keep', '2026-11-03T00:00:00.000Z']], 'C--gone 沒有對話紀錄了 → 清掉；C--keep 以最新為準');
+    assert.equal(await retireBinding(local, { key: 'x', pid: '', encoded: 'C--x' }), null, '沒有 pid 不記');
+    fs.writeFileSync(path.join(local, 'retired-bindings.json'), '{"bindings":[{"pid":"p","encoded":"e","retiredAt":"not-a-date"},null,"x"]}');
+    assert.deepEqual(await readRetired(local), [], '壞掉的項目略過');
+  });
 });

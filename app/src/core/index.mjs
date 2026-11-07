@@ -22,6 +22,7 @@ import { SearchIndex } from './search.mjs';
 import { sessionContext } from './session.mjs';
 import { executeSweep, planSweep, rollbackImport } from './sweep.mjs';
 import { listCollisionRenames, planCollisionRenames, renameCollisions, undoCollisionRenames } from './rename.mjs';
+import { retireBinding } from './retired.mjs';
 import { confirmDeletions, restoreDeletions, sync } from './sync.mjs';
 import { listConflicts, resolveConflict } from './conflicts.mjs';
 import { allowJunctionRead, revokeAll } from './claudesettings.mjs';
@@ -676,7 +677,26 @@ export async function open(opts = {}) {
         }
         case 'sweep': {
           invariant(encodedOk(a.encoded) && exists(path.join(homes.claudeHome, 'projects', a.encoded)), '不合法的來源', undefined, { message: 'Invalid source' });
-          return eg.sweepLegacy({ dryRun: false, encoded: a.encoded });
+          const plan = await planSweep(ctx, { encoded: a.encoded });
+          // 1.4.1：一鍵收編（H05）沒有人看過計畫，記憶一律留在專案範圍。
+          // 匯入精靈的範圍建議（user 型→全域、提到主機名稱→單機）只是猜測；要不要升級或搬到單機交給收件匣的 H08／H09
+          for (const src of plan.sources) {
+            for (const it of src.items) {
+              if ((it.scope ?? 'project') === 'project') continue;
+              it.scope = 'project';
+              it.reason = '一鍵收編一律先放在專案，收件匣會建議是否升級全域或移到單機';
+              it.en = { reason: 'One-click adoption keeps memories in the project; the inbox will suggest whether to promote them or move them to a machine' };
+            }
+          }
+          if (a.pid !== undefined) {
+            // 收編到既有專案（H05 的候選）：只接受這個資料夾目前的候選，不接受任意專案
+            invariant(typeof a.pid === 'string' && plan.sources.length === 1, '不合法的專案', undefined, { message: 'Invalid project' });
+            const src = plan.sources[0];
+            const cand = src.exists && src.target?.isNew ? src.suggestions.find((x) => x.kind === 'project' && x.pid === a.pid) : null;
+            invariant(cand, `「${a.pid}」不是這個資料夾的候選專案`, '重新整理收件匣', { message: `"${a.pid}" is not a candidate project for this folder`, hint: 'Refresh the inbox' });
+            src.target = { pid: a.pid, name: cand.name, isNew: false, archived: false };
+          }
+          return eg.sweepLegacy({ dryRun: false, plan });
         }
         case 'allow-read': {
           // 只允許「確實存在的 junction 綁定」的記憶資料夾；可傳 encoded（建議）或舊的 path
@@ -725,6 +745,9 @@ export async function open(opts = {}) {
         case 'forget-binding': return ctx.locked('forget-binding', async () => {
           const b = await readBindings(homes.vault, ctx.mid);
           invariant(typeof a.encoded === 'string' && Object.hasOwn(b, a.encoded), '找不到這個綁定', undefined, { message: 'Binding not found' });
+          // 1.4.1：舊資料夾的對話紀錄還在，記下來讓對話回顧（H20）仍能找到它們
+          const old = b[a.encoded];
+          await retireBinding(ctx.local, { key: a.encoded, pid: old?.pid, encoded: old?.encoded ?? a.encoded.split('@')[0], path: old?.path ?? null }, { claudeHome: homes.claudeHome });
           delete b[a.encoded];
           await writeBindings(homes.vault, ctx.mid, b);
           const commit = await commitPaths(homes.vault, [`machines/${ctx.mid}/bindings.json`], `forget binding ${a.encoded}`, { action: 'unbind', mid: ctx.mid });

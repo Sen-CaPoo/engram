@@ -251,6 +251,51 @@ describe('engram inbox', () => {
     assert.match(bad.err, /E_NOT_FOUND/);
   });
 
+  // 1.4.1：原本只處理第一個 id，其餘默默略過（2026-11-07 整理 81 張卡片時發現）
+  test('dismiss 一次多個 id：全部忽略；其中一個找不到時一張都不動', async () => {
+    const a = await eg.memories.create({ scope: { kind: 'project', pid }, name: 'prefers-tables', type: 'user', description: '喜歡表格', body: '喜歡表格。' });
+    const b = await eg.memories.create({ scope: { kind: 'project', pid }, name: 'prefers-dark-mode', type: 'user', description: '喜歡深色模式', body: '喜歡深色模式。' });
+    const ca = await cardOf('H09', a.ref);
+    const cb = await cardOf('H09', b.ref);
+    assert.ok(ca && cb);
+    const partial = await engram(['inbox', 'dismiss', ca.id, 'H09:0000000000', cb.id]);
+    assert.equal(partial.code, 1);
+    assert.match(partial.err, /找不到卡片：H09:0000000000（這次沒有忽略任何卡片）/);
+    const shown = (await json(['inbox'])).data.findings.map((f) => f.id);
+    assert.ok(shown.includes(ca.id) && shown.includes(cb.id), '找不到其中一張時，其他卡片也不能被忽略');
+    const conflictMix = await engram(['inbox', 'dismiss', ca.id, 'cf_20261107T000000_abcd']);
+    assert.equal(conflictMix.code, 2);
+    const r = await json(['inbox', 'dismiss', ca.id, cb.id]);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.data.length, 2);
+    const after = (await json(['inbox'])).data.findings.map((f) => f.id);
+    assert.ok(!after.includes(ca.id) && !after.includes(cb.id));
+    const text = await engram(['inbox', 'dismiss', ca.id, cb.id]);
+    assert.equal(text.code, 0, text.err);
+    assert.equal((text.out.match(/已忽略：/g) ?? []).length, 2);
+    for (const m of [a, b]) await eg.memories.remove(m.ref);
+  });
+
+  test('多出來的位置參數一律拒絕（不再默默只處理第一個）', async () => {
+    const mem = await eg.memories.create({ scope: { kind: 'global' }, name: 'extra-args-a', type: 'reference', description: '測試', body: '內文 A' });
+    const other = await eg.memories.create({ scope: { kind: 'global' }, name: 'extra-args-b', type: 'reference', description: '測試', body: '內文 B' });
+    const r = await engram(['memory', 'remove', mem.ref, other.ref]);
+    assert.equal(r.code, 2);
+    assert.match(r.err, new RegExp(`多了用不到的參數：${other.ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    assert.ok(fs.existsSync(vaultFile(mem.ref)) && fs.existsSync(vaultFile(other.ref)), '被拒絕時一筆都不能封存');
+    const j = await json(['undo', 'abc1234', 'def5678']);
+    assert.equal(j.code, 2);
+    assert.equal(j.data.error.code, 'E_USAGE');
+    assert.match(j.data.error.message, /多了用不到的參數：def5678/);
+    assert.match(j.data.error.hint, /用法：engram undo <版本>/);
+    for (const argv of [['inbox', 'apply', 'H09:a', 'H09:b'], ['memory', 'move', mem.ref, other.ref, '--to', 'global'], ['tidy', 'done', 'x', 'i1', 'i2'], ['dream', 'status', 'project:a', 'project:b'], ['status', 'extra'], ['core', 'write', 'extra']]) {
+      const x = await engram(argv);
+      assert.equal(x.code, 2, `${argv.join(' ')} 應該回 E_USAGE`);
+      assert.match(x.err, /多了用不到的參數/);
+    }
+    for (const m of [mem, other]) await eg.memories.remove(m.ref);
+  });
+
   test('衝突：show 列出兩邊版本並遮蔽金鑰；manual 要有完整 frontmatter；處理後可以復原', async () => {
     const mem = await eg.memories.create({ scope: { kind: 'global' }, name: 'deploy-steps', type: 'project', description: '部署步驟', body: '先 build 再 deploy。' });
     const ours = fs.readFileSync(vaultFile(mem.ref), 'utf8');
