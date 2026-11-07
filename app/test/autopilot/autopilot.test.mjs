@@ -700,6 +700,40 @@ describe('第三輪審查的回歸測試', () => {
   });
 });
 
+describe('第五輪審查的回歸測試', () => {
+  test('保管區有一筆解不開：對話回顧不匯出（不留空資料夾、對話仍待回顧）；check 找得到、delete 只刪解不開的', async () => {
+    const { checkSecrets, deleteBrokenSecret, putSecret } = await import('../../src/core/secretvault.mjs');
+    await putSecret(eg.paths.local, { name: 'good-one', value: 'Good-Value-123456', from: 'test' });
+    fs.writeFileSync(path.join(eg.paths.local, 'secrets', 'broken-one.json'), '{ "name": "broken-one", "data": ');
+    const dir = path.join(m.claudeHome, 'projects', encodeProjectPath(repo));
+    const sid = 'ab12cd34-0000-4000-8000-0000000000bb';
+    const file = path.join(dir, `${sid}.jsonl`);
+    fs.writeFileSync(file, `${JSON.stringify({ cwd: repo, sessionId: sid, timestamp: new Date(Date.now() - 3 * 3600_000).toISOString(), type: 'user', message: { role: 'user', content: '幫我檢查部署腳本的設定是否正確' } })}\n`);
+    const tm = new Date(Date.now() - 3 * 3600_000);
+    fs.utimesSync(file, tm, tm);
+    const before = (await eg.dream.status(pid)).pending;
+    const runsBefore = fs.readdirSync(path.join(eg.paths.local, 'dream')).length;
+    await assert.rejects(eg.dream.prepare({ pid, max: 5 }), (err) => err.code === 'E_VAULT' && /broken-one/.test(err.message));
+    assert.equal(fs.readdirSync(path.join(eg.paths.local, 'dream')).length, runsBefore, '沒有留下空的回顧資料夾');
+    assert.equal((await eg.dream.status(pid)).pending, before);
+    const list = await checkSecrets(eg.paths.local);
+    assert.deepEqual(list.filter((x) => !x.ok).map((x) => x.name), ['broken-one']);
+    await assert.rejects(deleteBrokenSecret(eg.paths.local, 'good-one'), /解得開/);
+    await deleteBrokenSecret(eg.paths.local, 'broken-one');
+    const mf = await eg.dream.prepare({ pid, max: 5 });
+    await eg.dream.done(mf.id);
+  });
+
+  test('暫緩清單：過期的項目在下次寫入時剔除', async () => {
+    const { holdVault } = await import('../../src/autopilot/tasks/secrets.mjs');
+    const local = path.join(root, 'hold-local');
+    await holdVault(local, 'global/old.md', Date.now() - 1000);
+    await holdVault(local, 'global/new.md', Date.now() + 86_400_000);
+    const h = JSON.parse(fs.readFileSync(path.join(local, 'autopilot', 'vault-hold.json'), 'utf8'));
+    assert.deepEqual(Object.keys(h), ['global/new.md']);
+  });
+});
+
 describe('保管區的值不進對話回顧', () => {
   test('Claude 依記憶取出的保管區值出現在對話紀錄裡：匯出時遮蔽（安全審查）', async () => {
     const { putSecret } = await import('../../src/core/secretvault.mjs');

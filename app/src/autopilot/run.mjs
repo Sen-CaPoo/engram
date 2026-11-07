@@ -20,7 +20,7 @@ import { resolveConflicts } from './tasks/conflicts.mjs';
 import { curateScope, planScopes } from './tasks/curate.mjs';
 import { dreamProject, dreamTargets } from './tasks/dream.mjs';
 import { auditReviews } from './tasks/review.mjs';
-import { secretCards } from './tasks/secrets.mjs';
+import { holdVault, secretCards } from './tasks/secrets.mjs';
 
 const DAY = 86_400_000;
 export const workRoot = (local) => path.join(local, 'autopilot', 'work');
@@ -211,10 +211,9 @@ export async function undoRun(eg, runId, index) {
       } else if (a.kind === 'rename' && a.renameId) await eg.collisions.undo(a.renameId);
       else if (a.kind === 'not-secret' && a.allowHashes?.length) { for (const h of a.allowHashes) await eg.secrets.removeAllowed(h).catch((err) => { if (err?.code !== 'E_NOT_FOUND') throw err; }); }
       else if (a.kind === 'vault' && a.vaultNames?.length) {
+        // 你要拿回原文：先記下這個檔案 30 天內不再自動移回保管區（記在本機；收件匣的提醒照常顯示），再放回原值
+        await holdVault(eg.paths.local, a.refs?.[0], Date.now() + 30 * DAY);
         await restoreFromVault(eg, a.refs?.[0], a.vaultNames);
-        // 你要拿回原文：這個檔案 30 天內不再自動移回保管區（記在本機；收件匣的提醒照常顯示）
-        const { holdVault } = await import('./tasks/secrets.mjs');
-        await holdVault(eg.paths.local, a.refs?.[0], Date.now() + 30 * DAY).catch(() => {});
       }
       else for (const sha of [...a.undo].reverse()) await eg.undo(sha);
       a.undone = new Date().toISOString();

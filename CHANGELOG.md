@@ -28,7 +28,7 @@
 - **事後可以復原、而且會學**：「自動駕駛」頁列出每一輪做了什麼、理由、審核員的意見與沒有執行的建議，可以逐項或整輪復原。被你復原的處理會記成回饋（兩台電腦共用），之後的判斷會參考；同一類處理在兩輪各被復原過就自動暫停（只記錄、不執行），在「自動駕駛」頁可以一鍵恢復。
 - **兩台電腦**：共用範圍（全域、核心準則、專案記憶的整理、同步衝突）只由一台處理（最早啟用、3 天內有上線的那台）；單機記憶、金鑰、待你確認與對話回顧各台處理自己的。
 - **用量**：每月上限預設約當 US$30（API 牌價，用 Claude 訂閱時不另外計費，代表額度的消耗），每輪最多 US$5；碰到 Claude 的用量上限就停止，下一輪再繼續。每週一則 Windows 通知摘要。
-- 新指令 `engram autopilot`（`status`、`on`、`off`、`run`、`runs`、`show`、`undo`、`budget`）與 `engram secret`（`list`、`get`），新技能 `/engram:autopilot`。
+- 新指令 `engram autopilot`（`status`、`on`、`off`、`run`、`runs`、`show`、`undo`、`resume`、`budget`）與 `engram secret`（`list`、`check`、`get`、`delete`），新技能 `/engram:autopilot`。保管區有項目解不開時（例如重灌 Windows 後），對話回顧會暫停匯出、避免值外流，`engram secret check` 找出是哪一筆，`engram secret delete` 只能刪除解不開的項目。
 - 實測 Claude Code 2.1.319 可用，更早的版本未測試。
 
 <details>
@@ -43,7 +43,7 @@
 - **Undo, and it learns:** the Autopilot page lists every run, each change with its reason and the reviewer's opinion, and suggestions that were not carried out. Undo one change or a whole run. Undone changes become feedback shared by your computers; a kind of change you undo in two different runs is paused automatically, and you can resume it in one click.
 - **Two computers:** shared scopes are handled by one computer only (the earliest to turn it on that was online within 3 days); each computer handles its own machine memories, secrets, reviews and conversations.
 - **Usage:** a monthly cap of about US$30 at API list prices by default (no extra charge on a Claude subscription; it reflects quota use), up to US$5 per run; it stops at Claude's usage limit and continues next run. A weekly Windows notification summarizes what was done.
-- New commands `engram autopilot` and `engram secret`, new skill `/engram:autopilot`. Tested with Claude Code 2.1.319; earlier versions are untested.
+- New commands `engram autopilot` and `engram secret` (`list`, `check`, `get`, `delete`), new skill `/engram:autopilot`. If an item in the secret store can't be decrypted (for example after reinstalling Windows), conversation review stops exporting so the value can't leak; `engram secret check` finds it, and `engram secret delete` removes only items that can't be decrypted. Tested with Claude Code 2.1.319; earlier versions are untested.
 
 </details>
 

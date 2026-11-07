@@ -67,7 +67,7 @@ export const COMMANDS = {
     usage: 'autopilot [status] | on | off | run [--wait] [--force] | runs | show <執行編號> | undo <執行編號> [<項目編號>] | resume <類別> | budget <美元>',
     summary: '自動駕駛：AI 自主判斷並處理收件匣、記憶整理與對話回顧（不需要你逐項確認，每一項都可以復原）',
   },
-  secret: { run: cmdSecret, args: { '': 0, list: 0, get: 1 }, usage: 'secret list | get <名稱>', summary: '本機保管區：自動駕駛從記憶移出來的金鑰（只在這台電腦、加密保存）' },
+  secret: { run: cmdSecret, args: { '': 0, list: 0, check: 0, get: 1, delete: 1 }, usage: 'secret list | check | get <名稱> | delete <名稱>', summary: '本機保管區：自動駕駛從記憶移出來的金鑰（只在這台電腦、加密保存）；check 檢查每一筆解不解得開，delete 只刪解不開的' },
   core: { run: cmdCore, args: { '': 0, write: 0 }, options: { base: str, file: str }, usage: 'core | core write [--base <版本>] [--file <檔案>]', summary: '讀取核心準則 CORE.md；write 從標準輸入或 --file 寫入' },
   undo: { run: cmdUndo, args: 1, usage: 'undo <版本>', summary: '復原一次寫入、移動、封存、合併或衝突處理' },
   'not-secret': {

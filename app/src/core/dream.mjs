@@ -324,6 +324,8 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
   let pending = pendingOf(await projectSessions(ctx, pid), st.projects[pid]?.sessions, { exclude, now });
   if (since) pending = pending.filter((t) => localDate(t.mtimeMs) >= since);
   const chosen = pending.slice(0, max);
+  // 保管區解不開時丟錯（這次不匯出）：先檢查，失敗時不留下空的回顧資料夾
+  const vault = chosen.length ? await vaultValues(ctx.local) : [];
   const id = newRunId(now);
   const dir = runDir(ctx.local, id);
   await fsp.mkdir(path.join(dir, 'sessions'), { recursive: true });
@@ -348,8 +350,6 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
   }
 
   // 1.5.0：保管區的值（自動駕駛從記憶移出來的金鑰）在匯出的文字裡一律遮蔽
-  // 解不開時丟錯（這次不匯出）：寧可下次再回顧，也不讓金鑰值出現在匯出的文字裡
-  const vault = chosen.length ? await vaultValues(ctx.local) : [];
   const sessions = [];
   const failed = [];
   const readRefs = new Set();
@@ -429,7 +429,8 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
       wroteRefs.has(m.ref) ? '- 這筆記憶是在這批對話裡寫下的' : null,
       '',
       '````markdown',
-      redactSecrets(raw.replace(/\r\n/g, '\n'), allowEntries(allow, m.ref)).text.replace(/\n*$/, ''),
+      // 保管區的短值只在記憶內文遮蔽（標題列的 ref 不動，免得 ref 被改壞）
+      scrubVault(redactSecrets(raw.replace(/\r\n/g, '\n'), allowEntries(allow, m.ref)).text, vault).replace(/\n*$/, ''),
       '````',
       '',
     );

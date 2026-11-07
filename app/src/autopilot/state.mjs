@@ -199,13 +199,15 @@ export async function acquireRunLock(local, runId, now = Date.now()) {
         const tk = `${f}.takeover`;
         const tst = await fsp.stat(tk).catch(() => null);
         if (tst && Date.now() - tst.mtimeMs > 30_000) await fsp.rm(tk, { force: true }).catch(() => {});
-        try { const h = await fsp.open(tk, 'wx'); await h.close(); } catch { return null; }
+        const nonce = randomBytes(6).toString('hex');
+        try { const h = await fsp.open(tk, 'wx'); await h.writeFile(nonce); await h.close(); } catch { return null; }
         try {
           // 接手權內重讀：仍是剛才判斷過期的同一份內容才刪（不是別人剛建立的新鎖）
-          if ((await fsp.readFile(f, 'utf8').catch(() => null)) !== text) return null;
+          if (text === null || (await fsp.readFile(f, 'utf8').catch(() => null)) !== text) return null;
           await fsp.rm(f, { force: true }).catch(() => {});
         } finally {
-          await fsp.rm(tk, { force: true }).catch(() => {});
+          // 只刪自己的接手權（過期清除之後可能已經是別人的）
+          if ((await fsp.readFile(tk, 'utf8').catch(() => null)) === nonce) await fsp.rm(tk, { force: true }).catch(() => {});
         }
         continue;
       }

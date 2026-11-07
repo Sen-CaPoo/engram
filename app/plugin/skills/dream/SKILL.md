@@ -19,6 +19,7 @@ Anthropic 的記憶研究發現：記憶寫錯或隨環境改變而過時之後�
 ## 步驟
 
 1. **準備**：`engram dream prepare [project:<pid>] [--sessions <數量>]`。輸出第一行有回顧編號（`dr-` 開頭）、資料夾、`memories.md` 與每一份對話文字的完整路徑。
+   - 回報 `E_VAULT`（本機保管區有項目解不開）時：告訴使用者在自己的終端機執行 `engram secret check` 檢查，結束。不要自己執行 `engram secret get` 逐筆排查（取出的值會留在對話紀錄裡）。
    - 沒有還沒回顧的對話時，執行輸出裡寫的 `engram dream done <回顧編號>`，告訴使用者這個專案目前沒有需要回顧的對話，結束。
 2. **讀要驗證的記憶**：用 Read 讀 `memories.md`（每一筆附 ref、版本 base、最後修改與最後確認、是否容易過時）。標著「容易過時」的優先注意。
 3. **分析每一份對話**：每一份對話文字交給一個 `engram:dream-analyzer` 子代理（Agent 工具，`subagent_type: "engram:dream-analyzer"`）。**同一則訊息裡一次送出多個 Agent 呼叫**讓它們同時進行（一次最多 10 個，多的等前一批回來再送）。每個子代理的任務只要寫清楚：

@@ -73,7 +73,7 @@ It calls Claude with the Claude Code sign-in on your computer and sends the memo
 
 ### Where did autopilot move my secrets?
 
-To the local secret store on this computer, `~/.engram/local/secrets/`, encrypted with Windows DPAPI so only this Windows user on this computer can decrypt it. It is never synced. The memory now says where the secret is stored and how to get it: `engram secret get <name>` retrieves it and `engram secret list` lists them.
+To the local secret store on this computer, `~/.engram/local/secrets/`, encrypted with Windows DPAPI so only this Windows user on this computer can decrypt it. It is never synced. The memory now says where the secret is stored and how to get it: `engram secret get <name>` retrieves it and `engram secret list` lists them. After reinstalling Windows the old values can't be decrypted (the encryption is tied to this user on this computer): `engram secret check` shows which ones, and `engram secret delete <name>` removes the ones you can't recover; until then conversation review stops exporting so no value can leak.
 
 ### Why does "Waiting for your review" appear in the inbox?
 

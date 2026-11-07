@@ -6,7 +6,7 @@ import { localPaths } from '../paths.mjs';
 import { localTime } from '../fsutil.mjs';
 import { autopilotStatus, categoryLabel, resumeCategory, runAutopilot, summarize, undoRun } from '../../autopilot/run.mjs';
 import { readRun, setEnabledState } from '../../autopilot/state.mjs';
-import { getSecret, listSecrets } from '../../core/secretvault.mjs';
+import { checkSecrets, deleteBrokenSecret, getSecret, listSecrets } from '../../core/secretvault.mjs';
 
 const STATUS = { running: '執行中', done: '完成', failed: '失敗', interrupted: '中斷' };
 const TASK = { curate: '整理', dream: '對話回顧', cards: '收件匣', conflicts: '衝突', secrets: '金鑰', review: '待你確認', run: '整體' };
@@ -120,9 +120,18 @@ export async function cmdSecret(ctx) {
     const list = await listSecrets(eg.paths.local);
     return ctx.out.result({ secrets: list }, list.length ? list.map((s) => `${s.name}｜${s.label || '（沒有說明）'}｜來自 ${s.from ?? '?'}｜${s.createdAt ? localTime(s.createdAt) : ''}`) : ['這台電腦的保管區是空的']);
   }
+  if (sub === 'check') {
+    const list = await checkSecrets(eg.paths.local);
+    const bad = list.filter((x) => !x.ok);
+    return ctx.out.result({ secrets: list }, list.length ? [...list.map((s) => `${s.ok ? '✓' : '✗'} ${s.name}${s.ok ? '' : '（解不開）'}｜${s.label || '（沒有說明）'}`), bad.length ? `有 ${bad.length} 筆解不開（例如重灌 Windows 後，舊的加密金鑰不見了）。確定找不回的話：engram secret delete <名稱>` : '全部都解得開'] : ['這台電腦的保管區是空的']);
+  }
+  if (sub === 'delete') {
+    const r = await deleteBrokenSecret(eg.paths.local, name);
+    return ctx.out.result(r, [`已刪除解不開的「${name}」。記憶裡如果還寫著它的存放位置，請改寫成新的存放方式`]);
+  }
   if (sub === 'get') {
     const value = await getSecret(eg.paths.local, name);
     return ctx.out.result({ name, value }, [value]);
   }
-  throw new CliError('E_USAGE', `看不懂的子指令：${sub}`, 'engram secret list | get <名稱>');
+  throw new CliError('E_USAGE', `看不懂的子指令：${sub}`, 'engram secret list | check | get <名稱> | delete <名稱>');
 }

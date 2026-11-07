@@ -115,7 +115,7 @@ export async function secretCards(ctx) {
   }
   const approvedAllow = new Set();
   if (candidates.length) {
-    const rows = candidates.map((c, i) => ({ id: `s${i + 1}`, ref: c.it.ref, line: c.line, kinds: c.it.hits.filter((h) => h.line === c.line).map((h) => `${h.kind} ${h.preview}`).join('、'), text: c.it.text }));
+    const rows = candidates.map((c, i) => ({ id: `s${i + 1}`, ref: c.it.ref, line: c.line, kinds: c.it.hits.filter((h) => h.line === c.line).map((h) => `${h.kind}（長度 ${String(h.preview).match(/\((\d+)\)$/)?.[1] ?? '?'}）`).join('、'), text: c.it.text }));
     const rv = await call('疑似金鑰審核', { schema: REVIEW_SCHEMA, prompt: notSecretReviewPrompt(rows) });
     rows.forEach((row, i) => { if (rv.ok && (rv.data.verdicts ?? []).some((v) => String(v.id) === row.id && v.verdict === 'approve')) approvedAllow.add(candidates[i]); });
   }

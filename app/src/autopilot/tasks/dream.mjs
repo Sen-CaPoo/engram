@@ -37,12 +37,20 @@ export function infraFailure(err) {
   // E_LLM_OUTPUT 的訊息會夾帶模型的回覆內容（可能剛好談到登入、認證）：只有「整段輸出都解析不了」時才看訊息
   const checkable = code === 'E_LLM' || (code === 'E_LLM_OUTPUT' && msg.startsWith('無法解析 claude 的輸出'));
   if (!checkable) return false;
-  return /\b(401|403|429|502|503|529)\b|invalid api key|\/login\b|not logged in|please log ?in|authentication (failed|error|required)|\bunauthori[sz]ed\b|\bE(CONNRESET|CONNREFUSED|TIMEDOUT|NOTFOUND|AI_AGAIN)\b|fetch failed|getaddrinfo|socket hang up|network error|proxy error|certificate|\boverloaded\b/i.test(msg);
+  return /\b(401|403|429|502|503|529)\b|invalid api key|\/login\b|not logged in|please log ?in|authentication (failed|error|required)|oauth token|\bunauthori[sz]ed\b|\bE(CONNRESET|CONNREFUSED|TIMEDOUT|NOTFOUND|AI_AGAIN)\b|unable to connect|connection (error|refused|closed|reset)|ConnectionRefused|ConnectionClosed|FailedToOpenSocket|request timed out|fetch failed|getaddrinfo|socket hang up|network error|proxy error|certificate|\boverloaded\b/i.test(msg);
 }
 
 export async function dreamProject(ctx, target) {
   const { eg, call, run, mid, feedback, paused, cap } = ctx;
-  const m = await eg.dream.prepare({ pid: target.pid, max: SESSIONS_PER_RUN });
+  if (ctx.vaultBroken) return;
+  let m;
+  try { m = await eg.dream.prepare({ pid: target.pid, max: SESSIONS_PER_RUN }); } catch (err) {
+    if (err?.code !== 'E_VAULT') throw err;
+    // 保管區有解不開的項目：這一輪所有專案都不回顧（只記一次）
+    ctx.vaultBroken = true;
+    run.skipped.push({ task: 'dream', why: `${err.message}。${err.hint ?? ''}` });
+    return;
+  }
   const withText = m.sessions.filter((s) => s.files.length);
   if (!withText.length) {
     await eg.dream.done(m.id);

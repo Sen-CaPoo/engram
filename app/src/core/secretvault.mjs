@@ -76,7 +76,7 @@ export async function listSecrets(local) {
 }
 
 /**
- * 保管區裡所有值（解不開的略過）。對話回顧匯出對話文字時用來遮蔽：Claude 依記憶執行 engram secret get 之後，
+ * 保管區裡所有值。有任何一筆讀不出或解不開就丟 E_VAULT（附名稱），不給部分結果。對話回顧匯出對話文字時用來遮蔽：Claude 依記憶執行 engram secret get 之後，
  * 值會以原樣出現在對話紀錄的工具結果裡，一般的金鑰偵測不一定認得出來（例如沒有前綴的短密碼）。
  * 保管區是空的時候不會啟動 PowerShell。
  */
@@ -88,17 +88,17 @@ export async function vaultValues(local) {
   if (!names) return [];
   if (hit && hit.names === names && Date.now() - hit.at < 600_000) return hit.values;
   const out = [];
-  let failed = false;
+  const failed = [];
   for (const n of (await fsp.readdir(dirOf(local)).catch(() => [])).filter((x) => x.endsWith('.json'))) {
     const e = await readEntry(local, n.slice(0, -5));
-    if (!e?.data) continue;
-    const value = await crypto.unprotect(e.data).catch(() => null);
-    if (typeof value !== 'string') { failed = true; continue; }
+    // 檔案在但讀不出內容（壞掉的 JSON、缺 data）也算解不開
+    const value = e?.data ? await crypto.unprotect(e.data).catch(() => null) : null;
+    if (typeof value !== 'string') { failed.push(n.slice(0, -5)); continue; }
     if (value.length >= 4) out.push({ name: e.name, value });
   }
   const values = out.sort((a, b) => b.value.length - a.value.length);
   // 有解不開的：這次不能保證遮蔽完整，交給呼叫端決定（對話回顧會先不匯出）；也不快取，下次再試
-  if (failed) throw new EngramError('E_VAULT', '本機保管區有項目解不開，這次先不匯出對話（避免金鑰值出現在匯出的文字裡）', '稍後再試；一直失敗時執行 engram secret list 檢查保管區').withEn('Some items in the local secret store could not be decrypted, so conversations were not exported this time', 'Try again later');
+  if (failed.length) throw new EngramError('E_VAULT', `本機保管區有 ${failed.length} 筆解不開（${failed.join('、')}），這次先不匯出對話（避免金鑰值出現在匯出的文字裡）`, '在你自己的終端機執行 engram secret check 檢查；確定找不回的項目用 engram secret delete <名稱> 移除', { names: failed }).withEn(`${failed.length} item(s) in the local secret store could not be decrypted (${failed.join(', ')}), so conversations were not exported this time`, 'Run engram secret check in your own terminal; remove items that cannot be recovered with engram secret delete <name>');
   valueCache.set(local, { at: Date.now(), names, values });
   return values;
 }
@@ -118,6 +118,32 @@ export function scrubVault(text, values, { short = true } = {}) {
     t = t.replace(new RegExp(`${pre}${esc}${post}`, 'g'), () => mark);
   }
   return t;
+}
+
+/** 逐筆試著解密，只回報名稱與狀態（不含值） */
+export async function checkSecrets(local) {
+  const out = [];
+  for (const n of (await fsp.readdir(dirOf(local)).catch(() => [])).filter((x) => x.endsWith('.json')).sort()) {
+    const name = n.slice(0, -5);
+    const e = await readEntry(local, name);
+    const ok = e?.data ? typeof (await crypto.unprotect(e.data).catch(() => null)) === 'string' : false;
+    out.push({ name, ok, label: e?.label ?? '', from: e?.from ?? null });
+  }
+  valueCache.delete(local);
+  return out;
+}
+
+/** 刪除解不開的項目（解得開的不刪：那是唯一的一份，記憶裡只剩存放位置） */
+export async function deleteBrokenSecret(local, name) {
+  invariant(NAME_RE.test(String(name ?? '')), '保管區名稱格式不正確', undefined, { message: 'Invalid secret name' });
+  const e = await readEntry(local, name);
+  const exists = await fsp.stat(fileOf(local, name)).then(() => true, () => false);
+  if (!exists) throw new EngramError(E.NOT_FOUND, `保管區裡沒有「${name}」`).withEn(`No "${name}" in the local secret store`);
+  const ok = e?.data ? typeof (await crypto.unprotect(e.data).catch(() => null)) === 'string' : false;
+  invariant(!ok, `「${name}」解得開，不能刪除（記憶裡只剩存放位置，刪了就找不回來）`, '用 engram secret get 取出後自行保存，再手動處理', { message: `"${name}" can be decrypted, so it is not deleted (the memory only records where it is stored)` });
+  await fsp.rm(fileOf(local, name), { force: true });
+  valueCache.delete(local);
+  return { ok: true, name };
 }
 
 /** 記憶裡取代金鑰值的文字 */
