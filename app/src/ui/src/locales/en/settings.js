@@ -57,4 +57,10 @@ export default {
   "已更新確認設定": "Review setting updated",
   "Claude 寫入每次都會載入的內容時請我確認": "Ask me to review when Claude writes something that loads every time",
   "全域記憶、這台電腦的單機記憶與核心準則會在每個專案的每次對話被讀到。Claude 自己寫入這些內容時，收件匣會列出「待你確認」，看過差異後確認、編輯或退回；你在介面、記憶整理或 /engram:save 同意過的不會再問。只是提醒，不會擋住寫入。": "Global memories, this computer's machine memories, and the core rules are read in every conversation in every project. When Claude writes these on its own, the inbox lists them as waiting for your review: look at the changes, then confirm, edit, or go back. Anything you already approved in the dashboard, in Tidy-up, or through /engram:save is not asked again. This is only a reminder; it does not block the write.",
+  // 1.5.0 自動駕駛
+  '讓 AI 每天自動整理記憶': 'Let AI tidy your memories every day',
+  '開啟後，Engram 會在電腦閒置時，每天讓 AI 自動整理記憶、處理收件匣、回顧對話，不會逐項問你。每一項變更都有備份，可以在「自動駕駛」頁復原。': 'When turned on, Engram lets AI tidy your memories, handle the inbox, and review your conversations once a day while your computer is idle, without asking you about each item. Every change is backed up and can be undone on the Autopilot page.',
+  '做了什麼、怎麼復原': 'What it did and how to undo it',
+  '前往自動駕駛': 'Go to Autopilot',
+  '看每一輪處理了哪些事、為什麼這樣做，並逐項或整輪復原；也可以在那裡調整每月用量上限。': 'See what each run handled and why, undo items or a whole run, and change the monthly usage cap there.',
 };

@@ -190,7 +190,7 @@ node "$HOME/.engram/app/current/bin/engram.mjs" import plan
      應該會回答類似「<電腦名稱> · 專案：… · 已綁定」
   2. 記憶面板：在 Claude Code 輸入 /engram-memories（或點底部的「◆ 憶跡」），看這次對話讀了哪些記憶
   3. 管理介面：在終端機輸入 engram ui（建議用 Edge 開啟，從選單「應用程式 › 將此網站安裝為應用程式」）
-  4. 記憶整理：管理介面的「記憶整理」選範圍、複製指令貼給 Claude Code，Claude 提出建議後你在網頁逐項決定
+  4. 記憶整理：管理介面的「記憶整理」選範圍、複製指令貼給 Claude Code，Claude 提出建議後你在網頁逐項決定；不想逐項決定時，到「自動駕駛」頁開啟，讓 AI 每天自主整理（事後可以復原）
   5. 第二台電腦：把同一段話貼給那台的 Claude Code，取一個不同的名字即可
   6. 請保留 <Engram 資料夾>，之後更新會用到
 ```

@@ -97,11 +97,10 @@ async function precheck(eg, item, start) {
  * 執行一個動作，回傳 { sha, ref? }（ref：動作之後這筆記憶的位置）。
  * 這些內容使用者已在記憶整理頁核可，寫入時一併記為確認過（1.4.0，H23）。
  */
-async function runOp(eg, op) {
-  const reviewed = true;
+async function runOp(eg, op, { reviewed = true } = {}) {
   switch (op.op) {
     case 'write':
-      return { sha: shaOf(await eg.memories.write(op.ref, { text: op.content, reviewed })) };
+      return { sha: shaOf(await eg.memories.write(op.ref, { text: op.content, ...(reviewed ? { reviewed } : {}) })) };
     case 'verify': {
       // 只記下驗證日期（用當下的內容；precheck 已確認版本與建議時相同）。內容沒有被使用者看過全文，
       // 所以確認紀錄只延續：原本確認過的才算確認過（1.4.0 審查）
@@ -181,7 +180,7 @@ async function alreadyDone(eg, op, since) {
 const result = (status, extra = {}) => ({ status, ...extra, at: new Date().toISOString() });
 
 /** 依決定處理一項；save(progress) 把做到哪裡存回記錄。回傳 result。 */
-async function runItem(eg, item, save) {
+async function runItem(eg, item, save, opts) {
   if (item.decision === 'keep' || (item.decision === 'accept' && item.action === 'keep')) return result('kept');
   if (item.decision === 'custom') return result('needs-claude');
   if (item.decision !== 'accept' && item.decision !== 'archive') return result('kept', { message: '沒有決定，維持原狀', en: { message: 'No decision, kept as is' } });
@@ -209,7 +208,7 @@ async function runItem(eg, item, save) {
     await precheck(eg, item, prog.done);
     if (!resumed) await save(prog); // 記下「這一項開始了」，中斷後才知道要檢查哪一步是否已完成
     for (let k = prog.done; k < item.ops.length; k++) {
-      const r = await runOp(eg, item.ops[k]);
+      const r = await runOp(eg, item.ops[k], opts);
       if (r.sha) prog.undo.push(r.sha);
       if (r.ref) prog.refs.push(r.ref);
       prog.done = k + 1;
@@ -226,7 +225,11 @@ async function runItem(eg, item, save) {
  * 執行一份整理記錄。只處理還沒有結果的項目，所以中斷後再執行一次會接著做。
  * @returns {Promise<{ record: object, done: object[], needsClaude: object[], backup: string|null }>}
  */
-export async function applyRecord(eg, id) {
+/**
+ * reviewed：寫入時記為使用者確認過（預設；使用者在記憶整理頁看過內容）。自動駕駛傳 false：
+ * 沒有人看過，寫進每次都會載入的範圍時留在「待你確認」，由下一輪的把關再看一次。
+ */
+export async function applyRecord(eg, id, { reviewed = true } = {}) {
   const local = eg.paths.local;
   // 取得執行權：同一份記錄同時只能有一個程序在執行
   const rec = await updateRecord(local, id, (r) => {
@@ -249,7 +252,7 @@ export async function applyRecord(eg, id) {
     }
     for (const item of todo) {
       const save = (progress) => updateRecord(local, id, (r) => { r.items.find((x) => x.id === item.id).progress = progress; });
-      const res = await runItem(eg, item, save);
+      const res = await runItem(eg, item, save, { reviewed });
       await updateRecord(local, id, (r) => {
         const x = r.items.find((y) => y.id === item.id);
         x.result = res;

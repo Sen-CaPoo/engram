@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useContext, useRef } from 'preact/hoo
 import { api } from './api.js';
 import { TYPE_LABEL, relTime, markdownToHtml, fmtBytes, composing, undoText } from './util.js';
 import { t, N_, local, locale } from './i18n.js';
-import { IconGlobe, IconFolder, IconMonitor, IconAlert, IconInfo, IconOctagon, IconX } from './icons.jsx';
+import { IconGlobe, IconFolder, IconMonitor, IconAlert, IconInfo, IconOctagon, IconX, IconShield } from './icons.jsx';
 
 // ── 全域情境：狀態、專案對照、提示、重新整理、錯誤橫幅、未儲存保護 ──
 export const AppCtx = createContext(null);
@@ -80,6 +80,15 @@ export function ScopeLabel({ scope, short }) {
 const SEV_TEXT = { high: N_('高'), medium: N_('中'), low: N_('建議'), conflict: N_('衝突') };
 export function SevChip({ sev }) {
   return <span class={`sev-chip ${sev}`}>{SEV_TEXT[sev] ? t(SEV_TEXT[sev]) : sev}</span>;
+}
+
+// 自動駕駛審核員的意見（自動駕駛頁與記憶整理頁共用）
+export function ReviewLine({ review }) {
+  if (!review) return null;
+  const ok = review.verdict === 'approve';
+  const reason = local(review, 'reason');
+  const text = ok ? (reason ? t('審核員同意：{reason}', { reason }) : t('審核員同意')) : (reason ? t('審核員不同意：{reason}', { reason }) : t('審核員不同意'));
+  return <p class={`ap-review ${ok ? 'approve' : 'reject'}`}><IconShield /><span>{text}</span></p>;
 }
 
 export function When({ at }) {

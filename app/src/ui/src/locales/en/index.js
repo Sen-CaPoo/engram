@@ -12,7 +12,8 @@ import settings from './settings.js';
 import askclaude from './askclaude.js';
 import editor from './editor.js';
 import tidy from './tidy.js';
+import autopilot from './autopilot.js';
 
-export const PARTS = { common, overview, library, inbox, projects, devices, core, schedule, import: importView, settings, askclaude, editor, tidy };
+export const PARTS = { common, overview, library, inbox, projects, devices, core, schedule, import: importView, settings, askclaude, editor, tidy, autopilot };
 
 export default Object.assign({}, ...Object.values(PARTS));

@@ -8,6 +8,8 @@ import { claudeHome as defaultClaudeHome } from '../cli/paths.mjs';
 import { buildCoreChain } from './corechain.mjs';
 import { claudePluginStatus } from './plugin.mjs';
 import { undoItem } from '../tidy/apply.mjs';
+import { autopilotStatus, noteTidyUndo, resumeCategory, undoRun } from '../autopilot/run.mjs';
+import { readRun } from '../autopilot/state.mjs';
 import { deleteRecord, listRecords, markReady, readRecord, setDecisions } from '../tidy/store.mjs';
 import { recordView, tidySummary } from '../tidy/view.mjs';
 import { HttpError } from './server.mjs';
@@ -155,13 +157,19 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     'GET /api/settings': async () => {
       const st = await eg.status();
       const engineSettings = typeof eg.settings?.get === 'function' ? await eg.settings.get() : {};
-      return { machineLabel: st.machine?.label ?? eg.machine?.label, remote: st.vault?.remote ?? null, bindAuto: engineSettings.bindAuto ?? 'confident', collisionRename: engineSettings.collisionRename ?? 'ask', reviewWrites: engineSettings.reviewWrites ?? 'on', ...(settings?.get() ?? {}) };
+      return { machineLabel: st.machine?.label ?? eg.machine?.label, remote: st.vault?.remote ?? null, bindAuto: engineSettings.bindAuto ?? 'confident', collisionRename: engineSettings.collisionRename ?? 'ask', reviewWrites: engineSettings.reviewWrites ?? 'on', autopilot: engineSettings.autopilot ?? 'off', autopilotBudget: engineSettings.autopilotBudget ?? 30, ...(settings?.get() ?? {}) };
     },
     'PUT /api/settings': async ({ body }) => {
       if (body.machineLabel !== undefined) await engineFn(eg.machine?.rename, '電腦改名', 'renaming this computer')(String(body.machineLabel).trim());
       if (body.bindAuto !== undefined) await engineFn(eg.settings?.set, '自動綁定設定', 'the auto-bind setting')({ bindAuto: body.bindAuto });
       if (body.collisionRename !== undefined) await engineFn(eg.settings?.set, '撞名資料夾改名設定', 'the colliding folder rename setting')({ collisionRename: body.collisionRename });
       if (body.reviewWrites !== undefined) await engineFn(eg.settings?.set, '確認寫入設定', 'the review setting')({ reviewWrites: body.reviewWrites });
+      if (body.autopilotBudget !== undefined) await engineFn(eg.settings?.set, '自動駕駛預算', 'the autopilot budget')({ autopilotBudget: Number(body.autopilotBudget) });
+      if (body.autopilot !== undefined) {
+        await engineFn(eg.settings?.set, '自動駕駛設定', 'the autopilot setting')({ autopilot: body.autopilot });
+        // 開關跟著排程的「自動駕駛」工作；開啟時立即執行一輪
+        jobs.toggle?.('curate', body.autopilot === 'on');
+      }
       const local = {};
       for (const k of ['syncIntervalMin', 'healthTime', 'paused']) if (body[k] !== undefined) local[k] = body[k];
       if (Object.keys(local).length) {
@@ -190,7 +198,31 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       return { ok: true };
     },
     'POST /api/tidy/ready': ({ body }) => markReady(tidyLocal(), need(body.id, 'id')),
-    'POST /api/tidy/undo': ({ body }) => undoItem(eg, need(body.id, 'id'), need(body.item, 'item')),
+    'POST /api/tidy/undo': async ({ body }) => {
+      const r = await undoItem(eg, need(body.id, 'id'), need(body.item, 'item'));
+      // 1.5.0：自動駕駛建立的記錄被復原 → 記成回饋（之後的判斷會避開）
+      await noteTidyUndo(eg, body.id, body.item).catch(() => {});
+      return r;
+    },
+
+    // 自動駕駛（1.5.0）
+    'GET /api/autopilot': () => autopilotStatus(eg),
+    'GET /api/autopilot/run': async ({ q }) => {
+      const r = await readRun(eg.paths?.local ?? paths.local, need(q('id'), 'id'));
+      if (!r) throw new HttpError(404, 'E_NOT_FOUND', '找不到這次的執行紀錄').withEn('This run was not found');
+      return r;
+    },
+    'POST /api/autopilot/run': () => {
+      jobs.run('curate', 'manual');
+      return { started: true };
+    },
+    'POST /api/autopilot/resume': async ({ body }) => {
+      const cat = String(need(body.category, 'category'));
+      if (!(await autopilotStatus(eg)).paused.includes(cat)) throw new HttpError(400, 'E_INVALID', `「${cat.slice(0, 40)}」沒有暫停`).withEn(`"${cat.slice(0, 40)}" is not paused`);
+      await resumeCategory(eg, cat);
+      return autopilotStatus(eg);
+    },
+    'POST /api/autopilot/undo': ({ body }) => undoRun(eg, need(body.id, 'id'), body.index === undefined || body.index === null ? undefined : Number(body.index)),
     'POST /api/tidy/delete': async ({ body }) => {
       // 1.4.0：還沒決定就刪掉的對話回顧記錄，那批對話改回「未回顧」，下次再分析
       const id = need(body.id, 'id');

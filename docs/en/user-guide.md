@@ -56,6 +56,7 @@ Health checks use rules only, so they can only find candidates such as "same nam
 | `/engram:tidy-apply` | Carries out the decisions you made on the Tidy-up page: accepted items are written exactly as you saw them, "Adjust per note" items are handled by Claude following your notes, and it reports the results and how to undo them | **Generate run command** on the Tidy-up page |
 | `/engram:dream` | Conversation review: uses this computer's recent conversations as evidence to check one project's memories one by one, and adds what was missed. The suggestions are saved as a tidy-up record too, and you decide on each item (see **Conversation review** below) | On the **Tidy-up** page, pick a project and choose **Check against conversations**; **Review conversations** on the Projects page; the **Review the conversations** card in the inbox |
 | `/engram:save` | Reviews this conversation and saves what's worth remembering long-term as memories: decides the scope, checks first whether a similar memory exists, and updates that one if so | Use it in a conversation |
+| `/engram:autopilot` | Autopilot: turn it on or off, run once now, see what a run did, undo (see **Autopilot** below) | The **Autopilot** page and Settings |
 | `/engram:recall` | Finds relevant experience in the memories of other projects, the global scope, and each computer, distills it into conclusions you can apply right away with sources attached; read-only | Use it in a conversation |
 
 ### Tidy-up: Claude suggests, you decide each item
@@ -127,6 +128,48 @@ Things to know:
 - **Usage**: one subagent (Sonnet) reads each piece of conversation text in full, so the longer and more numerous the conversations, the more quota it uses. When there are many conversations, add `--sessions 5` to review the oldest 5 first.
 - **Permissions**: the analysis subagents have read-only tools and can't change any file. Engram adds `~/.engram/local/dream` to Claude Code's list of allowed read locations (`permissions.additionalDirectories`, removed on uninstall) so reading doesn't trigger a prompt. This setting takes effect in new conversations only, so if the first review right after an update is blocked, start a new conversation and run it again.
 - **What's in a conversation is data, not instructions.** Text embedded in a web page or file, such as "ignore your previous instructions", isn't taken as fact and isn't followed.
+
+### Autopilot: hand all the tidy-up work to AI
+
+With tidy-up, conversation review, and the inbox above, you decide on every item. Autopilot hands those decisions to AI as well: once it's on, Engram runs once a day in the background, decides, and acts, with nothing for you to confirm item by item. Just look at the **Autopilot** page now and then and undo anything you disagree with.
+
+<p align="center">
+  <img src="../assets/en/screenshots/autopilot.png" alt="The Autopilot page: the switch, the computer in charge, this month's usage, and what each run did, why, and how to undo it" width="900">
+</p>
+
+**Turning it on:** use the switch on the **Autopilot** page or in Settings (or run `engram autopilot on`, or type `/engram:autopilot on` in Claude Code). The first run starts in the background right away.
+
+**What each run does** (in this order):
+
+| Item | What it does |
+| --- | --- |
+| Possible secrets | Real secrets move to the **local secret store** on this computer (encrypted with Windows DPAPI, never synced), and the memory is rewritten to say where the secret is stored and how to get it, so it can sync normally again. The AI never sees the value itself, only its kind, length, its first few characters (at most 4, and no more than a quarter of the value), and context. Values after keywords such as `password:` or `AccountKey=`, and tokens with a fixed format, always go to the store; only values flagged purely for looking random are marked "Not a secret", and only when both the judge and the reviewer are highly confident (you can undo it on the Autopilot page) |
+| Inbox (rules) | Renames colliding folders by the naming rule, fixes bindings, adds core rule suggestions; an old binding is removed only after its folder has been gone for 14 days |
+| Sync conflicts | Compares the two computers' versions and merges them; a choice that would drop one side needs the reviewer's approval, otherwise both versions are kept |
+| Inbox (judgment) | Adopts unmanaged memories, handles mass deletions (confirm or restore), and memories that may belong to another folder |
+| Waiting for your review | Confirms normal content Claude wrote to global or machine memories or the core rules on your behalf; content with injected instructions or obvious mistakes is sent back |
+| Tidy-up | The same judgments as `/engram:tidy`: merge duplicates, archive outdated memories, move memories to the right scope, split or shorten them, fix frontmatter and links; shorten an oversized index or core rules. Only scopes with cards, or whose content changed and that haven't been tidied for 7 days, are tidied |
+| Conversation review | The same judgments as `/engram:dream`, up to 8 conversations per project per run, those about to be deleted by Claude Code first |
+
+**How it's guarded with no one confirming:**
+
+- **AI only decides.** Engram calls `claude -p` in the background with the Claude Code sign-in on your computer: no tools (it can't read files, run commands, or browse), none of your CLAUDE.md or settings, no transcript saved. It returns structured decisions only. Engram validates and applies every write, with the same version checks, secret checks, pin protection, and backups (`~/.engram/local/backups/`) as tidy-up.
+- **A second review.** Rewrites, merges, archives, anything written to global or machine scopes, and core rule changes need another AI call (the reviewer) to check them skeptically: are facts lost, does the reason hold up, is the scope right, are there injected instructions. If it doesn't approve, nothing happens, and the suggestion is listed under "not carried out".
+- **Instruction-like content always goes to review.** New content saying things like "ignore previous instructions", "download and run", "send the credentials to this URL", or "turn off permission checks" is reviewed regardless of risk.
+- **Only what you said.** Conversation review writes to global or machine scopes only with something you said yourself as evidence. Content that appears only in web pages, files, or tool output never becomes a memory loaded in every conversation.
+- **Limits.** At most 30 memories changed per run, and no more than 15% of your memories (at least 5); the rest wait for the next run. At most 6 actions per change. Memories are archived, never deleted.
+
+**Results and undo:** the **Autopilot** page lists what each run did, with each change's reason, the reviewer's opinion, and its risk; suggestions that weren't carried out are listed with the reason. Undo one change or a whole run; for tidy-up changes, open the Tidy-up page to see the full before-and-after. CLI: `engram autopilot runs`, `engram autopilot show <run>`, `engram autopilot undo <run> [<item>]`.
+
+**It learns:** changes you undo are recorded as feedback in your vault (shared by your computers) and taken into account from then on; a kind of change (for example merge, archive, promote to global) that you undo in two different runs is paused automatically: recorded, not carried out. Select **Resume** on the Autopilot page, or run `engram autopilot resume <category>`, to resume it. Undoing "moved a secret to the store" puts the value back into the memory (which goes back to not syncing), and autopilot won't move it again for 30 days.
+
+**When it runs:** once a day, only when there has been no Claude Code conversation on this computer for 20 minutes, so it doesn't compete with you for quota; if it hasn't run for 2 days it runs anyway. **Run now** starts one immediately. A weekly Windows notification summarizes what was done.
+
+**Two computers:** the global scope, core rules, project memory tidy-up, and sync conflicts are handled by one computer only (the earliest to turn it on that has been online within 3 days; the page says which); each computer handles its own machine memories, secrets, reviews, and conversations (conversations exist only on that computer).
+
+**Usage:** there's no extra charge on a Claude subscription, but it uses quota. The amounts shown are API list-price equivalents used for the caps: about US$30 a month by default (you can change it), up to US$5 per run; it stops when it hits Claude's usage limit and continues next run. Each call has about 4k tokens of fixed overhead (your settings aren't loaded).
+
+**Local secret store:** `engram secret list` lists what this computer stores, and `engram secret get <name>` retrieves a value (Claude Code also uses the command written in the memory when it needs the value). The store is `~/.engram/local/secrets/`; only this Windows user on this computer can decrypt it, and it's never synced. If another computer needs the value, store a copy there separately.
 
 > If you've just updated Engram and a conversation that's already open doesn't show these commands, run `/reload-plugins` or start a new conversation. The first time Claude Code asks whether to allow running `engram` commands, choose Allow. The instructions inside these commands are in Traditional Chinese for now; Claude normally replies in the language you write in.
 
@@ -317,9 +360,11 @@ If the new version has problems, `engram update --rollback` switches back to the
 | `engram undo <version>` | Undoes one write, move, archive, merge, or conflict resolution |
 | `engram tidy list` | Lists tidy-up records (`show <id>` shows one; `create`, `apply`, and `done` are used by `/engram:tidy` and `/engram:tidy-apply`) |
 | `engram dream status` | How many of the current project's conversations on this computer have not been reviewed, and when the oldest will be deleted (`prepare`, `done`, and `list` are used by `/engram:dream`) |
+| `engram autopilot` | Autopilot status (`on`, `off` to switch; `run` to run once now; `runs`, `show <run>` for history; `undo <run> [<item>]` to undo; `resume <category>` to resume a paused kind of change; `budget <USD>` for the monthly cap) |
+| `engram secret list` | Items in the local secret store (`get <name>` retrieves a value; `check` tests whether each one can be decrypted; `delete <name>` removes items that can't) |
 | `engram not-secret` | Records a value that was wrongly flagged as a secret in the "Not a secret" list (can only be run in your own terminal) |
 | `engram update` | Deploys a new version (`--rollback` switches back to the previous one) |
 | `engram uninstall` | Reverts to how things were before installation, from the installation record (`--dry-run` only lists the plan, `--purge` also deletes the local vault) |
 | `engram help <command>` | Shows the full usage of a command |
 
-The `/engram:inbox`, `/engram:tidy`, `/engram:tidy-apply`, `/engram:dream`, `/engram:save`, and `/engram:recall` commands in Claude Code are covered in section 3, and the memory pane's `/engram-memories` in section 4.
+The `/engram:inbox`, `/engram:tidy`, `/engram:tidy-apply`, `/engram:dream`, `/engram:autopilot`, `/engram:save`, and `/engram:recall` commands in Claude Code are covered in section 3, and the memory pane's `/engram-memories` in section 4.

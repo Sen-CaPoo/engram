@@ -78,7 +78,7 @@ describe('外掛技能', () => {
         assert.ok(tools, `${s.dir} 要用 allowed-tools 預先允許 engram 指令，否則預設權限模式下每一步都會詢問`);
         const rules = tools.split(/\s+(?=[A-Z])/);
         // 只開放技能用得到的 engram 子指令（不可以是涵蓋 uninstall、update、import、collisions 的 engram *），以及沒有 Bash 時寫草稿用的 ~/.engram/local/drafts
-        const SAFE = /^(Bash|PowerShell)\(engram (inbox|memory|memory show|memory list|core|search|remember|undo|status|projects|sync|tidy|tidy create|tidy list|tidy show|dream)( \*)?\)$/;
+        const SAFE = /^(Bash|PowerShell)\(engram (inbox|memory|memory show|memory list|core|search|remember|undo|status|projects|sync|tidy|tidy create|tidy list|tidy show|dream|autopilot (status|runs|on|off|run)|autopilot (show|undo) \*)( \*)?\)$/;
         // dream（1.4.0）另外可以讀回顧資料夾（匯出的對話文字，只在本機）
         const extra = (r) => r === 'Edit(~/.engram/local/drafts/**)' || (s.dir === 'dream' && r === 'Read(~/.engram/local/dream/**)');
         for (const rule of rules) assert.ok(SAFE.test(rule) || extra(rule), `${s.dir} 只能預先允許技能需要的 engram 子指令與草稿資料夾：${rule}`);

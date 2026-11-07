@@ -114,7 +114,7 @@ export async function listRecords(localDir) {
   for (const n of names) {
     const rec = await readJson(path.join(dir, n));
     if (!rec || rec.v !== RECORD_VERSION || !Array.isArray(rec.items)) continue;
-    out.push({ id: rec.id, createdAt: rec.createdAt, updatedAt: rec.updatedAt, appliedAt: rec.appliedAt ?? null, scope: rec.scope, request: rec.request ?? '', summary: rec.summary, status: rec.status, counts: counts(rec), ...(rec.kind ? { kind: rec.kind } : {}), ...(rec.dream ? { dream: rec.dream } : {}) });
+    out.push({ id: rec.id, createdAt: rec.createdAt, updatedAt: rec.updatedAt, appliedAt: rec.appliedAt ?? null, scope: rec.scope, request: rec.request ?? '', summary: rec.summary, status: rec.status, counts: counts(rec), ...(rec.kind ? { kind: rec.kind } : {}), ...(rec.dream ? { dream: rec.dream } : {}), ...(rec.autopilot ? { autopilot: rec.autopilot } : {}) });
   }
   return out.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }

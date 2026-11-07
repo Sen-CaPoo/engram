@@ -4,8 +4,9 @@ import { useState, useEffect } from 'preact/hooks';
 import { api } from '../api.js';
 import { useApp, useData, Skeleton, Section, ErrorBanner, useAction, ConfirmDialog } from '../components.jsx';
 import { relTime } from '../util.js';
-import { IconSync } from '../icons.jsx';
+import { IconChevronRight, IconSync } from '../icons.jsx';
 import { t, N_, LANGS } from '../i18n.js';
+import { AutopilotSwitch, useAutopilotToggle } from './autopilot.jsx';
 
 const BIND = {
   confident: { label: N_('有把握時自動綁定（建議）'), help: N_('資料夾已有綁定，或 git remote 與已知專案相同時自動綁定；其他情況在收件匣詢問你。') },
@@ -20,9 +21,10 @@ const RENAME = {
 };
 
 export function Settings() {
-  const { status, syncNow, lang, changeLang } = useApp();
+  const { status, syncNow, lang, changeLang, go } = useApp();
   const st = useData(() => api.settings(), []);
   const act = useAction();
+  const autopilot = useAutopilotToggle(st.data?.autopilot === 'on', st.data?.autopilotBudget);
   const [label, setLabel] = useState('');
   const [ask, setAsk] = useState(false);
   useEffect(() => { if (st.data) setLabel(st.data.machineLabel); }, [st.data]);
@@ -116,6 +118,19 @@ export function Settings() {
           </label>
         </Section>
 
+        <Section title={t('自動駕駛')}>
+          <div class="setting">
+            <label for="st-autopilot"><b>{t('讓 AI 每天自動整理記憶')}</b></label>
+            <AutopilotSwitch tog={autopilot} id="st-autopilot" />
+            <span class="help">{t('開啟後，Engram 會在電腦閒置時，每天讓 AI 自動整理記憶、處理收件匣、回顧對話，不會逐項問你。每一項變更都有備份，可以在「自動駕駛」頁復原。')}</span>
+          </div>
+          <div class="setting">
+            <b>{t('做了什麼、怎麼復原')}</b>
+            <button class="btn sm" onClick={() => go('autopilot')}>{t('前往自動駕駛')}<IconChevronRight /></button>
+            <span class="help">{t('看每一輪處理了哪些事、為什麼這樣做，並逐項或整輪復原；也可以在那裡調整每月用量上限。')}</span>
+          </div>
+        </Section>
+
         <Section title={t('暫停與移除')}>
           <div class="setting">
             <b>{t('暫停 Engram')}</b>
@@ -132,6 +147,7 @@ export function Settings() {
           </div>
         </Section>
       </div>
+      {autopilot.dialog}
       {ask && (
         <ConfirmDialog title={t('從這台電腦移除 Engram')} desc={t('移除需要在終端機執行，才能停止常駐程式並還原 Claude Code 的設定。')} confirmLabel={t('知道了')} onConfirm={() => setAsk(false)} onClose={() => setAsk(false)}>
           <pre class="frontmatter">{t('engram uninstall --dry-run   # 先看會還原哪些東西')}{'\n'}{t('engram uninstall             # 逐項還原，保留記憶庫')}</pre>

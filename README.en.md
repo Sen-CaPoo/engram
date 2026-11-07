@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.4.1" src="https://img.shields.io/badge/version-1.4.1-0072CE">
+  <img alt="Version 1.5.0" src="https://img.shields.io/badge/version-1.5.0-0072CE">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-0072CE">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-13202F">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2E8B87">
@@ -38,36 +38,37 @@
 
 <!-- How to maintain: keep only the three most recent versions here. Write the new version in the large block at the top; shrink the previous large block into the first cell of the two-column table below, and drop the table's old second cell (its full notes stay in CHANGELOG.md). -->
 
-### 1.4.0 · Conversation review: check memories against your conversations
+### 1.5.0 · Autopilot: hand all the tidy-up work to AI
 
-When a memory is wrong, or a project changed how it does something but nobody updated the memory, Claude keeps reading it and keeps believing it. Anthropic's memory research found that going back to the original conversations and using them as evidence is what fixes this. Now you type `/engram:dream` in Claude Code: Claude reads this computer's recent conversations and checks the project's memories one by one, **which are confirmed, which have changed or gone out of date, and which are stated too confidently**. It also adds things worth remembering that no memory has yet. Every suggestion comes with a quote from the conversation as evidence, **you decide on each item on a web page**, and your conversations aren't synced or uploaded to GitHub.
+Turn on autopilot and the tidy-up work that used to wait for your decisions is handled by AI on its own: **inbox cards, duplicate and outdated memories, memories in the wrong scope, conversation review, sync conflicts, checking what Claude wrote, even secrets inside memories**. Engram runs once a day while your computer is idle, with nothing for you to confirm item by item. Every change comes with its reason, and **you can undo it afterwards with one click on the Autopilot page**; changes you undo are avoided from then on.
 
 <p align="center">
-  <img src="docs/assets/en/screenshots/dream.png" alt="A conversation review record: at the top, how many conversations were reviewed and the main findings; below, each item quotes the conversation as evidence, with a red line where it contradicts the memory and a green line where it confirms it" width="960">
+  <img src="docs/assets/en/screenshots/autopilot.png" alt="The Autopilot page: the switch, the computer in charge, and this month's usage at the top; below, what each run did, why, and Undo buttons" width="960">
 </p>
 
-This release also makes what every conversation loads smaller and more trustworthy:
+With no one confirming each item, these checks do the guarding:
 
-| | What it does |
+| | How it's guarded |
 | --- | --- |
-| **Waiting for your review** | When Claude writes to global memories, machine memories, or the core rules on its own, the inbox asks you to look at the changes and confirm, edit, or go back. A wrong memory doesn't quietly show up in every project |
-| **Read statistics** | Counts how often each memory was read in the last 90 days, from your conversations. Global memories that are rarely used, or used in only one project, get flagged; when the global index runs out of room, recently added or changed memories come first, then the most-used ones |
-| **Review reminder** | When a project has conversations that haven't been reviewed, the inbox reminds you to review them if they're about to be deleted by Claude Code (it keeps them for 30 days by default), or if the project's memories that go out of date easily haven't been checked in a long time |
-| **Link repair** | When a `[[name]]` points to a memory that has been merged or archived, one click relinks it to the merged memory; for an archived memory, the link is removed and the text kept |
+| **AI only decides** | Claude is called in the background with your Claude Code sign-in, with no tools and none of your settings, and returns decisions only; Engram validates and applies every write, and backs up first |
+| **Second review** | Rewrites, merges, archives, and anything written to scopes loaded in every conversation need approval from a second AI review; anything that looks like injected instructions always goes to review |
+| **Only what you said** | Conversation review writes to global or machine scopes only with something you said yourself as evidence; "instructions" found in web pages or tool output never become memories |
+| **Limited and undoable** | At most 30 memories changed per run; archive only, never delete; every change comes with its reason and can be undone; a kind of change you undo in two different runs is paused automatically, and can be resumed in one click |
+| **Secrets go to a vault** | Real secrets inside memories move to an encrypted local store on this computer (never synced); the memory keeps only where it's stored, and `engram secret get` retrieves it |
 
-See the [user guide](docs/en/user-guide.md#conversation-review-check-memories-against-your-conversations) for details.
+Turn it on from the **Autopilot** page or Settings in the dashboard, or type `/engram:autopilot on` in Claude Code. See the [user guide](docs/en/user-guide.md#autopilot-hand-all-the-tidy-up-work-to-ai) for details.
 
 <table>
   <tr>
     <td width="50%" valign="top">
+      <b>1.4.0 · Conversation review: check memories against your conversations</b><br><br>
+      <img src="docs/assets/en/screenshots/dream.png" alt="A conversation review record: each item quotes the conversation as evidence"><br>
+      <code>/engram:dream</code> reads this computer's recent conversations and checks the project's memories one by one: which are confirmed, which have changed or gone out of date. It adds what was missed, with quotes as evidence. It also added Waiting for your review and read statistics. <a href="docs/en/user-guide.md#conversation-review-check-memories-against-your-conversations">User guide</a>
+    </td>
+    <td width="50%" valign="top">
       <b>1.3.0 · Tidy-up: Claude suggests, you decide each item</b><br><br>
       <img src="docs/assets/en/screenshots/tidy.png" alt="The Tidy-up page: each item with its suggestion, reasoning, a before-and-after view, and four decisions"><br>
       Pick a scope in the dashboard and paste the command into Claude Code: Claude suggests how to tidy up, revised content included. You review the changes item by item on a web page and decide, and only then does Claude act on your decisions. Every item can be undone. <a href="docs/en/user-guide.md#tidy-up-claude-suggests-you-decide-each-item">User guide</a>
-    </td>
-    <td width="50%" valign="top">
-      <b>1.2.0 · See which memories Claude actually read</b><br><br>
-      <img src="docs/assets/en/screenshots/memory-pane.png" alt="The memory pane beside Claude Code: files loaded at start drawn as a tree, and memories read during the conversation below"><br>
-      The memory pane beside Claude Code lists, live, the memories this conversation loaded and read, and whether Claude saw the full text, only titles, or a snippet. Toggle it with <code>/engram-memories</code>. <a href="docs/en/user-guide.md#4-the-memory-pane-which-memories-this-conversation-read">User guide</a>
     </td>
   </tr>
 </table>
@@ -112,7 +113,7 @@ Engram turns memory into an asset that **follows you, follows your project, and 
 
 - Engram **does not modify Claude Code**. It only uses mechanisms Claude Code officially provides: the memory folder, `CLAUDE.md` imports, hooks, and a plugin pane (the memory pane).
 - Your vault is a git repo at `%USERPROFILE%\.engram\vault`, synced to a private repo **under your own account**. Engram has no server and collects no data.
-- Day-to-day operation **makes no AI calls**: health checks use rules, and secret redaction happens on your computer.
+- Day-to-day operation **makes no AI calls**: health checks use rules, and secret redaction happens on your computer. Only when you turn on autopilot does it use your Claude quota in the background, once a day.
 
 ## Install
 
@@ -156,11 +157,13 @@ The steps are exactly the same. Engram notices that `engram-vault` already exist
 2. **Conversation end**: Engram tidies the index, checks for possible secrets, and saves everything to your vault.
 3. **Every 10 minutes (default)**: Engram exchanges changes with your other computers.
 4. **Once a day**: a health check runs, and anything that needs your decision goes into the inbox.
+5. **With autopilot on**: once a day while the computer is idle, AI handles the inbox, tidies memories, and reviews conversations, so you don't even need to open the inbox; what it did is on the **Autopilot** page, where you can undo it.
 
 When you want to tidy up on your own, type these in Claude Code:
 
 | Command | What it's for |
 | --- | --- |
+| `/engram:autopilot` | Autopilot: turn it on or off, run once now, see what it did, undo |
 | `/engram:inbox` | Has Claude read through the inbox card by card, explaining its reasoning and recommendations; it acts only after you approve. Add `auto` to have it handle the items it's confident about directly |
 | `/engram:tidy` | A deep tidy of the global scope, the machine scope, one project, the core rules, or everything: Claude makes suggestions, and you decide each item under **Tidy-up** in the dashboard (which can also generate the command) |
 | `/engram:tidy-apply` | Carries out the decisions you made on the Tidy-up page; the results come back to the same page |
@@ -187,7 +190,7 @@ When you want to tidy up on your own, type these in Claude Code:
 </p>
 
 - **Your data lives in only two places**: your computer, and a private repo under your own GitHub account. Conversation transcripts are never synced: read statistics and conversation review read them on this computer, and only each memory's read count is synced.
-- **No AI calls**: your Claude quota is used in only two cases: the compatibility probe when Claude Code is updated (synthetic data only, and you can turn it off in the dashboard), and when you type an `/engram:` command yourself (`/engram:dream` analyzes several conversations, so it uses more than the other commands). The memory pane and read statistics are computed on your computer only and use no quota.
+- **No AI calls**: your Claude quota is used in only three cases: the compatibility probe when Claude Code is updated (synthetic data only, and you can turn it off in the dashboard), when you type an `/engram:` command yourself (`/engram:dream` analyzes several conversations, so it uses more than the other commands), and when you turn on autopilot (once a day, with a monthly cap of about US$30 at API list prices by default; no extra charge on a subscription). Autopilot calls Claude with the Claude Code sign-in on your computer and sends the same kind of content as when you use Claude Code yourself, with possible secrets masked on your computer first. The memory pane and read statistics are computed on your computer only and use no quota.
 - **Secret protection**: memories that look like they contain secrets are never pushed, and any detected secrets are redacted on your computer before anything is handed to Claude for tidying.
 - **Fully removable**: before installing, Engram lists every location it will change and records each one; `engram uninstall` reverts them one by one from that record, and keeps your vault by default.
 - **Company data**: if your company doesn't allow work data on a personal GitHub account, use a private repo under your company's organization instead, or use Engram on a single computer only.

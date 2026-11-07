@@ -47,7 +47,7 @@ export async function assertUnchanged(eg, refs, base) {
   }
 }
 
-const MARKER = /‹已遮蔽：[^›\n]*›/g;
+const MARKER = /‹(?:已遮蔽|保管區)：[^›\n]*›/g;
 const markers = (t) => (String(t ?? '').match(MARKER) ?? []).length;
 
 /**

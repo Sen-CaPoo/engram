@@ -389,7 +389,7 @@ describe('審查修正後新增的端點', () => {
     const settings = createSettings(paths);
     const api2 = createApi({ eg, jobs, paths, info: { statusSummary: () => ({}) }, settings });
     const got = await api2.handle('GET', '/api/settings', new URLSearchParams(), {});
-    assert.deepEqual(keys(got), ['bindAuto', 'collisionRename', 'healthTime', 'machineLabel', 'paused', 'remote', 'reviewWrites', 'syncIntervalMin']);
+    assert.deepEqual(keys(got), ['autopilot', 'autopilotBudget', 'bindAuto', 'collisionRename', 'healthTime', 'machineLabel', 'paused', 'remote', 'reviewWrites', 'syncIntervalMin']);
     const put = await api2.handle('PUT', '/api/settings', new URLSearchParams(), { syncIntervalMin: 15, healthTime: '08:45', paused: true, machineLabel: '家裡電腦', bindAuto: 'ask' });
     assert.equal(put.syncIntervalMin, 15);
     assert.equal(put.healthTime, '08:45');

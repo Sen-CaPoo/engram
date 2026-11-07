@@ -7,7 +7,7 @@
 // - 每個請求帶 X-Engram-Token（常駐程式啟動時產生，注入在 index.html 的 <meta name="engram-token">）。
 // - 錯誤回應：HTTP 4xx/5xx，本文 { error: { code, message, hint, en?: { message, hint } } }，code 沿用 EngramError（E_LOCKED、E_AUTH…）。
 // - 多語系：給人看的文字是正體中文；有英文版時附在同一個物件的 en 欄位（例如 finding.en.title），介面依語言挑選。
-// - SSE：GET /api/events?t=<token>，事件名稱 status | sync | change | finding | job | probe | tidy，data 為 JSON。
+// - SSE：GET /api/events?t=<token>，事件名稱 status | sync | change | finding | job | probe | tidy | autopilot，data 為 JSON。
 //
 // 端點一覽（方法 路徑 → 回傳）
 //   GET  /api/status                         → StatusReport ＋ { agent: { paused, probe: { ok, failed[] } }, tidy: { pending, ready, finishing, total } }
@@ -46,7 +46,7 @@
 //   GET  /api/core/guidelines                → { current, proposed, coreLine, lines, adopted }   （41 號 §11 選用步驟）
 //   POST /api/core/guidelines/adopt          → ActionResult
 //   POST /api/core/guidelines/revert         → ActionResult
-//   GET  /api/settings                       → { machineLabel, remote, syncIntervalMin, bindAuto: 'confident'|'ask'|'off', reviewWrites: 'on'|'off', healthTime, paused }
+//   GET  /api/settings                       → { machineLabel, remote, syncIntervalMin, bindAuto: 'confident'|'ask'|'off', reviewWrites: 'on'|'off', autopilot: 'on'|'off', autopilotBudget（US$／月）, healthTime, paused }
 //   PUT  /api/settings         { ...部分欄位 }         → 同上
 //   POST /api/sync                           → { started: true }   （進度與結果經由 SSE 的 sync 事件）
 //   GET  /api/loaded?session=latest          → { sessionId, at, cwd, pid, files: [{ path, kind, bytes, lines, loadReason, parent? }] } | null
@@ -66,6 +66,10 @@
 //   POST /api/review/revert    { ref, sha }            → ActionResult   （改回確認過的版本；新增的封存。sha 與目前內容不符時 E_CONFLICT）
 //   GET  /api/core/suggestions               → [{ id, title, reason, text, en: { title, reason } }]（1.4.0 核心準則建議，H24）
 //   POST /api/core/suggestions/apply { ids }           → ActionResult
+//   GET  /api/autopilot                      → { enabled, budget: { monthly, used, remaining }, host: { mid, label, self, enabled[] }, paused[], feedback[], running, runs[] }（1.5.0 自動駕駛）
+//   GET  /api/autopilot/run?id=              → Run（actions、rejected、skipped、notes、calls、summary；見 app/src/autopilot/run.mjs）
+//   POST /api/autopilot/run                  → { started: true }   （進度經由 SSE 的 autopilot 事件）
+//   POST /api/autopilot/undo   { id, index? } → { ok, results: [{ index, ok, message? }] }   （index 省略＝整輪依相反順序復原）
 //   GET  /api/agent                          → AgentInfo（見下）
 //   POST /api/jobs/run         { id }                  → { started: true }
 //   POST /api/jobs/toggle      { id, enabled }         → AgentInfo
@@ -185,6 +189,12 @@ const httpApi = {
   reviewRevert: (ref, sha) => request('POST', '/api/review/revert', { ref, sha }),
   coreSuggestions: () => request('GET', '/api/core/suggestions'),
   applyCoreSuggestions: (ids) => request('POST', '/api/core/suggestions/apply', { ids }),
+  // 1.5.0
+  autopilot: () => request('GET', '/api/autopilot'),
+  autopilotRun: (id) => request('GET', `/api/autopilot/run${qs({ id })}`),
+  autopilotStart: () => request('POST', '/api/autopilot/run'),
+  autopilotUndo: (id, index) => request('POST', '/api/autopilot/undo', { id, index }),
+  autopilotResume: (category) => request('POST', '/api/autopilot/resume', { category }),
   agent: () => request('GET', '/api/agent'),
   runJob: (id) => request('POST', '/api/jobs/run', { id }),
   toggleJob: (id, enabled) => request('POST', '/api/jobs/toggle', { id, enabled }),
@@ -195,7 +205,7 @@ const httpApi = {
   importUndo: (tag) => request('POST', '/api/import/undo', { tag }),
   subscribe(onEvent) {
     const es = new EventSource(`/api/events?t=${encodeURIComponent(token())}`);
-    const names = ['status', 'sync', 'change', 'finding', 'job', 'probe', 'tidy'];
+    const names = ['status', 'sync', 'change', 'finding', 'job', 'probe', 'tidy', 'autopilot'];
     for (const n of names) es.addEventListener(n, (e) => onEvent(n, JSON.parse(e.data || 'null')));
     return () => es.close();
   },

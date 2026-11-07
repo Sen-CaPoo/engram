@@ -7,12 +7,13 @@ import { relTime, SYNC_LABEL, composing, attentionCount } from './util.js';
 import { t, N_, LANGS, getLang, setLang, local } from './i18n.js';
 import {
   EngramLogo, IconOverview, IconLibrary, IconInbox, IconProjects, IconDevices, IconCore, IconSchedule, IconImport,
-  IconSearch, IconSun, IconMoon, IconMonitor, IconSettings, IconSync, IconGlobe, IconTidy,
+  IconSearch, IconSun, IconMoon, IconMonitor, IconSettings, IconSync, IconGlobe, IconTidy, IconAutopilot,
 } from './icons.jsx';
 import { Overview } from './views/overview.jsx';
 import { Library } from './views/library.jsx';
 import { Inbox } from './views/inbox.jsx';
 import { Tidy } from './views/tidy.jsx';
+import { Autopilot } from './views/autopilot.jsx';
 import { Projects } from './views/projects.jsx';
 import { Devices } from './views/devices.jsx';
 import { Core } from './views/core.jsx';
@@ -27,6 +28,7 @@ const ROUTES = {
   library: { title: N_('記憶庫'), short: N_('記憶庫'), icon: IconLibrary, view: Library, group: N_('nav::記憶') },
   inbox: { title: N_('收件匣'), short: N_('收件匣'), icon: IconInbox, view: Inbox, group: N_('nav::記憶') },
   tidy: { title: N_('記憶整理'), short: N_('整理'), icon: IconTidy, view: Tidy, group: N_('nav::記憶') },
+  autopilot: { title: N_('自動駕駛'), short: N_('nav::自動'), icon: IconAutopilot, view: Autopilot, group: N_('nav::記憶') },
   projects: { title: N_('nav::專案'), short: N_('nav::專案'), icon: IconProjects, view: Projects, group: N_('管理') },
   devices: { title: N_('裝置與同步'), short: N_('裝置'), icon: IconDevices, view: Devices, group: N_('管理') },
   core: { title: N_('核心準則'), short: N_('準則'), icon: IconCore, view: Core, group: N_('管理') },
@@ -147,7 +149,7 @@ function App() {
     loadStatus(); loadProjects();
     const unsub = api.subscribe((name) => {
       if (name === 'status' || name === 'probe') loadStatus();
-      if (['change', 'finding', 'job', 'sync', 'tidy'].includes(name)) refresh();
+      if (['change', 'finding', 'job', 'sync', 'tidy', 'autopilot'].includes(name)) refresh();
     });
     const poll = setInterval(loadStatus, 30000);
     const onKey = (e) => {
