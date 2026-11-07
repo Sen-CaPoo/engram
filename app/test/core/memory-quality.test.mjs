@@ -13,6 +13,7 @@ import { applySuggestions, suggestionsFor } from '../../src/core/coresuggest.mjs
 import { renderTranscript, splitTurns, toolLine } from '../../src/core/dream.mjs';
 import { renderScopeIndex } from '../../src/core/normalize.mjs';
 import { encodeProjectPath } from '../../src/core/paths.mjs';
+import { isLink } from '../../src/core/fsx.mjs';
 import { machinePaths, makeRepo, mkTmp, rmTmp, writeDriverCli, git } from './helpers.mjs';
 
 const DAY = 86_400_000;
@@ -464,6 +465,41 @@ describe('對話回顧', () => {
     fs.writeFileSync(rf, saved);
     // 別的專案不會撿到這些對話
     assert.ok(!(await eg.dream.prepare({ pid })).sessions.some((s) => /^moved-/.test(s.sid)));
+  });
+
+  test('同一個路徑重新綁定給新專案：移除之前的對話只算舊專案；合併專案時退役紀錄跟著改', async () => {
+    const dir = path.join(root, 'work', 'reuse-place');
+    makeRepo(dir);
+    const pA = (await eg.identity.bind(dir, { create: { name: '重用前' } })).pid;
+    writeTranscript('reuse-old', [user('舊專案時期的對話'), said('好')], { ageMs: 6 * DAY, cwd: dir });
+    const memLink = path.join(m.claudeHome, 'projects', encodeProjectPath(dir), 'memory');
+    assert.equal(isLink(memLink), true, '綁定時建立了指向 vault 的 junction');
+    fs.rmSync(dir, { recursive: true, force: true });
+    await eg.apply((await codes('H04')).find((f) => f.pid === pA).fix);
+    // 留著的話，同一個路徑之後再開 Claude Code 會把記憶寫進舊專案，重新綁定也會被拒絕
+    assert.equal(isLink(memLink), false, '移除舊綁定時一併拆掉指向這個專案的 junction');
+    assert.ok(fs.existsSync(path.join(m.claudeHome, 'projects', encodeProjectPath(dir), 'reuse-old.jsonl')), '對話紀錄不動');
+    // 退役時間調成 3 天前，才能分出「移除之前」與「之後」的對話
+    const rf = path.join(eg.paths.local, 'retired-bindings.json');
+    const j = JSON.parse(fs.readFileSync(rf, 'utf8'));
+    j.bindings.find((b) => b.pid === pA).retiredAt = new Date(Date.now() - 3 * DAY).toISOString();
+    fs.writeFileSync(rf, JSON.stringify(j));
+    makeRepo(dir);
+    const pB = (await eg.identity.bind(dir, { create: { name: '重用後' } })).pid;
+    writeTranscript('reuse-new', [user('新專案的對話'), said('好')], { ageMs: 1 * DAY, cwd: dir });
+    let a = await eg.dream.prepare({ pid: pA });
+    assert.deepEqual(a.sessions.map((s) => s.sid), ['reuse-old']);
+    await eg.dream.reset(a.id);
+    const b = await eg.dream.prepare({ pid: pB });
+    assert.deepEqual(b.sessions.map((s) => s.sid), ['reuse-new'], '移除之前的對話屬於舊專案，新專案不重複算');
+    await eg.dream.reset(b.id);
+    // 舊專案併入另一個專案：退役紀錄改到合併後的專案，舊對話仍有專案認領
+    const pC = (await eg.identity.bind(makeRepo(path.join(root, 'work', 'merge-target')), { create: { name: '合併目標' } })).pid;
+    await eg.projects.link(pA, pC);
+    assert.ok(JSON.parse(fs.readFileSync(rf, 'utf8')).bindings.every((x) => x.pid !== pA), '不再指向已合併的專案');
+    a = await eg.dream.prepare({ pid: pC });
+    assert.ok(a.sessions.some((s) => s.sid === 'reuse-old'));
+    await eg.dream.reset(a.id);
   });
 
   test('退役紀錄：同一個綁定再移除以最新為準；舊資料夾已經沒有對話紀錄的項目順便清掉', async () => {

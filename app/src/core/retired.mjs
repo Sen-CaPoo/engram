@@ -47,5 +47,30 @@ export async function retiredEncodedFor(local, pid) {
   return map;
 }
 
+/**
+ * 別的專案退役的編碼資料夾 → 移除時間。同一個編碼之後又綁定給這個專案時，
+ * 移除之前的對話屬於原本那個專案，不要兩邊都算（1.4.1 審查）。
+ * @returns {Promise<Map<string, number>>}
+ */
+export async function retiredByOthers(local, pid) {
+  const map = new Map();
+  for (const b of await readRetired(local)) {
+    if (b.pid === pid) continue;
+    const k = b.encoded.toLowerCase();
+    map.set(k, Math.max(map.get(k) ?? 0, Date.parse(b.retiredAt)));
+  }
+  return map;
+}
+
+/** 專案合併（projects.link）：退役紀錄跟著改到合併後的專案，舊對話才不會變成沒有專案認領 */
+export async function relinkRetired(local, fromPid, toPid) {
+  const list = await readRetired(local);
+  if (!list.some((b) => b.pid === fromPid)) return 0;
+  let n = 0;
+  const next = list.map((b) => (b.pid === fromPid ? (n++, { ...b, pid: toPid }) : b));
+  await writeJson(fileOf(local), { v: 1, bindings: next });
+  return n;
+}
+
 /** 對話是不是在綁定移除之前寫的（之後才出現的對話不屬於已經不存在的舊資料夾） */
 export const beforeRetired = (t, retiredAtMs) => Number.isFinite(t?.mtimeMs) && t.mtimeMs <= retiredAtMs + GRACE_MS;

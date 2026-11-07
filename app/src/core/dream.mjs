@@ -18,7 +18,7 @@ import { scanAllMemories } from './memories.mjs';
 import { allowEntries, loadAllow } from './secretallow.mjs';
 import { redactSecrets } from './secrets.mjs';
 import { scanAll } from './transcripts.mjs';
-import { beforeRetired, readRetired, retiredEncodedFor } from './retired.mjs';
+import { beforeRetired, readRetired, retiredByOthers, retiredEncodedFor } from './retired.mjs';
 import { readsInRecord, localDate } from './usage.mjs';
 import { allBindingViews, readBindings, readProject } from './vault.mjs';
 import { lastCheckedMs, uncheckedDays, volatility } from './volatile.mjs';
@@ -60,6 +60,8 @@ export async function projectSessions(ctx, pid, { scans } = {}) {
   // 1.4.1：已移除的綁定（H04）在舊資料夾留下的對話也算這個專案，但只算移除之前寫的
   const retired = await retiredEncodedFor(ctx.local, pid);
   if (!views.length && !retired.size) return [];
+  // 同一個編碼先前綁給別的專案、後來移除：移除之前的對話屬於那個專案，這裡不重複算
+  const others = await retiredByOthers(ctx.local, pid);
   const all = scans ?? await scanAll(ctx.homes.claudeHome);
   const encs = new Set(views.map((v) => v.encoded.toLowerCase()));
   const seen = new Map();
@@ -70,6 +72,7 @@ export async function projectSessions(ctx, pid, { scans } = {}) {
     for (const t of s.users ?? []) {
       if (!t.file || seen.has(t.file)) continue;
       if (!live && !beforeRetired(t, retired.get(k))) continue;
+      if (live && !retired.has(k) && others.has(k) && beforeRetired(t, others.get(k))) continue;
       seen.set(t.file, t);
     }
   }
