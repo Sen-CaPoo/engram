@@ -751,13 +751,19 @@ export async function open(opts = {}) {
           // 1.4.1：舊資料夾的對話紀錄還在，記下來讓對話回顧（H20）仍能找到它們
           const old = b[a.encoded];
           await retireBinding(ctx.local, { key: a.encoded, pid: old?.pid, encoded: old?.encoded ?? a.encoded.split('@')[0], path: old?.path ?? null }, { claudeHome: homes.claudeHome });
-          // 1.4.1：拆掉舊編碼位置指向這個專案的 junction（比照撞名改名）。留著的話，之後在同一個路徑或編碼相同的
-          // 另一個資料夾開 Claude Code，記憶會寫進這個已經不用的專案，重新綁定也會被拒絕。只拆確實指向這個專案的
-          if (old?.method === 'junction' && old.pid) {
+          // 1.4.1：拆掉舊編碼位置的 junction（比照撞名改名）。留著的話，之後在同一個路徑或編碼相同的
+          // 另一個資料夾開 Claude Code，記憶會寫進這個已經不用的專案，重新綁定也會被拒絕。
+          // junction 綁定的 key 就是編碼，這個位置的連結屬於這筆綁定；仍只拆指向 vault 專案記憶資料夾的，
+          // 而且資料夾要確實不在了（介面送來的卡片可能過期，例如外接硬碟又接回來）
+          let linkRemoved = false;
+          if (old?.method === 'junction' && old.path && !exists(old.path)) {
             const mp = memoryPathFor(homes, old.encoded ?? a.encoded);
             try {
-              if (isLink(mp) && normalizeFsPath(linkTarget(mp)).toLowerCase() === normalizeFsPath(projectMemoryDir(homes.vault, old.pid)).toLowerCase()) {
+              const t = isLink(mp) ? normalizeFsPath(linkTarget(mp)).toLowerCase() : null;
+              const projectsDir = normalizeFsPath(path.join(homes.vault, 'projects')).toLowerCase();
+              if (t && path.basename(t) === 'memory' && normalizeFsPath(path.dirname(path.dirname(t))).toLowerCase() === projectsDir) {
                 fs.rmdirSync(mp);
+                linkRemoved = true;
                 await revokeJunctionRead(homes, mp).catch(() => {});
               }
             } catch { /* 拆不掉不影響移除綁定 */ }
@@ -765,7 +771,7 @@ export async function open(opts = {}) {
           delete b[a.encoded];
           await writeBindings(homes.vault, ctx.mid, b);
           const commit = await commitPaths(homes.vault, [`machines/${ctx.mid}/bindings.json`], `forget binding ${a.encoded}`, { action: 'unbind', mid: ctx.mid });
-          return { ok: true, commit: commit ?? undefined };
+          return { ok: true, commit: commit ?? undefined, linkRemoved };
         });
         default:
           // merge、edit、open-* 需要使用者在介面上操作

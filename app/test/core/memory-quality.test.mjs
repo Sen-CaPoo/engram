@@ -517,5 +517,46 @@ describe('對話回顧', () => {
     assert.equal(await retireBinding(local, { key: 'x', pid: '', encoded: 'C--x' }), null, '沒有 pid 不記');
     fs.writeFileSync(path.join(local, 'retired-bindings.json'), '{"bindings":[{"pid":"p","encoded":"e","retiredAt":"not-a-date"},null,"x"]}');
     assert.deepEqual(await readRetired(local), [], '壞掉的項目略過');
+    // 同一個 key 先後屬於不同專案：分開保存
+    await retireBinding(local, { key: 'C--reuse', pid: 'p1', encoded: 'C--reuse' }, { now: Date.parse('2026-11-01T00:00:00Z') });
+    await retireBinding(local, { key: 'C--reuse', pid: 'p2', encoded: 'C--reuse' }, { now: Date.parse('2026-11-05T00:00:00Z') });
+    assert.deepEqual((await readRetired(local)).map((b) => b.pid).sort(), ['p1', 'p2']);
+  });
+
+  // 1.4.1 第二輪審查：撞名的兩個專案並存時，其中一個移除舊綁定，另一個還在用的專案不能失去歷史對話
+  test('對話歸屬的時間區間：撞名並存、路徑先後重用、同專案又綁回來', async () => {
+    const { inWindows, sessionWindows } = await import('../../src/core/retired.mjs');
+    const D = (s) => Date.parse(`2026-11-${s}T00:00:00Z`);
+    const at = (d) => ({ mtimeMs: D(d) });
+    const rows = (...xs) => xs.map(([pid, d]) => ({ pid, encoded: 'C--E', retiredAt: new Date(D(d)).toISOString() }));
+    // 撞名並存：Q 從 10/01 就綁著，P 在 11/07 移除 → Q 仍擁有全部對話；P 擁有 11/07 之前的
+    let r = rows(['P', '07']);
+    const q = sessionWindows(r, 'Q', 'c--e', Date.parse('2026-10-01T00:00:00Z'));
+    assert.ok(inWindows(at('02'), q) && inWindows(at('06'), q) && inWindows(at('08'), q));
+    assert.ok(inWindows(at('02'), sessionWindows(r, 'P', 'C--E', undefined)));
+    assert.ok(!inWindows(at('08'), sessionWindows(r, 'P', 'C--E', undefined)));
+    // 路徑先後重用：P 11/03 移除 → Q 之後綁定、11/06 移除 → R 現在綁著
+    r = rows(['P', '03'], ['Q', '06']);
+    const p = sessionWindows(r, 'P', 'C--E', undefined);
+    const q2 = sessionWindows(r, 'Q', 'C--E', undefined);
+    const rr = sessionWindows(r, 'R', 'C--E', D('06') + 3600_000);
+    assert.deepEqual(['02', '04', '07'].map((d) => [inWindows(at(d), p), inWindows(at(d), q2), inWindows(at(d), rr)]), [[true, false, false], [false, true, false], [false, false, true]]);
+    // 同一個專案移除後又綁回來：兩段都算
+    r = rows(['P', '03']);
+    const back = sessionWindows(r, 'P', 'C--E', D('05'));
+    assert.ok(inWindows(at('02'), back) && inWindows(at('06'), back));
+    // 綁定時間不知道：全部都算（維持 1.4.0 的行為）
+    assert.ok(inWindows(at('02'), sessionWindows(rows(['P', '07']), 'Q', 'C--E', -Infinity)));
+  });
+
+  test('卡片過期（資料夾其實還在）時移除綁定不拆 junction', async () => {
+    const dir = makeRepo(path.join(root, 'work', 'still-here'));
+    await eg.identity.bind(dir, { create: { name: '還在' } });
+    const enc = encodeProjectPath(dir);
+    const memLink = path.join(m.claudeHome, 'projects', enc, 'memory');
+    assert.equal(isLink(memLink), true);
+    const r = await eg.apply({ action: 'forget-binding', args: { encoded: enc } });
+    assert.equal(r.linkRemoved, false);
+    assert.equal(isLink(memLink), true, '資料夾還在：連結不動');
   });
 });

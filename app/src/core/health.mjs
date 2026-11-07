@@ -251,8 +251,11 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
   }
   // 1.4.1：資料夾可能就是既有的專案（例如 GitHub 改名後 remote 不同、但 git 根 commit 相同）。
   // 身分判斷只有中等信心時不會自動連結（避免 fork 被當成同一個專案），這裡讓使用者或 Claude 在收件匣選。
-  // 每個資料夾都要跑 git：平行計算，健康檢查才不會被一個慢的資料夾拖住
-  const candsOf = await Promise.all(unmanaged.map(({ s }) => adoptCandidates(ctx, s, bindings)));
+  // 每個資料夾都要跑 git：一次平行 6 個，健康檢查不會被一個慢的資料夾拖住，也不會同時開太多 git
+  const candsOf = [];
+  for (let i = 0; i < unmanaged.length; i += 6) {
+    candsOf.push(...await Promise.all(unmanaged.slice(i, i + 6).map(({ s }) => adoptCandidates(ctx, s, bindings))));
+  }
   for (const [i, { s, pending }] of unmanaged.entries()) {
     const cands = candsOf[i];
     const many = cands.length > 0;

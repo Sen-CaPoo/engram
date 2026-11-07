@@ -18,7 +18,7 @@ import { scanAllMemories } from './memories.mjs';
 import { allowEntries, loadAllow } from './secretallow.mjs';
 import { redactSecrets } from './secrets.mjs';
 import { scanAll } from './transcripts.mjs';
-import { beforeRetired, readRetired, retiredByOthers, retiredEncodedFor } from './retired.mjs';
+import { inWindows, readRetired, sessionWindows } from './retired.mjs';
 import { readsInRecord, localDate } from './usage.mjs';
 import { allBindingViews, readBindings, readProject } from './vault.mjs';
 import { lastCheckedMs, uncheckedDays, volatility } from './volatile.mjs';
@@ -58,21 +58,26 @@ async function readState(local) {
 export async function projectSessions(ctx, pid, { scans } = {}) {
   const views = allBindingViews(await readBindings(ctx.vault, ctx.mid)).filter((v) => v.pid === pid && v.encoded);
   // 1.4.1：已移除的綁定（H04）在舊資料夾留下的對話也算這個專案，但只算移除之前寫的
-  const retired = await retiredEncodedFor(ctx.local, pid);
-  if (!views.length && !retired.size) return [];
-  // 同一個編碼先前綁給別的專案、後來移除：移除之前的對話屬於那個專案，這裡不重複算
-  const others = await retiredByOthers(ctx.local, pid);
+  const retired = await readRetired(ctx.local);
+  const mine = new Set(retired.filter((b) => b.pid === pid).map((b) => b.encoded.toLowerCase()));
+  if (!views.length && !mine.size) return [];
+  // 目前的綁定在各編碼的綁定時間（取最早；有一筆不知道時當成很早，全部都算）
+  const liveBound = new Map();
+  for (const v of views) {
+    const k = v.encoded.toLowerCase();
+    const t = Date.parse(v.boundAt ?? '');
+    const prev = liveBound.get(k);
+    liveBound.set(k, !Number.isFinite(t) || prev === -Infinity ? -Infinity : Math.min(prev ?? Infinity, t));
+  }
   const all = scans ?? await scanAll(ctx.homes.claudeHome);
-  const encs = new Set(views.map((v) => v.encoded.toLowerCase()));
   const seen = new Map();
   for (const s of all) {
     const k = s.encoded.toLowerCase();
-    const live = encs.has(k);
-    if (!live && !retired.has(k)) continue;
+    if (!liveBound.has(k) && !mine.has(k)) continue;
+    // 同一個編碼可能先後或同時屬於別的專案：依退役與綁定的時間切出這個專案的區間（core/retired.mjs）
+    const wins = sessionWindows(retired, pid, k, liveBound.has(k) ? liveBound.get(k) : undefined);
     for (const t of s.users ?? []) {
-      if (!t.file || seen.has(t.file)) continue;
-      if (!live && !beforeRetired(t, retired.get(k))) continue;
-      if (live && !retired.has(k) && others.has(k) && beforeRetired(t, others.get(k))) continue;
+      if (!t.file || seen.has(t.file) || !inWindows(t, wins)) continue;
       seen.set(t.file, t);
     }
   }

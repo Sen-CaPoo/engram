@@ -22,7 +22,7 @@ export const FIX_INFO = {
   'rename-collisions': '依命名規則在資料夾原名後加 4 碼代號並重新綁定，記憶裡的舊路徑一併更新；可以用 engram collisions undo 整批還原。改名前的對話不會出現在 /resume 清單，改名中的資料夾不能有進行中的 Claude Code 對話。',
   'restore-deletions': '把被刪除的記憶從歷史中還原到目前的版本。',
   'confirm-deletions': '確認這些刪除是你要的，之後不再提醒；檔案仍可從歷史還原。',
-  'forget-binding': '移除這台電腦上已失效的綁定紀錄；記憶本身不受影響，舊資料夾留下的對話紀錄仍可以用 /engram:dream 回顧。',
+  'forget-binding': '移除這台電腦上已失效的綁定紀錄，並拆掉舊位置的記憶連結；記憶本身不受影響，舊資料夾留下的對話紀錄仍可以用 /engram:dream 回顧。',
 };
 const SCOPE_WORDS = { global: '全域（所有專案都會讀到）', project: '專案', machine: '單機（只有那台電腦會讀到）' };
 function describeFix(fix) {
