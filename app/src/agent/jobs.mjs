@@ -503,7 +503,7 @@ export function createJobs({ eg, paths, events, log, notifier, runProbe, detectV
       // 自動駕駛的開關就是設定的 autopilot
       if (id === 'curate') {
         eg?.settings?.set?.({ autopilot: on ? 'on' : 'off' })
-          .then(() => (eg?.machine && eg?.paths?.vault ? setEnabledState(eg, !!on) : null))
+          .then(() => (eg?.machine && eg?.paths?.vault ? setEnabledState(eg, !!on).catch((err) => log.warn('autopilot', err)) : null))
           .then(() => { if (on) runJob('curate', 'enable'); })
           .catch((err) => log.warn('autopilot', err));
       }

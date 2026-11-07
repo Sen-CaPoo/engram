@@ -15,6 +15,26 @@ const shaOf = (r) => r?.undo?.sha ?? r?.commit?.sha ?? null;
 /** 只有這些啟發式偵測到的種類，才可能是誤判（範例值、雜湊、版本號）；有固定格式的權杖一律當成真的 */
 export const ALLOWABLE_KINDS = new Set(['high-entropy', 'credential-assignment', 'connection-string']);
 
+/**
+ * 「不是金鑰」除了判斷者與審核員都同意，值本身的形狀也要明確無害（程式判斷）：
+ * git commit／雜湊（hex）、UUID、版本號、或明顯的佔位字串。其餘一律進保管區。
+ */
+export function benignShape(value) {
+  const v = String(value ?? '').trim();
+  if (/^[0-9a-f]{7,64}$/i.test(v) && !/^[0-9]+$/.test(v)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return true;
+  if (/^v?\d+(\.\d+){1,3}([-+][0-9A-Za-z.-]+)?$/.test(v)) return true;
+  if (/(x{3,}|\*{3,}|<[^>]*>|\$\{[^}]*\}|%[A-Z_]+%|your[-_ ]?|example|placeholder|changeme|dummy|sample|redacted|範例|佔位)/i.test(v)) return true;
+  return false;
+}
+
+/** 給 LLM 看的內容：疑似金鑰換成帶原始行號的標記（遮蔽後行數可能改變，例如多行私鑰變成一行） */
+export function markedText(raw, hits) {
+  let t = raw;
+  for (const h of [...hits].sort((a, b) => b.offset - a.offset)) t = `${t.slice(0, h.offset)}‹已遮蔽：${h.kind}，原第 ${h.line} 行›${t.slice(h.offset + h.length)}`;
+  return t;
+}
+
 /** 給 LLM 看的預覽：只露出長度的四分之一以內（最多 4 個字元），短的值完全不露 */
 export function safePreview(value) {
   const n = String(value).length;
@@ -60,7 +80,9 @@ export async function secretCards(ctx) {
     if (!p?.matches?.length) continue;
     const hits = scanWithAllow(p.before, ref, allow0);
     if (!hits.length) continue;
-    items.push({ card: c.id, ref, raw: p.before, seen: hitsByLine(hits, p.before), hits: hits.map((h) => ({ line: h.line, kind: h.kind, preview: safePreview(p.before.slice(h.offset, h.offset + h.length)) })), text: p.after.slice(0, 20_000) });
+    const benign = new Map();
+    for (const h of hits) benign.set(h.line, (benign.get(h.line) ?? true) && benignShape(p.before.slice(h.offset, h.offset + h.length)));
+    items.push({ card: c.id, ref, raw: p.before, seen: hitsByLine(hits, p.before), benign, hits: hits.map((h) => ({ line: h.line, kind: h.kind, preview: safePreview(p.before.slice(h.offset, h.offset + h.length)) })), text: markedText(p.before, hits).slice(0, 20_000) });
   }
   if (!items.length) return;
   const r = await call('疑似金鑰', { schema: SECRET_SCHEMA, prompt: secretPrompt({ items }) });
@@ -74,7 +96,7 @@ export async function secretCards(ctx) {
       for (const [line, seen] of it.seen) {
         const ds = mine.filter((d) => d.line === line);
         if (!ds.length || !ds.every((d) => d.verdict === 'not-secret' && d.confidence === 'high')) continue;
-        if (!seen.every((h) => ALLOWABLE_KINDS.has(h.kind))) continue;
+        if (!seen.every((h) => ALLOWABLE_KINDS.has(h.kind)) || !it.benign.get(line)) continue;
         candidates.push({ it, line, seen, reason: String(ds[0].reason ?? '').slice(0, 500) });
       }
     }
@@ -87,7 +109,8 @@ export async function secretCards(ctx) {
   }
   for (const it of items) {
     // 重新讀取：判斷期間檔案可能被改過
-    const raw = it.ref === 'core/CORE.md' ? (await eg.core.read()).text ?? '' : (await eg.memories.read(it.ref).catch(() => null))?.raw;
+    const readNow = async () => (it.ref === 'core/CORE.md' ? (await eg.core.read()).text ?? '' : (await eg.memories.read(it.ref).catch(() => null))?.raw);
+    const raw = await readNow();
     if (raw === undefined || raw === null) continue;
     const allow = await loadAllow(eg.paths.local);
     const hits = scanWithAllow(raw, it.ref, allow);
@@ -124,8 +147,11 @@ export async function secretCards(ctx) {
         }
         text = `${text.slice(0, h.offset)}${placeholder(names.get(value))}${text.slice(h.offset + h.length)}`;
       }
+      // 加解密期間檔案可能被改過：寫入前再確認一次（含金鑰的檔案沒有 commit 過，蓋掉就找不回來）
+      if ((await readNow()) !== raw) throw new Error('這段期間記憶被修改了，這次不動它');
       const res = it.ref === 'core/CORE.md' ? await eg.core.write(text, { carryReviewed: true, expect: raw }) : await eg.memories.write(it.ref, { text, carryReviewed: true });
-      run.actions.push({ task: 'secrets', kind: 'vault', card: it.card, code: 'H13', refs: [it.ref], title: `金鑰移到本機保管區：${it.ref}`, reason: `存成 ${[...new Set(stored)].join('、')}；記憶改寫成只記存放位置（用 engram secret get <名稱> 取出）`, category: 'vault', status: 'done', undo: [shaOf(res)].filter(Boolean) });
+      // 復原不能用 git revert（這個檔案第一次 commit 就是改寫後的版本，revert 等於刪檔）：改成從保管區把值放回原處
+      run.actions.push({ task: 'secrets', kind: 'vault', card: it.card, code: 'H13', refs: [it.ref], title: `金鑰移到本機保管區：${it.ref}`, reason: `存成 ${[...new Set(stored)].join('、')}；記憶改寫成只記存放位置（用 engram secret get <名稱> 取出）`, category: 'vault', status: 'done', undo: [], vaultNames: [...new Set(stored)], commit: shaOf(res) });
     } catch (err) {
       run.rejected.push({ task: 'secrets', title: it.ref, why: `移到保管區失敗：${err.message}` });
     }

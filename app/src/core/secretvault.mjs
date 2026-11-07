@@ -80,15 +80,24 @@ export async function listSecrets(local) {
  * 值會以原樣出現在對話紀錄的工具結果裡，一般的金鑰偵測不一定認得出來（例如沒有前綴的短密碼）。
  * 保管區是空的時候不會啟動 PowerShell。
  */
+const valueCache = new Map(); // local → { at, values }：同一個程序 10 分鐘內不重複解密（每筆都要啟動一次 PowerShell）
+
 export async function vaultValues(local) {
+  const hit = valueCache.get(local);
+  const names = (await fsp.readdir(dirOf(local)).catch(() => [])).filter((x) => x.endsWith('.json')).sort().join('|');
+  if (!names) return [];
+  if (hit && hit.names === names && Date.now() - hit.at < 600_000) return hit.values;
   const out = [];
   for (const n of (await fsp.readdir(dirOf(local)).catch(() => [])).filter((x) => x.endsWith('.json'))) {
     const e = await readEntry(local, n.slice(0, -5));
     if (!e?.data) continue;
     const value = await crypto.unprotect(e.data).catch(() => null);
-    if (typeof value === 'string' && value.length >= 4) out.push({ name: e.name, value });
+    // 太短的值可能是一般文字，取代會破壞匯出內容
+    if (typeof value === 'string' && value.length >= 8) out.push({ name: e.name, value });
   }
-  return out.sort((a, b) => b.value.length - a.value.length);
+  const values = out.sort((a, b) => b.value.length - a.value.length);
+  valueCache.set(local, { at: Date.now(), names, values });
+  return values;
 }
 
 /** 把文字裡出現的保管區值換成標記 */

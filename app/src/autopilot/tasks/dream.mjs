@@ -48,13 +48,14 @@ export async function dreamProject(ctx, target) {
     for (const f of s.files) {
       const transcript = await fsp.readFile(path.join(m.dir, ...f.split('/')), 'utf8');
       const r = await call(`回顧 ${target.name} ${String(s.sid).slice(0, 8)}`, { schema: DREAM_ANALYZE_SCHEMA, prompt: dreamAnalyzePrompt({ memories: memoriesText, transcript, projectName: target.name }) });
-      if (!r.ok) { ok = false; budgetStop = r.error?.code === 'E_STOPPED' || r.error?.code === 'E_LLM_LIMIT'; break; }
+      // 只有對話本身的問題（太長、輸出格式不對）才算這個對話壞掉；登入、網路、逾時、預算都不算
+      if (!r.ok) { ok = false; budgetStop = !['E_TOO_LARGE', 'E_LLM_OUTPUT'].includes(r.error?.code); break; }
       findings.push({ session: String(s.sid).slice(0, 8), file: f, ...r.data });
     }
     if (ok) { delete fails[s.sid]; continue; }
     // 這個對話本身分析不了（太長、格式問題、逾時）：失敗次數到上限就當成回顧過，不再卡住
     if (!budgetStop) fails[s.sid] = (fails[s.sid] ?? 0) + 1;
-    if (!budgetStop && fails[s.sid] >= MAX_SESSION_FAILS) { run.notes.push({ task: 'dream', pid: target.pid, note: `對話 ${String(s.sid).slice(0, 8)} 連續 ${MAX_SESSION_FAILS} 次分析失敗，略過不再重試` }); delete fails[s.sid]; continue; }
+    if (!budgetStop && fails[s.sid] >= MAX_SESSION_FAILS) { run.notes.push({ task: 'dream', pid: target.pid, note: `對話 ${String(s.sid).slice(0, 8)} 連續 ${MAX_SESSION_FAILS} 次分析失敗（內容太長或格式問題），略過不再重試` }); delete fails[s.sid]; s.givenUp = true; continue; }
     skipped.push(String(s.sid));
   }
   await writeJsonAtomic(failFile(eg.paths.local), fails).catch(() => {});

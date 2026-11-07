@@ -44,7 +44,8 @@ export async function auditReviews(ctx) {
       const d = byRef.get(it.ref);
       if (!d) continue;
       const reason = String(d.reason ?? '').slice(0, 500);
-      let verdict = d.verdict === 'revert' ? 'revert' : 'confirm';
+      if (d.verdict !== 'confirm' && d.verdict !== 'revert') { run.rejected.push({ task: 'review', title: it.ref, why: `看不懂的判斷：${String(d.verdict).slice(0, 20)}（留在待你確認）` }); continue; }
+      let verdict = d.verdict;
       if (verdict === 'confirm' && needsSecond(it) && second.get(it.ref)?.verdict !== 'approve') verdict = it.flags.length ? 'revert' : 'skip';
       if (verdict === 'skip') { run.rejected.push({ task: 'review', title: it.ref, why: `審核員沒有同意確認核心準則的修改：${second.get(it.ref)?.reason ?? '審核失敗'}（留在待你確認）` }); continue; }
       if (paused.includes(verdict)) { run.rejected.push({ task: 'review', title: it.ref, why: `「${verdict === 'confirm' ? '代你確認' : '退回'}」被你復原過多次，暫停中` }); continue; }

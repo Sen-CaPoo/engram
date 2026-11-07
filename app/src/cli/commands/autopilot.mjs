@@ -40,7 +40,7 @@ export async function cmdAutopilot(ctx) {
 
   if (sub === 'on' || sub === 'off') {
     await eg.settings.set({ autopilot: sub });
-    await setEnabledState(eg, sub === 'on');
+    await setEnabledState(eg, sub === 'on').catch(() => {}); // 鎖逾時等情況：常駐程式下一次對齊時會補上
     // 常駐程式在跑：同步它的排程開關（開啟時它會立即執行第一輪）
     const hb = await liveAgent(ctx);
     if (hb) await requestAgent(hb, 'POST', '/api/jobs/toggle', { id: 'curate', enabled: sub === 'on' }, 3000);

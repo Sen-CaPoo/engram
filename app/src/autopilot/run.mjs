@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { readJson, writeJsonAtomic } from '../cli/fsutil.mjs';
+import { readJson, writeFileAtomic, writeJsonAtomic } from '../cli/fsutil.mjs';
 import { encodePath } from '../cli/probe/index.mjs';
 import { undoItem } from '../tidy/apply.mjs';
 import { readRecord } from '../tidy/store.mjs';
@@ -28,7 +28,7 @@ export const workRoot = (local) => path.join(local, 'autopilot', 'work');
 /** 回饋與暫停的類別（給人看的名稱） */
 export const CATEGORY_LABEL = {
   update: '改寫', move: '搬移', archive: '封存', merge: '合併', create: '新增', split: '拆分', promote: '升為全域', core: '核心準則',
-  'dream-create': '對話回顧新增', 'dream-update': '對話回顧改寫', vault: '金鑰移到保管區', 'not-secret': '標記不是金鑰', confirm: '代你確認', revert: '退回寫入',
+  'dream-create': '對話回顧新增', 'dream-update': '對話回顧改寫', vault: '金鑰移到保管區', 'not-secret': '標記不是金鑰', confirm: '代你確認', revert: '退回寫入', rename: '撞名資料夾改名', verify: '確認仍正確',
 };
 export const categoryLabel = (c) => CATEGORY_LABEL[c] ?? (String(c).startsWith('conflict-') ? '衝突處理' : String(c).startsWith('card-') ? `收件匣 ${String(c).slice(5)}` : c);
 
@@ -72,7 +72,7 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
     for (const r of await listRuns(local, { limit: 5 })) if (r.status === 'running' && r.id !== id && r.pid !== process.pid) await writeRun(local, { ...r, status: 'interrupted' }).catch(() => {});
     if (settings.autopilot === 'on') {
       const st = await readMachineState(eg.paths.vault, eg.machine.id);
-      if (!st.enabledAt) await updateMachineState(eg, (s) => { s.enabledAt = new Date(now()).toISOString(); return s; }, 'autopilot on');
+      if (!st.enabledAt) await updateMachineState(eg, (s) => { s.enabledAt = new Date(now()).toISOString(); return s; }, 'autopilot on').catch((err) => log?.warn?.('autopilot', err));
     }
     // 先拿到另一台的變更
     const s0 = await eg.sync().catch((err) => ({ ok: false, error: { message: err.message } }));
@@ -168,8 +168,20 @@ async function digest(eg, notifier, now) {
 
 // ───────── 復原 ─────────
 
+/** 復原「金鑰移到保管區」：把記憶裡的保管區標記換回原值（檔案會回到疑似金鑰、不同步的狀態） */
+async function restoreFromVault(eg, ref, names) {
+  const { getSecret, placeholder } = await import('../core/secretvault.mjs');
+  const raw = ref === 'core/CORE.md' ? (await eg.core.read()).text ?? '' : (await eg.memories.read(ref)).raw;
+  let text = raw;
+  for (const n of names) text = text.split(placeholder(n)).join(await getSecret(eg.paths.local, n));
+  if (text === raw) throw Object.assign(new Error('記憶裡已經找不到保管區的標記（之後被修改過）'), { code: 'E_CONFLICT' });
+  // 直接寫回檔案、不經過引擎的寫入（引擎會擋下金鑰；allowSecrets 則會把值記成「不是金鑰」而同步出去）：
+  // 回到移入保管區之前的狀態——含疑似金鑰的檔案留在這台電腦、不同步
+  await writeFileAtomic(path.join(eg.paths.vault, ...String(ref).split('/')), text);
+}
+
 /** 這一項能不能從自動駕駛頁復原 */
-export const undoable = (a) => a?.status === 'done' && !a.undone && (a.undo?.length > 0 || a.kind === 'tidy' || (a.kind === 'rename' && !!a.renameId) || (a.kind === 'not-secret' && a.allowHashes?.length > 0));
+export const undoable = (a) => a?.status === 'done' && !a.undone && (a.undo?.length > 0 || a.kind === 'tidy' || (a.kind === 'rename' && !!a.renameId) || (a.kind === 'not-secret' && a.allowHashes?.length > 0) || (a.kind === 'vault' && a.vaultNames?.length > 0));
 
 /**
  * 復原一輪裡的一項（index）或整輪（index 省略，依相反順序）。被復原的記成回饋，之後的判斷會避開；
@@ -195,6 +207,7 @@ export async function undoRun(eg, runId, index) {
         }
       } else if (a.kind === 'rename' && a.renameId) await eg.collisions.undo(a.renameId);
       else if (a.kind === 'not-secret' && a.allowHashes?.length) { for (const h of a.allowHashes) await eg.secrets.removeAllowed(h).catch((err) => { if (err?.code !== 'E_NOT_FOUND') throw err; }); }
+      else if (a.kind === 'vault' && a.vaultNames?.length) await restoreFromVault(eg, a.refs?.[0], a.vaultNames);
       else for (const sha of [...a.undo].reverse()) await eg.undo(sha);
       a.undone = new Date().toISOString();
       results.push({ index: i, ok: true });
@@ -206,7 +219,10 @@ export async function undoRun(eg, runId, index) {
       results.push({ index: i, ok: false, message: String(err?.message ?? err).slice(0, 300) });
     }
   }
-  await writeRun(local, run);
+  // 期間可能有別處（記憶整理頁）也標了復原：重新讀取後只合併這次的結果
+  const latest = (await readRun(local, runId)) ?? run;
+  for (const r of results) if (r.ok && latest.actions[r.index]) latest.actions[r.index].undone = run.actions[r.index].undone;
+  await writeRun(local, latest);
   return { ok: results.every((r) => r.ok), results };
 }
 

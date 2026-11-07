@@ -16,7 +16,11 @@ import { applyRecord } from '../tidy/apply.mjs';
 import { createFromPlan, CORE_REF } from '../tidy/plan.mjs';
 import { markReady, setDecisions, updateRecord } from '../tidy/store.mjs';
 import { charge } from './budget.mjs';
-import { CORE_ADD_CHARS, CORE_ADD_LINES, MAX_MERGE, MAX_OPS, SHARED, addedLines, categoryOf, costOf, instructionFlags, riskOf } from './guard.mjs';
+import { CORE_ADD_CHARS, CORE_ADD_LINES, MAX_MERGE, MAX_OPS, SHARED, addedLines, categoriesOf, categoryOf, costOf, instructionFlags, riskOf } from './guard.mjs';
+
+const SCOPE_RE = /^(global|machine(:[a-z0-9][a-z0-9-]{0,63})?|project:[a-z0-9][a-z0-9-]{0,63})$/;
+const NAME_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
+const one = (t, max = 200) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 import { MODELS } from './llm.mjs';
 import { REVIEW_SCHEMA, reviewPrompt } from './prompts.mjs';
 
@@ -90,6 +94,10 @@ export function normalizeItems(raw, snapshot, { allowCore = false, mid, writable
     if (!ops.length) { dropped.push({ title, why: '沒有動作' }); continue; }
     if (ops.length > MAX_OPS) { dropped.push({ title, why: `一個項目最多 ${MAX_OPS} 個動作` }); continue; }
     if (ops.some((o) => o.op === 'merge' && (o.refs?.length ?? 0) > MAX_MERGE)) { dropped.push({ title, why: `一次最多合併 ${MAX_MERGE} 筆` }); continue; }
+    if (ops.filter((o) => o.op === 'core').length > 1) { dropped.push({ title, why: '一個項目最多改一次核心準則' }); continue; }
+    // 結構欄位要合乎格式（這些字串會原樣出現在審核員的提示詞裡，不能夾帶換行或偽造段落）
+    const badField = ops.find((o) => (o.op === 'move' && !SCOPE_RE.test(String(o.to ?? ''))) || (o.op === 'create' && (!SCOPE_RE.test(String(o.scope ?? '')) || !NAME_RE.test(String(parseMemoryFile(String(o.content ?? '')).data?.name ?? '')))));
+    if (badField) { dropped.push({ title, why: `動作的範圍或名稱格式不正確（${one(badField.op === 'move' ? badField.to : badField.scope, 60)}）` }); continue; }
     let bad = null;
     for (const o of ops) {
       if (o.op === 'core' && !allowCore) { bad = '這個任務不能改核心準則'; break; }
@@ -102,8 +110,8 @@ export function normalizeItems(raw, snapshot, { allowCore = false, mid, writable
       if (o.op === 'move' && o.to === 'machine') o.to = `machine:${mid}`;
       // 這一輪可以改的範圍（來源與目的地都要）：主機處理共用範圍，各台處理自己的單機記憶
       const scopes = [...refsOfOp(o).map(scopeKeyOfRef), ...(o.op === 'move' ? [o.to] : []), ...(o.op === 'create' ? [o.scope === 'machine' ? `machine:${mid}` : o.scope] : [])];
-      const deny = scopes.find((k) => !k || !writable(k));
-      if (deny !== undefined) { bad = `這台電腦這一輪不處理「${deny ?? '不明的範圍'}」`; break; }
+      const di = scopes.findIndex((k) => !k || !writable(k));
+      if (di >= 0) { bad = `這台電腦這一輪不處理「${one(scopes[di] ?? '不明的範圍', 60)}」`; break; }
       if (typeof o.content === 'string') o.content = o.content.replace(/\r\n/g, '\n').replace(/\n*$/, '\n');
     }
     if (bad) { dropped.push({ title, why: bad }); continue; }
@@ -132,7 +140,7 @@ export function quoteFromUser(transcript, quote) {
   if (q.length < 10 || !transcript) return false;
   // 依段落標頭切開：【使用者 …】、【Claude】。工具呼叫（  → ）與工具結果（  ← ）沒有自己的標頭，
   // 會接在前一個段落後面（包括使用者的段落）：使用者說的話只到第一個工具行為止，之後的是工具結果，不算
-  const blocks = String(transcript).split(/^(?=【(?:使用者|Claude)[^】\n]*】\s*$)/m);
+  const blocks = String(transcript).split(/^(?=【(?:使用者|Claude)[^】\n]*】\s*$|# 對話紀錄 )/m);
   return blocks.some((b) => {
     if (!b.startsWith('【使用者')) return false;
     const lines = b.split('\n').slice(1);
@@ -151,7 +159,7 @@ async function review(call, candidates) {
     const r = await call('審核', { schema: REVIEW_SCHEMA, prompt: reviewPrompt(batch) });
     for (const c of batch) {
       const v = r.ok ? (r.data.verdicts ?? []).find((x) => String(x.id) === c.id) : null;
-      out.set(c.id, v ? { verdict: v.verdict === 'approve' ? 'approve' : 'reject', reason: String(v.reason ?? '').slice(0, 500), lostFacts: (v.lostFacts ?? []).map(String).slice(0, 10) }
+      out.set(c.id, v ? { verdict: v.verdict === 'approve' ? 'approve' : 'reject', reason: String(v.reason ?? '').slice(0, 500), lostFacts: (Array.isArray(v.lostFacts) ? v.lostFacts : v.lostFacts ? [v.lostFacts] : []).map(String).slice(0, 10) }
         : { verdict: 'reject', reason: r.ok ? '審核員沒有回覆這一項' : `審核失敗：${r.error?.message ?? ''}`.slice(0, 300) });
     }
     batch = [];
@@ -167,7 +175,7 @@ async function review(call, candidates) {
   return out;
 }
 
-const describeOps = (ops) => ops.map((o) => (o.op === 'move' ? `move ${o.ref} → ${o.to}` : o.op === 'merge' ? `merge ${o.refs?.join(' + ')} → ${o.into}` : o.op === 'create' ? `create ${o.scope}` : `${o.op} ${o.ref ?? ''}`)).join('；');
+const describeOps = (ops) => one(ops.map((o) => (o.op === 'move' ? `move ${o.ref} → ${o.to}` : o.op === 'merge' ? `merge ${o.refs?.join(' + ')} → ${o.into}` : o.op === 'create' ? `create ${o.scope}` : `${o.op} ${o.ref ?? ''}`)).join('；'), 600);
 
 /** 新內容（create 時從 content 的 name 推出 ref） */
 function afterOf(item, snapshot, mid) {
@@ -176,12 +184,12 @@ function afterOf(item, snapshot, mid) {
     if (o.op === 'write' || o.op === 'core') after.push({ ref: o.ref ?? CORE_REF, text: o.content });
     else if (o.op === 'merge') after.push({ ref: o.into, text: o.content });
     else if (o.op === 'create') {
-      const name = String(parseMemoryFile(o.content ?? '').data?.name ?? 'new');
+      const name = one(parseMemoryFile(o.content ?? '').data?.name ?? 'new', 80);
       const sc = String(o.scope ?? '');
       const dir = sc === 'global' ? 'global' : sc.startsWith('project:') ? `projects/${sc.slice(8)}/memory` : `machines/${mid}`;
       after.push({ ref: `${dir}/${name}.md`, text: o.content });
     } else if (o.op === 'remove') after.push({ ref: o.ref, text: null });
-    else if (o.op === 'move') after.push({ ref: `${o.to}：${o.ref}`, text: snapshot.get(o.ref)?.shown });
+    else if (o.op === 'move') after.push({ ref: one(`${o.to}：${o.ref}`, 200), text: snapshot.get(o.ref)?.shown });
   }
   return after;
 }
@@ -214,13 +222,14 @@ export async function screen(call, items, snapshot, { dream = null, paused = [],
       add(instructionFlags(o.content, prev));
     }
     it.flags = flags;
-    if (paused.includes(it.category)) { rejected.push({ ...brief(it), why: `「${it.category}」類的處理被你復原過多次，暫停中` }); continue; }
+    const pausedCat = categoriesOf(it, { dream: !!dream }).find((c) => paused.includes(c));
+    if (pausedCat) { rejected.push({ ...brief(it), why: `「${pausedCat}」類的處理被你復原過多次，暫停中` }); continue; }
     // 核心準則每次對話都會載入：一輪新增的內容有上限
-    const coreOp = it.ops.find((o) => o.op === 'core');
-    if (coreOp) {
+    for (const coreOp of it.ops.filter((o) => o.op === 'core')) {
       const added = addedLines(coreOp.content, shownOf(CORE_REF));
-      if (added.length > CORE_ADD_LINES || added.join('\n').length > CORE_ADD_CHARS) { rejected.push({ ...brief(it), why: `核心準則一輪最多新增 ${CORE_ADD_LINES} 行、${CORE_ADD_CHARS} 字（這次 ${added.length} 行）` }); continue; }
+      if (added.length > CORE_ADD_LINES || added.join('\n').length > CORE_ADD_CHARS) { it.coreTooBig = added.length; break; }
     }
+    if (it.coreTooBig !== undefined) { rejected.push({ ...brief(it), why: `核心準則一輪最多新增 ${CORE_ADD_LINES} 行、${CORE_ADD_CHARS} 字（這次 ${it.coreTooBig} 行）` }); continue; }
     if (dream) {
       // 對話回顧只能把記憶搬到全域、單機或這個專案
       if (it.ops.some((o) => o.op === 'move' && String(o.to).startsWith('project:') && o.to !== `project:${dream.pid}`)) { rejected.push({ ...brief(it), why: '對話回顧不能把記憶搬到其他專案' }); continue; }

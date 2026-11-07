@@ -216,7 +216,12 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       jobs.run('curate', 'manual');
       return { started: true };
     },
-    'POST /api/autopilot/resume': async ({ body }) => { await resumeCategory(eg, String(need(body.category, 'category'))); return autopilotStatus(eg); },
+    'POST /api/autopilot/resume': async ({ body }) => {
+      const cat = String(need(body.category, 'category'));
+      if (!(await autopilotStatus(eg)).paused.includes(cat)) throw new HttpError(400, 'E_INVALID', `「${cat.slice(0, 40)}」沒有暫停`).withEn(`"${cat.slice(0, 40)}" is not paused`);
+      await resumeCategory(eg, cat);
+      return autopilotStatus(eg);
+    },
     'POST /api/autopilot/undo': ({ body }) => undoRun(eg, need(body.id, 'id'), body.index === undefined || body.index === null ? undefined : Number(body.index)),
     'POST /api/tidy/delete': async ({ body }) => {
       // 1.4.0：還沒決定就刪掉的對話回顧記錄，那批對話改回「未回顧」，下次再分析

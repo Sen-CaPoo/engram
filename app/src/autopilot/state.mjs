@@ -192,7 +192,13 @@ export async function acquireRunLock(local, runId, now = Date.now()) {
       // 剛建立、還沒寫入內容（另一個程序正在寫）：不算殘留
       if (!cur && st && Date.now() - st.mtimeMs < 10_000) return null;
       // 鎖檔壞掉、持有的程序已結束、或超過 6 小時：視為殘留
-      if (!cur || !alive(cur.pid) || now - (Date.parse(cur.at) || 0) > 6 * 3600_000) { await fsp.rm(f, { force: true }).catch(() => {}); continue; }
+      if (!cur || !alive(cur.pid) || now - (Date.parse(cur.at) || 0) > 6 * 3600_000) {
+        // 先改名再刪：只有改名成功的程序接手，另一個同時判斷過期的程序改名會失敗（ENOENT）
+        const tmp = `${f}.stale-${process.pid}-${randomBytes(3).toString('hex')}`;
+        try { await fsp.rename(f, tmp); } catch { continue; }
+        await fsp.rm(tmp, { force: true }).catch(() => {});
+        continue;
+      }
       return null;
     }
   }

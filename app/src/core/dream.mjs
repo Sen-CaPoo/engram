@@ -122,6 +122,8 @@ function cleanUserText(t) {
   return String(t ?? '')
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
     .replace(/<(local-command-stdout|local-command-stderr)>[\s\S]*?<\/\1>/g, '')
+    // 1.5.0：背景工作的完成通知由 Claude Code 以使用者角色送出，不是使用者說的話
+    .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '')
     .trim();
 }
 
@@ -199,7 +201,8 @@ export async function renderTranscript(file, { roots, encToPid, after = 0 } = {}
     }
     if (o.cwd && !cwd) cwd = o.cwd;
     const content = o.message?.content;
-    if (o.type === 'user' && !o.isMeta) {
+    // 壓縮後的摘要（isCompactSummary）是 Claude Code 產生的，不是使用者說的話
+    if (o.type === 'user' && !o.isMeta && !o.isCompactSummary) {
       if (typeof content === 'string') {
         const t = cleanUserText(content);
         if (t) { flush(); cur.push(`【使用者${at ? ` ${hhmm(at)}` : ''}】\n${clip(t, LIMIT.user)}`); }
@@ -345,7 +348,7 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
   }
 
   // 1.5.0：保管區的值（自動駕駛從記憶移出來的金鑰）在匯出的文字裡一律遮蔽
-  const vault = await vaultValues(ctx.local).catch(() => []);
+  const vault = chosen.length ? await vaultValues(ctx.local).catch(() => []) : [];
   const sessions = [];
   const failed = [];
   const readRefs = new Set();
@@ -371,7 +374,7 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
         `- session：${t.sessionId}`,
         `- 時間：${r.startedAt ? hhmm(r.startedAt) : '?'} ～ ${r.endedAt ? hhmm(r.endedAt) : '?'}`,
         `- 資料夾：${r.cwd ?? t.cwd ?? '?'}`,
-        r.title ? `- 標題：${r.title}` : null,
+        r.title ? `- 標題：${String(r.title).replace(/\s+/g, ' ').slice(0, 200)}` : null,
         r.resumed ? '- 這是之前回顧過的對話接著聊的部分：只列出上次回顧之後的內容' : null,
         wroteBy.get(String(t.sessionId))?.length ? `- 這次對話寫下的記憶：${wroteBy.get(String(t.sessionId)).join('、')}` : null,
         '',

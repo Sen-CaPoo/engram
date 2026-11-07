@@ -47,6 +47,7 @@ export default {
   '已更新每月用量上限': 'Monthly usage cap updated',
   '有 {n} 類處理暫停中': ({ n }) => plural(n, '1 kind of handling is paused', '{n} kinds of handling are paused'),
   '恢復「{name}」': 'Resume "{name}"',
+  '撞名資料夾改名': 'Colliding folder rename',
   '已恢復「{name}」': 'Resumed "{name}"',
   '這些類別在 60 天內被你復原過 2 次以上，自動駕駛只會記錄建議、不會執行：{list}': 'You undid these more than once in the last 60 days, so autopilot only records its suggestions and does not carry them out: {list}',
   '自動駕駛已開啟': 'Autopilot is on',

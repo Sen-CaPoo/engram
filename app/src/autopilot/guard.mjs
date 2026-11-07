@@ -37,7 +37,8 @@ export function addedLines(next, prev = '') {
  */
 export function instructionFlags(next, prev = '') {
   const lines = addedLines(next, prev);
-  const text = [...lines, ...lines.slice(1).map((l, i) => `${lines[i]} ${l}`)].join('\n');
+  // 每一行、相鄰兩行接起來、以及全部接成一段：拆成好幾行也躲不過
+  const text = [...lines, ...lines.slice(1).map((l, i) => `${lines[i]} ${l}`), lines.join(' ')].join('\n');
   const out = [];
   for (const [re, why] of PATTERNS) if (re.test(text) && !out.includes(why)) out.push(why);
   return out;
@@ -95,6 +96,13 @@ export function categoryOf(item, { dream = false, scopeOfRef = () => null } = {}
   if (has('create')) return dream ? 'dream-create' : 'create';
   if (ops.length && ops.every((o) => o.op === 'verify')) return 'verify';
   return dream ? 'dream-update' : 'update';
+}
+
+/** 一個項目裡所有動作各自的類別（暫停判斷用：任何一個類別被暫停就整項不做） */
+export function categoriesOf(item, { dream = false } = {}) {
+  const out = new Set([categoryOf(item, { dream })]);
+  for (const o of item.ops ?? []) out.add(categoryOf({ ops: [o] }, { dream }));
+  return [...out];
 }
 
 /** 一個項目實際動到幾筆記憶（上限用）：每筆被修改、搬移、封存、合併的記憶與每筆新增各算一筆 */

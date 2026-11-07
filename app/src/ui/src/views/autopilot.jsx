@@ -19,7 +19,7 @@ const RUN_TONE = { running: 'brand live', done: 'ok', failed: 'danger', interrup
 const ACTION = { update: N_('改寫'), move: N_('搬移'), archive: N_('封存'), merge: N_('合併'), create: N_('新增'), split: N_('拆分'), promote: N_('升為全域'), verify: N_('確認仍正確'), keep: N_('保留') };
 const KIND = { card: N_('處理卡片'), rename: N_('資料夾改名'), conflict: N_('同步衝突'), vault: N_('金鑰移到保管區'), 'not-secret': N_('標記不是金鑰'), confirm: N_('代你確認'), revert: N_('退回'), dismiss: N_('不處理') };
 // 被復原次數統計用的類別（暫停與你復原過的項目）
-const CATEGORY = { ...ACTION, core: N_('核心準則'), 'dream-create': N_('對話回顧新增'), 'dream-update': N_('對話回顧改寫'), confirm: N_('代你確認'), revert: N_('退回'), vault: N_('金鑰移到保管區'), 'not-secret': N_('標記不是金鑰') };
+const CATEGORY = { ...ACTION, core: N_('核心準則'), 'dream-create': N_('對話回顧新增'), 'dream-update': N_('對話回顧改寫'), confirm: N_('代你確認'), revert: N_('退回'), vault: N_('金鑰移到保管區'), 'not-secret': N_('標記不是金鑰'), rename: N_('撞名資料夾改名') };
 const HOW = [N_('每天一次，電腦閒置時開始'), N_('AI 整理記憶、處理收件匣、回顧對話'), N_('每項變更先備份，再由審核員檢查'), N_('你在這裡看結果，逐項復原')];
 
 const categoryLabel = (c) => {
@@ -31,7 +31,7 @@ const categoryLabel = (c) => {
 const taskLabel = (k) => (TASK[k] ? t(TASK[k]) : k === 'run' ? t('這一輪') : String(k));
 const usd = (n) => (n > 0 && n < 0.01 ? '<0.01' : Number(n || 0).toFixed(2));
 // 與 app/src/autopilot/run.mjs 的 undoable 相同
-const undoable = (a) => a.status === 'done' && !a.undone && (a.kind === 'tidy' || a.undo?.length > 0 || (a.kind === 'rename' && !!a.renameId) || (a.kind === 'not-secret' && a.allowHashes?.length > 0));
+const undoable = (a) => a.status === 'done' && !a.undone && (a.kind === 'tidy' || a.undo?.length > 0 || (a.kind === 'rename' && !!a.renameId) || (a.kind === 'not-secret' && a.allowHashes?.length > 0) || (a.kind === 'vault' && a.vaultNames?.length > 0));
 const scopeOf = (x) => (x.scope ? parseScopeKey(x.scope) : x.pid ? { kind: 'project', pid: x.pid } : null);
 const whenText = (at) => new Date(at).toLocaleString(locale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
