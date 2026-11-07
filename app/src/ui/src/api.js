@@ -194,6 +194,7 @@ const httpApi = {
   autopilotRun: (id) => request('GET', `/api/autopilot/run${qs({ id })}`),
   autopilotStart: () => request('POST', '/api/autopilot/run'),
   autopilotUndo: (id, index) => request('POST', '/api/autopilot/undo', { id, index }),
+  autopilotResume: (category) => request('POST', '/api/autopilot/resume', { category }),
   agent: () => request('GET', '/api/agent'),
   runJob: (id) => request('POST', '/api/jobs/run', { id }),
   toggleJob: (id, enabled) => request('POST', '/api/jobs/toggle', { id, enabled }),

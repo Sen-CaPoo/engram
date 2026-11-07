@@ -75,5 +75,28 @@ export async function listSecrets(local) {
   return out;
 }
 
+/**
+ * 保管區裡所有值（解不開的略過）。對話回顧匯出對話文字時用來遮蔽：Claude 依記憶執行 engram secret get 之後，
+ * 值會以原樣出現在對話紀錄的工具結果裡，一般的金鑰偵測不一定認得出來（例如沒有前綴的短密碼）。
+ * 保管區是空的時候不會啟動 PowerShell。
+ */
+export async function vaultValues(local) {
+  const out = [];
+  for (const n of (await fsp.readdir(dirOf(local)).catch(() => [])).filter((x) => x.endsWith('.json'))) {
+    const e = await readEntry(local, n.slice(0, -5));
+    if (!e?.data) continue;
+    const value = await crypto.unprotect(e.data).catch(() => null);
+    if (typeof value === 'string' && value.length >= 4) out.push({ name: e.name, value });
+  }
+  return out.sort((a, b) => b.value.length - a.value.length);
+}
+
+/** 把文字裡出現的保管區值換成標記 */
+export function scrubVault(text, values) {
+  let t = String(text ?? '');
+  for (const v of values) if (t.includes(v.value)) t = t.split(v.value).join(`‹保管區：${v.name}›`);
+  return t;
+}
+
 /** 記憶裡取代金鑰值的文字 */
 export const placeholder = (name) => `‹存放在 Engram 本機保管區：${name}（engram secret get ${name}）›`;

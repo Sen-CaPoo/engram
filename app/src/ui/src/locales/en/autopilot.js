@@ -46,6 +46,8 @@ export default {
   '已開始執行自動駕駛': 'Autopilot run started',
   '已更新每月用量上限': 'Monthly usage cap updated',
   '有 {n} 類處理暫停中': ({ n }) => plural(n, '1 kind of handling is paused', '{n} kinds of handling are paused'),
+  '恢復「{name}」': 'Resume "{name}"',
+  '已恢復「{name}」': 'Resumed "{name}"',
   '這些類別在 60 天內被你復原過 2 次以上，自動駕駛只會記錄建議、不會執行：{list}': 'You undid these more than once in the last 60 days, so autopilot only records its suggestions and does not carry them out: {list}',
   '自動駕駛已開啟': 'Autopilot is on',
   '開啟後，Engram 會在電腦閒置時，每天讓 AI 自動整理記憶、處理收件匣、回顧對話，不會逐項問你。每一項變更都有備份，可以在這一頁復原。': 'When turned on, Engram lets AI tidy your memories, handle the inbox, and review your conversations once a day while your computer is idle, without asking you about each item. Every change is backed up and can be undone on this page.',

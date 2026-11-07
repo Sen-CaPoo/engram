@@ -46,11 +46,15 @@ export async function readMachineState(vault, mid) {
 /** 改這台電腦的狀態檔並 commit（action autopilot）；回傳新狀態 */
 export async function updateMachineState(eg, fn, subject = 'autopilot state') {
   const mid = eg.machine.id;
-  const cur = await readMachineState(eg.paths.vault, mid);
-  const next = normalize((await fn(cur)) ?? cur);
-  await writeJsonAtomic(stateFile(eg.paths.vault, mid), next);
-  await commitPaths(eg.paths.vault, [stateRel(mid)], subject, { action: 'autopilot', mid }).catch(() => null);
-  return next;
+  const work = async () => {
+    const cur = await readMachineState(eg.paths.vault, mid);
+    const next = normalize((await fn(cur)) ?? cur);
+    await writeJsonAtomic(stateFile(eg.paths.vault, mid), next);
+    await commitPaths(eg.paths.vault, [stateRel(mid)], subject, { action: 'autopilot', mid }).catch(() => null);
+    return next;
+  };
+  // 和同步、自動存檔共用 vault 的寫入鎖（同時 git add／commit 會撞到 index.lock）
+  return typeof eg.locked === 'function' ? eg.locked('autopilot.state', work) : work();
 }
 
 /** 所有電腦的狀態與上線時間 */
@@ -82,9 +86,9 @@ export async function setEnabledState(eg, on, now = Date.now()) {
 }
 
 /** 使用者復原了自動駕駛的一項：記成回饋（同步，兩台共用），之後的判斷會參考 */
-export async function recordUndoFeedback(eg, { category, ref = null, title = '', reason = '' }, now = Date.now()) {
+export async function recordUndoFeedback(eg, { category, ref = null, title = '', reason = '', run = null }, now = Date.now()) {
   return updateMachineState(eg, (s) => {
-    s.feedback.push({ at: new Date(now).toISOString(), category: String(category).slice(0, 40), ref: ref ? String(ref).slice(0, 200) : null, title: String(title).slice(0, 200), reason: String(reason).slice(0, 300) });
+    s.feedback.push({ at: new Date(now).toISOString(), category: String(category).slice(0, 40), ref: ref ? String(ref).slice(0, 200) : null, title: String(title).slice(0, 200), reason: String(reason).slice(0, 300), ...(run ? { run: String(run).slice(0, 40) } : {}) });
     s.feedback = s.feedback.slice(-FEEDBACK_MAX);
     return s;
   }, `autopilot feedback ${category}`);
@@ -97,11 +101,31 @@ export async function allFeedback(vault, now = Date.now()) {
   return list.filter((f) => now - (Date.parse(f.at) || 0) <= 365 * DAY).sort((a, b) => String(a.at).localeCompare(String(b.at)));
 }
 
-/** 被復原太多次而暫停的類別 */
+/**
+ * 被復原太多次而暫停的類別：60 天內被復原 2 次以上（同一輪的復原只算一次）。
+ * 使用者按「恢復」會記一筆 resume，之前的復原就不再計入。
+ */
 export function pausedCategories(feedback, now = Date.now()) {
-  const n = new Map();
-  for (const f of feedback) if (now - (Date.parse(f.at) || 0) <= PAUSE_WINDOW_MS) n.set(f.category, (n.get(f.category) ?? 0) + 1);
-  return [...n].filter(([, c]) => c >= PAUSE_AFTER_UNDOS).map(([k]) => k).sort();
+  const resumedAt = new Map();
+  for (const f of feedback) if (f.resume) resumedAt.set(f.category, Math.max(resumedAt.get(f.category) ?? 0, Date.parse(f.at) || 0));
+  const runs = new Map();
+  for (const f of feedback) {
+    if (f.resume) continue;
+    const t = Date.parse(f.at) || 0;
+    if (now - t > PAUSE_WINDOW_MS || t <= (resumedAt.get(f.category) ?? 0)) continue;
+    if (!runs.has(f.category)) runs.set(f.category, new Set());
+    runs.get(f.category).add(f.run ?? f.at);
+  }
+  return [...runs].filter(([, s]) => s.size >= PAUSE_AFTER_UNDOS).map(([k]) => k).sort();
+}
+
+/** 恢復一個暫停中的類別 */
+export async function resumeCategory(eg, category, now = Date.now()) {
+  return updateMachineState(eg, (s) => {
+    s.feedback.push({ at: new Date(now).toISOString(), category: String(category).slice(0, 40), resume: true, title: '使用者恢復', reason: '' });
+    s.feedback = s.feedback.slice(-FEEDBACK_MAX);
+    return s;
+  }, `autopilot resume ${category}`);
 }
 
 // ───────── 本機執行紀錄 ─────────
@@ -159,10 +183,14 @@ export async function acquireRunLock(local, runId, now = Date.now()) {
       const fh = await fsp.open(f, 'wx');
       await fh.writeFile(JSON.stringify({ pid: process.pid, run: runId, at: new Date(now).toISOString() }));
       await fh.close();
-      return { release: () => fsp.rm(f, { force: true }).catch(() => {}) };
+      // 釋放時只刪自己的鎖（逾時被接手後，不能刪掉別人的）
+      return { release: async () => { if ((await readJson(f, null))?.run === runId) await fsp.rm(f, { force: true }).catch(() => {}); } };
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
       const cur = await readJson(f, null);
+      const st = await fsp.stat(f).catch(() => null);
+      // 剛建立、還沒寫入內容（另一個程序正在寫）：不算殘留
+      if (!cur && st && Date.now() - st.mtimeMs < 10_000) return null;
       // 鎖檔壞掉、持有的程序已結束、或超過 6 小時：視為殘留
       if (!cur || !alive(cur.pid) || now - (Date.parse(cur.at) || 0) > 6 * 3600_000) { await fsp.rm(f, { force: true }).catch(() => {}); continue; }
       return null;

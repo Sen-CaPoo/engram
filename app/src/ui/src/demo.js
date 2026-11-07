@@ -691,6 +691,11 @@ export const demoApi = {
     await wait(90);
     return clone(apById(id));
   },
+  async autopilotResume(category) {
+    await wait(80);
+    apFeedback.push({ at: new Date().toISOString(), category, resume: true, title: '', reason: '', mid: self.id });
+    return this.autopilot();
+  },
   async autopilotStart() {
     await wait(120);
     if (settings.autopilot !== 'on') throw Object.assign(new Error('自動駕駛目前是關閉的'), { code: 'E_INVALID', en: { message: 'Autopilot is turned off' } });
@@ -729,8 +734,10 @@ const apById = (id) => {
 };
 // 60 天內被復原 2 次以上的類別（與 app/src/autopilot/state.mjs 的 pausedCategories 相同）
 function apPaused() {
+  const resumed = new Map();
+  for (const f of apFeedback) if (f.resume) resumed.set(f.category, Math.max(resumed.get(f.category) ?? 0, Date.parse(f.at)));
   const n = new Map();
-  for (const f of apFeedback) if (Date.now() - Date.parse(f.at) <= 60 * 864e5) n.set(f.category, (n.get(f.category) ?? 0) + 1);
+  for (const f of apFeedback) if (!f.resume && Date.now() - Date.parse(f.at) <= 60 * 864e5 && Date.parse(f.at) > (resumed.get(f.category) ?? 0)) n.set(f.category, (n.get(f.category) ?? 0) + 1);
   return [...n].filter(([, c]) => c >= 2).map(([k]) => k).sort();
 }
 function markUndone(a) {

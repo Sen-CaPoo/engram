@@ -8,8 +8,9 @@ const BATCH_CHARS = 100_000;
 const shaOf = (r) => r?.undo?.sha ?? r?.commit?.sha ?? null;
 
 export async function auditReviews(ctx) {
-  const { eg, call, run, findings } = ctx;
+  const { eg, call, run, findings, paused = [] } = ctx;
   if (!findings.some((f) => f.code === 'H23') || typeof eg.review?.list !== 'function') return;
+  if (paused.includes('confirm') && paused.includes('revert')) { run.notes.push({ task: 'review', note: '「代你確認」與「退回」都被你復原過多次，暫停中' }); return; }
   const list = await eg.review.list().catch(() => []);
   if (!list.length) return;
   for (const it of list) it.flags = instructionFlags(it.current, it.previous ?? '');
@@ -28,7 +29,9 @@ export async function auditReviews(ctx) {
     if (!r.ok) { run.skipped.push({ task: 'review', why: r.error?.message ?? '判斷失敗' }); continue; }
     const byRef = new Map((r.data.decisions ?? []).map((d) => [String(d.ref), d]));
     // 有可疑處卻判斷確認：再問審核員
-    const doubtful = batch.filter((it) => it.flags.length && byRef.get(it.ref)?.verdict === 'confirm');
+    // 核心準則每次對話都會載入：確認一律要審核員也同意
+    const needsSecond = (it) => it.flags.length > 0 || it.ref.startsWith('core/');
+    const doubtful = batch.filter((it) => needsSecond(it) && byRef.get(it.ref)?.verdict === 'confirm');
     const second = new Map();
     if (doubtful.length) {
       const rv = await call('待你確認審核', {
@@ -42,7 +45,9 @@ export async function auditReviews(ctx) {
       if (!d) continue;
       const reason = String(d.reason ?? '').slice(0, 500);
       let verdict = d.verdict === 'revert' ? 'revert' : 'confirm';
-      if (verdict === 'confirm' && it.flags.length && second.get(it.ref)?.verdict !== 'approve') verdict = 'revert';
+      if (verdict === 'confirm' && needsSecond(it) && second.get(it.ref)?.verdict !== 'approve') verdict = it.flags.length ? 'revert' : 'skip';
+      if (verdict === 'skip') { run.rejected.push({ task: 'review', title: it.ref, why: `審核員沒有同意確認核心準則的修改：${second.get(it.ref)?.reason ?? '審核失敗'}（留在待你確認）` }); continue; }
+      if (paused.includes(verdict)) { run.rejected.push({ task: 'review', title: it.ref, why: `「${verdict === 'confirm' ? '代你確認' : '退回'}」被你復原過多次，暫停中` }); continue; }
       try {
         if (verdict === 'confirm') {
           const res = await eg.review.confirm([{ ref: it.ref, sha: it.sha }]);

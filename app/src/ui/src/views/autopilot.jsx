@@ -30,7 +30,8 @@ const categoryLabel = (c) => {
 };
 const taskLabel = (k) => (TASK[k] ? t(TASK[k]) : k === 'run' ? t('這一輪') : String(k));
 const usd = (n) => (n > 0 && n < 0.01 ? '<0.01' : Number(n || 0).toFixed(2));
-const undoable = (a) => a.status === 'done' && !a.undone && (a.kind === 'tidy' || a.undo?.length > 0);
+// 與 app/src/autopilot/run.mjs 的 undoable 相同
+const undoable = (a) => a.status === 'done' && !a.undone && (a.kind === 'tidy' || a.undo?.length > 0 || (a.kind === 'rename' && !!a.renameId) || (a.kind === 'not-secret' && a.allowHashes?.length > 0));
 const scopeOf = (x) => (x.scope ? parseScopeKey(x.scope) : x.pid ? { kind: 'project', pid: x.pid } : null);
 const whenText = (at) => new Date(at).toLocaleString(locale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -129,6 +130,9 @@ export function Autopilot({ params, go }) {
       {d.paused.length > 0 && (
         <Banner tone="warn" title={t('有 {n} 類處理暫停中', { n: d.paused.length })}>
           {t('這些類別在 60 天內被你復原過 2 次以上，自動駕駛只會記錄建議、不會執行：{list}', { list: d.paused.map((c, i) => <span key={c}>{i > 0 && t('、')}<b>{categoryLabel(c)}</b></span>) })}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            {d.paused.map((c) => <button key={c} class="btn sm" onClick={() => act(() => api.autopilotResume(c), t('已恢復「{name}」', { name: categoryLabel(c) }))}>{t('恢復「{name}」', { name: categoryLabel(c) })}</button>)}
+          </div>
         </Banner>
       )}
 

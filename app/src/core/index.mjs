@@ -199,6 +199,8 @@ export async function open(opts = {}) {
   const eg = {
     version: ENGINE_VERSION,
     machine: machineInfo,
+    /** vault 的寫入鎖（1.5.0：自動駕駛寫自己的狀態檔並 commit 時用，避免和同步、自動存檔同時動 git） */
+    locked: (op, fn, o) => ctx.locked(op, fn, o),
 
     /**
      * 每台電腦各自的引擎設定（local/settings.json）。bindAuto：'confident'（預設）｜'ask'｜'off'（40 號 §08）。

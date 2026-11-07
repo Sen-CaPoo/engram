@@ -12,7 +12,9 @@ import { runBudget } from './budget.mjs';
 import { changeCap } from './guard.mjs';
 import { createClaudeJudge } from './llm.mjs';
 import { createCaller } from './pipeline.mjs';
-import { acquireRunLock, allFeedback, electHost, listRuns, newRunId, pausedCategories, pruneRuns, readMachineState, readRun, recordUndoFeedback, updateMachineState, writeRun } from './state.mjs';
+import { acquireRunLock, alive, allFeedback, electHost, listRuns, newRunId, pausedCategories, pruneRuns, readMachineState, readRun, recordUndoFeedback, resumeCategory, updateMachineState, writeRun } from './state.mjs';
+
+export { resumeCategory };
 import { judgedCards, ruleCards } from './tasks/cards.mjs';
 import { resolveConflicts } from './tasks/conflicts.mjs';
 import { curateScope, planScopes } from './tasks/curate.mjs';
@@ -56,6 +58,8 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
   const local = eg.paths.local;
   const settings = await eg.settings.get();
   if (settings.autopilot !== 'on' && !force) return { ok: true, skipped: 'off' };
+  // 使用者在設定暫停了 Engram 的自動化：自動駕駛也不跑
+  if (!force && ((await readJson(path.join(local, 'paused.json'), null)) ?? {}).user) return { ok: true, skipped: 'paused' };
   const id = newRunId(new Date(now()));
   const lock = await acquireRunLock(local, id, now());
   if (!lock) return { ok: false, skipped: 'busy' };
@@ -89,7 +93,7 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
     const paused = pausedCategories(feedback, now());
     if (paused.length) run.notes.push({ task: 'run', note: `暫停中的類別（被你復原過多次）：${paused.map(categoryLabel).join('、')}` });
     const memCount = (await eg.memories.list()).length;
-    const ctx = { eg, call, run, mid: eg.machine.id, isHost, feedback, paused, cap: { left: changeCap(memCount) }, workDir, log, now: now(), findings: [] };
+    const ctx = { eg, call, run, mid: eg.machine.id, isHost, feedback, paused, cap: { left: changeCap(memCount) }, workDir, log, now: now(), findings: [], save };
     const refresh = async () => { ctx.findings = (await eg.health().catch(() => [])) ?? []; };
     const stopped = () => !!call.state.stopped || signal?.aborted;
     const step = async (name, fn) => {
@@ -158,11 +162,14 @@ async function digest(eg, notifier, now) {
   if (!done.length) return;
   const n = (t) => done.filter((a) => a.task === t).length;
   const parts = [['整理', n('curate')], ['對話回顧', n('dream')], ['收件匣', n('cards') + n('review')], ['衝突', n('conflicts')], ['金鑰', n('secrets')]].filter(([, k]) => k).map(([l, k]) => `${l} ${k}`);
-  notifier.notify({ key: `autopilot-digest:${new Date(now).toISOString().slice(0, 10)}`, title: 'Engram 憶跡・自動駕駛', body: `這週自動處理了 ${done.length} 項（${parts.join('、')}），全部可以在「自動駕駛」頁復原。`, page: 'autopilot' });
+  notifier.notify({ key: `autopilot-digest:${new Date(now).toISOString().slice(0, 10)}`, title: 'Engram 憶跡・自動駕駛', body: `這週自動處理了 ${done.length} 項（${parts.join('、')}），每一項的理由都在「自動駕駛」頁，大部分可以在那裡復原。`, page: 'autopilot' });
   await writeJsonAtomic(file, { at: new Date(now).toISOString() });
 }
 
 // ───────── 復原 ─────────
+
+/** 這一項能不能從自動駕駛頁復原 */
+export const undoable = (a) => a?.status === 'done' && !a.undone && (a.undo?.length > 0 || a.kind === 'tidy' || (a.kind === 'rename' && !!a.renameId) || (a.kind === 'not-secret' && a.allowHashes?.length > 0));
 
 /**
  * 復原一輪裡的一項（index）或整輪（index 省略，依相反順序）。被復原的記成回饋，之後的判斷會避開；
@@ -172,20 +179,31 @@ export async function undoRun(eg, runId, index) {
   const local = eg.paths.local;
   const run = await readRun(local, runId);
   if (!run) throw Object.assign(new Error(`找不到自動駕駛的執行紀錄：${runId}`), { code: 'E_NOT_FOUND' });
+  if (run.status === 'running' && run.pid && alive(run.pid)) throw Object.assign(new Error('這一輪還在執行，等它完成再復原'), { code: 'E_LOCKED' });
+  const noted = new Set();
   const targets = index === undefined ? run.actions.map((a, i) => i).reverse() : [Number(index)];
   const results = [];
   for (const i of targets) {
     const a = run.actions[i];
-    if (!a || a.status !== 'done' || a.undone || !(a.undo?.length || a.kind === 'tidy')) { if (index !== undefined) results.push({ index: i, ok: false, message: '這一項沒有可以復原的變更' }); continue; }
+    if (!a || a.status !== 'done' || a.undone || !undoable(a)) { if (index !== undefined) results.push({ index: i, ok: false, message: '這一項沒有可以復原的變更' }); continue; }
     try {
-      if (a.kind === 'tidy') await undoItem(eg, a.record, a.item);
+      if (a.kind === 'tidy') {
+        try { await undoItem(eg, a.record, a.item); } catch (err) {
+          // 整理記錄被刪掉了：改用執行紀錄裡的版本復原
+          if (err?.code !== 'E_NOT_FOUND' || !a.undo?.length) throw err;
+          for (const sha of [...a.undo].reverse()) await eg.undo(sha);
+        }
+      } else if (a.kind === 'rename' && a.renameId) await eg.collisions.undo(a.renameId);
+      else if (a.kind === 'not-secret' && a.allowHashes?.length) { for (const h of a.allowHashes) await eg.secrets.removeAllowed(h).catch((err) => { if (err?.code !== 'E_NOT_FOUND') throw err; }); }
       else for (const sha of [...a.undo].reverse()) await eg.undo(sha);
       a.undone = new Date().toISOString();
       results.push({ index: i, ok: true });
-      await recordUndoFeedback(eg, { category: a.category ?? a.kind, ref: a.refs?.[0] ?? null, title: a.title, reason: a.reason }).catch(() => {});
+      // 回饋：整輪復原時每個類別只記一筆（一次整輪復原不該就把整個類別暫停）
+      const cat = a.category ?? a.kind;
+      if (!noted.has(cat)) { noted.add(cat); await recordUndoFeedback(eg, { category: cat, ref: a.refs?.[0] ?? null, title: a.title, reason: a.reason, run: runId }).catch(() => {}); }
     } catch (err) {
+      // 失敗的記下來繼續做其他項（例如那一項已經在別處復原過、或之後又被修改）
       results.push({ index: i, ok: false, message: String(err?.message ?? err).slice(0, 300) });
-      if (index === undefined) break; // 整輪復原：中間失敗就停，避免後面的復原蓋掉前面的狀態
     }
   }
   await writeRun(local, run);
@@ -201,7 +219,7 @@ export async function noteTidyUndo(eg, recordId, itemId) {
   if (!run || !a || a.undone) return;
   a.undone = new Date().toISOString();
   await writeRun(eg.paths.local, run);
-  await recordUndoFeedback(eg, { category: a.category ?? 'update', ref: a.refs?.[0] ?? null, title: a.title, reason: a.reason }).catch(() => {});
+  await recordUndoFeedback(eg, { category: a.category ?? 'update', ref: a.refs?.[0] ?? null, title: a.title, reason: a.reason, run: rec.autopilot.run }).catch(() => {});
 }
 
 /** 狀態（介面、CLI）：開關、主機、本月用量、上次與最近的執行 */

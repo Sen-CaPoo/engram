@@ -2,7 +2,7 @@
 name: autopilot
 description: Engram 自動駕駛：查看狀態、開啟或關閉、立即執行一輪、看某一輪做了什麼、復原。開啟後 AI 會每天自主整理記憶、處理收件匣與回顧對話，不需要使用者逐項確認。使用者說「開啟自動駕駛」「自動駕駛做了什麼」「復原自動駕駛」，或輸入 /engram:autopilot 時使用。
 argument-hint: "[開啟 | 關閉 | 執行 | 紀錄 <執行編號> | 復原 <執行編號> [<項目編號>]]"
-allowed-tools: Bash(engram autopilot *) Bash(engram status) PowerShell(engram autopilot *) PowerShell(engram status)
+allowed-tools: Bash(engram autopilot status) Bash(engram autopilot runs) Bash(engram autopilot on) Bash(engram autopilot off) Bash(engram autopilot run) Bash(engram autopilot show *) Bash(engram autopilot undo *) Bash(engram status) PowerShell(engram autopilot status) PowerShell(engram autopilot runs) PowerShell(engram autopilot on) PowerShell(engram autopilot off) PowerShell(engram autopilot run) PowerShell(engram autopilot show *) PowerShell(engram autopilot undo *) PowerShell(engram status)
 ---
 
 # Engram 自動駕駛

@@ -25,7 +25,9 @@ export async function resolveConflicts(ctx) {
   if (!safe.length) return;
   const r = await call('同步衝突', { schema: CONFLICT_SCHEMA, prompt: conflictPrompt({ conflicts: safe }) });
   if (!r.ok) { run.skipped.push({ task: 'conflicts', why: r.error?.message ?? '判斷失敗' }); return; }
-  const decisions = (r.data.decisions ?? []).filter((d) => safe.some((c) => c.id === String(d.id)));
+  const seenIds = new Set();
+  const decisions = (r.data.decisions ?? []).filter((d) => safe.some((c) => c.id === String(d.id)) && !seenIds.has(String(d.id)) && seenIds.add(String(d.id)))
+    .map((d) => ((ctx.paused ?? []).includes(`conflict-${d.choice}`) ? { ...d, choice: 'both', reason: `「${d.choice}」被你復原過多次，暫停中：兩個版本都留下` } : d));
   // 會捨棄內容的選擇送審
   const lossy = decisions.filter((d) => d.choice !== 'both');
   const verdict = new Map();
@@ -62,7 +64,7 @@ function validMemory(text, ref) {
 async function resolve(ctx, c, choice, body, reason, review = null) {
   const { eg, run } = ctx;
   try {
-    const res = await eg.conflicts.resolve(c.id, { choice, ...(body !== null ? { body } : {}) });
+    const res = await eg.conflicts.resolve(c.id, { choice, reviewed: false, ...(body !== null ? { body } : {}) });
     run.actions.push({ task: 'conflicts', kind: 'conflict', card: c.id, code: 'H15', refs: [c.ref, res?.ref].filter(Boolean), title: `處理衝突：${c.ref ?? c.id}（${{ ours: '保留這台的版本', theirs: '改用對方的版本', both: '兩個版本都留下', manual: '合併兩邊' }[choice]}）`, reason: String(reason).slice(0, 500), category: `conflict-${choice}`, status: 'done', undo: [shaOf(res)].filter(Boolean), ...(review ? { review: { verdict: review.verdict, reason: String(review.reason ?? '').slice(0, 300) } } : {}) });
   } catch (err) {
     run.actions.push({ task: 'conflicts', kind: 'conflict', card: c.id, code: 'H15', title: `處理衝突：${c.ref ?? c.id}`, reason: '', status: 'failed', undo: [], message: String(err?.message ?? err).slice(0, 300) });

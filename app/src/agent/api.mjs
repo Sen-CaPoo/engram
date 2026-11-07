@@ -8,7 +8,7 @@ import { claudeHome as defaultClaudeHome } from '../cli/paths.mjs';
 import { buildCoreChain } from './corechain.mjs';
 import { claudePluginStatus } from './plugin.mjs';
 import { undoItem } from '../tidy/apply.mjs';
-import { autopilotStatus, noteTidyUndo, undoRun } from '../autopilot/run.mjs';
+import { autopilotStatus, noteTidyUndo, resumeCategory, undoRun } from '../autopilot/run.mjs';
 import { readRun } from '../autopilot/state.mjs';
 import { deleteRecord, listRecords, markReady, readRecord, setDecisions } from '../tidy/store.mjs';
 import { recordView, tidySummary } from '../tidy/view.mjs';
@@ -216,6 +216,7 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       jobs.run('curate', 'manual');
       return { started: true };
     },
+    'POST /api/autopilot/resume': async ({ body }) => { await resumeCategory(eg, String(need(body.category, 'category'))); return autopilotStatus(eg); },
     'POST /api/autopilot/undo': ({ body }) => undoRun(eg, need(body.id, 'id'), body.index === undefined || body.index === null ? undefined : Number(body.index)),
     'POST /api/tidy/delete': async ({ body }) => {
       // 1.4.0：還沒決定就刪掉的對話回顧記錄，那批對話改回「未回顧」，下次再分析

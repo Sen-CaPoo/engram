@@ -4,7 +4,7 @@ import { isFresh, pingAgent, readHeartbeat, requestAgent } from '../../agent/hea
 import { CliError } from '../errors.mjs';
 import { localPaths } from '../paths.mjs';
 import { localTime } from '../fsutil.mjs';
-import { autopilotStatus, categoryLabel, runAutopilot, summarize, undoRun } from '../../autopilot/run.mjs';
+import { autopilotStatus, categoryLabel, resumeCategory, runAutopilot, summarize, undoRun } from '../../autopilot/run.mjs';
 import { readRun, setEnabledState } from '../../autopilot/state.mjs';
 import { getSecret, listSecrets } from '../../core/secretvault.mjs';
 
@@ -94,6 +94,14 @@ export async function cmdAutopilot(ctx) {
       ...(run.skipped.length ? ['略過：', ...run.skipped.map((x) => `  - ${TASK[x.task] ?? x.task}：${x.why}`)] : []),
       run.actions.some((a) => a.status === 'done' && !a.undone) ? `復原一項：engram autopilot undo ${run.id} <編號>；整輪：engram autopilot undo ${run.id}` : null,
     ].filter(Boolean));
+  }
+
+  if (sub === 'resume') {
+    const st = await autopilotStatus(eg);
+    const cat = rest[0];
+    if (!cat || !st.paused.includes(cat)) throw new CliError('E_USAGE', cat ? `「${cat}」沒有暫停` : '要指定恢復哪個類別', st.paused.length ? `暫停中的類別：${st.paused.join('、')}` : '目前沒有暫停的類別');
+    await resumeCategory(eg, cat);
+    return ctx.out.result({ ok: true, resumed: cat }, [`已恢復「${categoryLabel(cat)}」：之後的自動駕駛會照常處理這一類`]);
   }
 
   if (sub === 'undo') {

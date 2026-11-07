@@ -93,7 +93,7 @@ export async function curateScope(ctx, sc) {
   }
   if (sc.key !== 'core' && !memories.some((m) => m.full !== undefined)) { await markScope(eg.paths.local, sc.key, sc.fp, ctx.now); return; }
   const projects = (await eg.projects.list({ includeArchived: false })).map((p) => ({ pid: p.pid, name: p.name }));
-  const machines = (await eg.status()).machines?.map?.((m) => ({ mid: m.id, label: m.label, self: m.id === mid })) ?? [{ mid, label: mid, self: true }];
+  const machines = (await eg.status()).devices?.map?.((m) => ({ mid: m.id, label: m.label, self: m.id === mid })) ?? [{ mid, label: mid, self: true }];
   const goal = sc.cards.some((c) => c.code === 'H16') ? '每次對話都會載入的內容過長，請精簡核心準則（保留所有仍然有效的規則）'
     : sc.cards.some((c) => c.code === 'H01') ? '這個專案的記憶索引超過載入上限，請合併重複、封存過時、精簡過長的記憶' : null;
   const prompt = curatePrompt({
@@ -103,18 +103,18 @@ export async function curateScope(ctx, sc) {
   });
   const r = await call(`整理 ${sc.key}`, { schema: CURATE_SCHEMA, prompt });
   if (!r.ok) { run.skipped.push({ task: 'curate', scope: sc.key, why: r.error?.message ?? 'LLM 失敗' }); return; }
-  const { items, dropped } = normalizeItems(r.data.items, snapshot, { allowCore: sc.key === 'core', mid });
+  const writable = (k) => (ctx.isHost ? !String(k).startsWith('machine:') || k === `machine:${mid}` : k === `machine:${mid}`);
+  const { items, dropped } = normalizeItems(r.data.items, snapshot, { allowCore: sc.key === 'core' && ctx.isHost, mid, writable });
   for (const d of dropped) run.rejected.push({ task: 'curate', scope: sc.key, title: d.title, why: d.why });
   fillBases(items, snapshot);
   const { approved, rejected } = await screen(call, items, snapshot, { paused, cap: cap.left, mid });
   for (const x of rejected) run.rejected.push({ task: 'curate', scope: sc.key, ...x });
   if (approved.length) {
-    const res = await commitItems(eg, { items: approved, scopeKey: sc.key === 'core' ? 'core' : sc.key, summary: String(r.data.summary ?? ''), dir: path.join(ctx.workDir, `curate-${sc.key.replace(/[^a-z0-9-]/gi, '_')}`), task: 'curate', runId: run.id });
+    const res = await commitItems(eg, { items: approved, scopeKey: sc.key === 'core' ? 'core' : sc.key, summary: String(r.data.summary ?? ''), dir: path.join(ctx.workDir, `curate-${sc.key.replace(/[^a-z0-9-]/gi, '_')}`), task: 'curate', runId: run.id, onRecord: async (id) => { run.records.push(id); await ctx.save?.(); } });
     for (const x of res.invalid) run.rejected.push({ task: 'curate', scope: sc.key, ...x });
-    if (res.record) run.records.push(res.record);
     for (const x of res.results) {
       run.actions.push({ task: 'curate', scope: sc.key, kind: 'tidy', ...x });
-      if (x.status === 'done') cap.left--;
+      if (x.status === 'done') cap.left -= x.cost ?? 1;
     }
   }
   // LLM 判斷不必處理的卡片：忽略 90 天（之後內容變了會再判斷一次）
@@ -124,5 +124,5 @@ export async function curateScope(ctx, sc) {
     await eg.findings.dismiss(f.id, { until: new Date(ctx.now + 90 * DAY).toISOString() }).catch(() => {});
     run.actions.push({ task: 'curate', scope: sc.key, kind: 'dismiss', card: f.id, code: f.code, title: `不處理：${f.title}`, reason: String(d.reason ?? '').slice(0, 500), status: 'done', undo: [] });
   }
-  await markScope(eg.paths.local, sc.key, sc.fp, ctx.now);
+  if (!rejected.some((x) => x.deferred)) await markScope(eg.paths.local, sc.key, sc.fp, ctx.now);
 }

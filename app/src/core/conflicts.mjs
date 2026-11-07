@@ -67,7 +67,7 @@ export async function listConflicts(vaultDir) {
 /**
  * 處理衝突。choice：'ours' 保留目前檔案；'theirs' 改用對方版本；'both' 對方版本另存一筆；'manual' 寫入 body。
  */
-export async function resolveConflict(ctx, id, { choice, body } = {}) {
+export async function resolveConflict(ctx, id, { choice, body, reviewed = true } = {}) {
   invariant(['ours', 'theirs', 'both', 'manual'].includes(choice), 'choice 必須是 ours、theirs、both 或 manual', undefined, { message: 'choice must be ours, theirs, both, or manual' });
   // R-45：id 會用來組路徑並遞迴刪除，必須是 cf_ 開頭的單一資料夾名稱，而且就在 conflicts/ 底下
   invariant(typeof id === 'string' && /^cf_[0-9A-Za-z_]+$/.test(id), '不合法的衝突 id', undefined, { message: 'Invalid conflict id' });
@@ -112,9 +112,12 @@ export async function resolveConflict(ctx, id, { choice, body } = {}) {
       const scope = scopeOfRef(ref);
       if (scope) touched.push(...await refreshIndex(ctx, scope));
     }
-    // 1.4.0：解衝突是使用者看過兩個版本後做的決定，結果記為確認過
-    const { markReviewed } = await import('./review.mjs');
-    touched.push(...await markReviewed(ctx, touched.filter((r) => !/(INDEX|MEMORY)\.md$/i.test(r))));
+    // 1.4.0：解衝突是使用者看過兩個版本後做的決定，結果記為確認過。
+    // 1.5.0：自動駕駛處理的（reviewed: false）不算，留給下一輪的「待你確認」把關
+    if (reviewed) {
+      const { markReviewed } = await import('./review.mjs');
+      touched.push(...await markReviewed(ctx, touched.filter((r) => !/(INDEX|MEMORY)\.md$/i.test(r))));
+    }
     const commit = await commitPaths(ctx.vault, touched, `resolve ${id} (${choice})`, { action: 'resolve', refs: ref ? [ref] : [], mid: ctx.mid });
     return { ok: true, ref: resultRef, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
   });

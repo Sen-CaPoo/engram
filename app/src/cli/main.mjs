@@ -62,9 +62,9 @@ export const COMMANDS = {
   },
   autopilot: {
     run: cmdAutopilot,
-    args: { '': 0, status: 0, on: 0, off: 0, run: 0, runs: 0, show: 1, undo: 2, budget: 1 },
+    args: { '': 0, status: 0, on: 0, off: 0, run: 0, runs: 0, show: 1, undo: 2, budget: 1, resume: 1 },
     options: { force: bool, wait: bool },
-    usage: 'autopilot [status] | on | off | run [--wait] [--force] | runs | show <執行編號> | undo <執行編號> [<項目編號>] | budget <美元>',
+    usage: 'autopilot [status] | on | off | run [--wait] [--force] | runs | show <執行編號> | undo <執行編號> [<項目編號>] | resume <類別> | budget <美元>',
     summary: '自動駕駛：AI 自主判斷並處理收件匣、記憶整理與對話回顧（不需要你逐項確認，每一項都可以復原）',
   },
   secret: { run: cmdSecret, args: { '': 0, list: 0, get: 1 }, usage: 'secret list | get <名稱>', summary: '本機保管區：自動駕駛從記憶移出來的金鑰（只在這台電腦、加密保存）' },

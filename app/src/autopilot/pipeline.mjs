@@ -16,7 +16,7 @@ import { applyRecord } from '../tidy/apply.mjs';
 import { createFromPlan, CORE_REF } from '../tidy/plan.mjs';
 import { markReady, setDecisions, updateRecord } from '../tidy/store.mjs';
 import { charge } from './budget.mjs';
-import { categoryOf, instructionFlags, riskOf } from './guard.mjs';
+import { CORE_ADD_CHARS, CORE_ADD_LINES, MAX_MERGE, MAX_OPS, SHARED, addedLines, categoryOf, costOf, instructionFlags, riskOf } from './guard.mjs';
 import { MODELS } from './llm.mjs';
 import { REVIEW_SCHEMA, reviewPrompt } from './prompts.mjs';
 
@@ -35,9 +35,9 @@ export function createCaller({ judge, local, run, budgetUsd, log, signal }) {
   const call = async (label, { model = MODELS.main, schema, prompt }) => {
     if (signal?.aborted) state.stopped = 'cancelled';
     if (state.stopped) return { ok: false, error: { code: 'E_STOPPED', message: { budget: '這一輪的預算用完了', cancelled: '這一輪已停止' }[state.stopped] ?? '已達 Claude 的用量上限' } };
-    if (state.spent >= budgetUsd) { state.stopped = 'budget'; return { ok: false, error: { code: 'E_STOPPED', message: '這一輪的預算用完了' } }; }
+    if (budgetUsd - state.spent < 0.3) { state.stopped = 'budget'; return { ok: false, error: { code: 'E_STOPPED', message: '這一輪的預算用完了' } }; }
     if (prompt.length > MAX_PROMPT_CHARS) return { ok: false, error: { code: 'E_TOO_LARGE', message: `內容太長（${prompt.length} 字），這次略過` } };
-    const r = await judge({ model, schema, prompt, signal, maxBudgetUsd: Math.max(1, Math.min(3, budgetUsd - state.spent)) });
+    const r = await judge({ model, schema, prompt, signal, maxBudgetUsd: Math.max(0.5, Math.min(3, budgetUsd - state.spent)) });
     if (signal?.aborted) state.stopped = 'cancelled';
     state.spent += r.usage?.costUsd ?? 0;
     await charge(local, model, r.usage).catch(() => {});
@@ -74,7 +74,7 @@ const refsOfOp = (o) => (o.op === 'merge' ? [...(o.refs ?? []), o.into].filter(B
  * 把 LLM 的項目整理成計畫項目；只准動 snapshot 裡有全文的記憶。
  * @returns {{ items: object[], dropped: { title, why }[] }}
  */
-export function normalizeItems(raw, snapshot, { allowCore = false, mid } = {}) {
+export function normalizeItems(raw, snapshot, { allowCore = false, mid, writable = () => true } = {}) {
   const items = [];
   const dropped = [];
   for (const it of Array.isArray(raw) ? raw : []) {
@@ -88,6 +88,8 @@ export function normalizeItems(raw, snapshot, { allowCore = false, mid } = {}) {
       ...(o.into !== undefined ? { into: fix(o.into) } : {}),
     }));
     if (!ops.length) { dropped.push({ title, why: '沒有動作' }); continue; }
+    if (ops.length > MAX_OPS) { dropped.push({ title, why: `一個項目最多 ${MAX_OPS} 個動作` }); continue; }
+    if (ops.some((o) => o.op === 'merge' && (o.refs?.length ?? 0) > MAX_MERGE)) { dropped.push({ title, why: `一次最多合併 ${MAX_MERGE} 筆` }); continue; }
     let bad = null;
     for (const o of ops) {
       if (o.op === 'core' && !allowCore) { bad = '這個任務不能改核心準則'; break; }
@@ -98,6 +100,10 @@ export function normalizeItems(raw, snapshot, { allowCore = false, mid } = {}) {
       }
       if (bad) break;
       if (o.op === 'move' && o.to === 'machine') o.to = `machine:${mid}`;
+      // 這一輪可以改的範圍（來源與目的地都要）：主機處理共用範圍，各台處理自己的單機記憶
+      const scopes = [...refsOfOp(o).map(scopeKeyOfRef), ...(o.op === 'move' ? [o.to] : []), ...(o.op === 'create' ? [o.scope === 'machine' ? `machine:${mid}` : o.scope] : [])];
+      const deny = scopes.find((k) => !k || !writable(k));
+      if (deny !== undefined) { bad = `這台電腦這一輪不處理「${deny ?? '不明的範圍'}」`; break; }
       if (typeof o.content === 'string') o.content = o.content.replace(/\r\n/g, '\n').replace(/\n*$/, '\n');
     }
     if (bad) { dropped.push({ title, why: bad }); continue; }
@@ -122,7 +128,8 @@ export function normalizeItems(raw, snapshot, { allowCore = false, mid } = {}) {
 export function quoteFromUser(transcript, quote) {
   const flat = (t) => String(t ?? '').replace(/\s+/g, '');
   const q = flat(quote);
-  if (!q || !transcript) return false;
+  // 太短的引句（例如一個標點、一兩個字）幾乎一定找得到，不算證據
+  if (q.length < 10 || !transcript) return false;
   // 依段落標頭切開：【使用者 …】、【Claude】。工具呼叫（  → ）與工具結果（  ← ）沒有自己的標頭，
   // 會接在前一個段落後面（包括使用者的段落）：使用者說的話只到第一個工具行為止，之後的是工具結果，不算
   const blocks = String(transcript).split(/^(?=【(?:使用者|Claude)[^】\n]*】\s*$)/m);
@@ -187,25 +194,40 @@ export async function screen(call, items, snapshot, { dream = null, paused = [],
   const approved = [];
   const rejected = [];
   const candidates = [];
+  const shownOf = (r) => snapshot.get(r)?.shown ?? '';
   for (const [k, it] of items.entries()) {
     it.id = `c${k + 1}`;
     for (const o of it.ops) if (o.op === 'write' && snapshot.has(o.ref)) o.before = snapshot.get(o.ref).shown;
     it.risk = riskOf(it, scopeKeyOfRef);
     it.category = categoryOf(it, { dream: !!dream });
+    it.cost = costOf(it);
+    // 指令型內容：一般只看新增的行；擴大到每次都會載入的範圍（寫進全域、單機、核心準則，或搬、合併進去）時整份都看，
+    // 否則專案記憶裡原本就有的惡意行會被當成「不是新增」而一路擴散到全域
     const flags = [];
+    const add = (list) => { for (const f of list) if (!flags.includes(f)) flags.push(f); };
     for (const o of it.ops) {
+      const into = o.op === 'move' ? o.to : o.op === 'create' ? (o.scope === 'machine' ? 'machine:' : o.scope) : o.op === 'core' ? 'core' : scopeKeyOfRef(o.op === 'merge' ? o.into ?? o.refs?.[0] : o.ref);
+      const widen = SHARED(into);
+      if (o.op === 'move') { add(instructionFlags(shownOf(o.ref), widen ? '' : shownOf(o.ref))); continue; }
       if (typeof o.content !== 'string') continue;
-      const prev = o.op === 'write' ? snapshot.get(o.ref)?.shown : o.op === 'merge' ? (o.refs ?? []).map((r) => snapshot.get(r)?.shown ?? '').join('\n') : o.op === 'core' ? snapshot.get(CORE_REF)?.shown : '';
-      for (const f of instructionFlags(o.content, prev)) if (!flags.includes(f)) flags.push(f);
+      const prev = widen ? '' : o.op === 'write' ? shownOf(o.ref) : o.op === 'merge' ? (o.refs ?? []).map(shownOf).join('\n') : '';
+      add(instructionFlags(o.content, prev));
     }
     it.flags = flags;
     if (paused.includes(it.category)) { rejected.push({ ...brief(it), why: `「${it.category}」類的處理被你復原過多次，暫停中` }); continue; }
-    // 對話回顧：寫進每次都會載入的範圍（全域、單機），要有使用者自己說的話當證據
+    // 核心準則每次對話都會載入：一輪新增的內容有上限
+    const coreOp = it.ops.find((o) => o.op === 'core');
+    if (coreOp) {
+      const added = addedLines(coreOp.content, shownOf(CORE_REF));
+      if (added.length > CORE_ADD_LINES || added.join('\n').length > CORE_ADD_CHARS) { rejected.push({ ...brief(it), why: `核心準則一輪最多新增 ${CORE_ADD_LINES} 行、${CORE_ADD_CHARS} 字（這次 ${added.length} 行）` }); continue; }
+    }
     if (dream) {
-      const shared = it.ops.some((o) => (o.op === 'create' && o.scope !== `project:${dream.pid}` && !String(o.scope ?? '').startsWith('project:'))
-        || ((o.op === 'write' || o.op === 'merge') && /^(global|machine)/.test(scopeKeyOfRef(o.ref ?? o.into) ?? '')) || (o.op === 'move' && !String(o.to).startsWith('project:')));
+      // 對話回顧只能把記憶搬到全域、單機或這個專案
+      if (it.ops.some((o) => o.op === 'move' && String(o.to).startsWith('project:') && o.to !== `project:${dream.pid}`)) { rejected.push({ ...brief(it), why: '對話回顧不能把記憶搬到其他專案' }); continue; }
+      // 碰到每次都會載入的範圍（寫入、新增、搬入，或封存、合併、搬走全域與單機的記憶），要有使用者自己說的話當證據
+      const touchesShared = targetScopes(it).some(SHARED);
       for (const e of it.evidence ?? []) e.fromUser = quoteFromUser(dream.transcript, e.quote);
-      if (shared && !(it.evidence ?? []).some((e) => e.fromUser)) { rejected.push({ ...brief(it), why: '要寫進全域或單機，但證據裡沒有使用者自己說的話' }); continue; }
+      if (touchesShared && !(it.evidence ?? []).some((e) => e.fromUser)) { rejected.push({ ...brief(it), why: '動到全域或單機的記憶，但證據裡沒有使用者自己說的話' }); continue; }
     }
     if (it.risk === 'low' && !flags.length) { approved.push(it); continue; }
     candidates.push(it);
@@ -219,16 +241,31 @@ export async function screen(call, items, snapshot, { dream = null, paused = [],
     for (const it of candidates) {
       const v = verdicts.get(it.id);
       it.review = v;
-      if (v?.verdict === 'approve') approved.push(it);
+      // 審核員同意但列出會遺失的事實：不執行
+      if (v?.verdict === 'approve' && !v.lostFacts?.length) approved.push(it);
       else rejected.push({ ...brief(it), why: `審核員沒有同意：${v?.reason ?? ''}${v?.lostFacts?.length ? `（會遺失：${v.lostFacts.join('；')}）` : ''}` });
     }
   }
-  // 上限：處理卡片的優先，其次風險低的
+  // 上限（以實際動到的記憶數計）：處理卡片的優先，其次風險低的
   const rank = { low: 0, medium: 1, high: 2 };
   approved.sort((a, b) => (b.cards?.length ? 1 : 0) - (a.cards?.length ? 1 : 0) || rank[a.risk] - rank[b.risk]);
-  const over = approved.splice(Math.max(0, cap));
-  for (const it of over) rejected.push({ ...brief(it), why: '超過這一輪的上限，下一輪再處理', deferred: true });
-  return { approved, rejected };
+  const keep = [];
+  let used = 0;
+  for (const it of approved) {
+    if (used + it.cost <= cap) { keep.push(it); used += it.cost; } else rejected.push({ ...brief(it), why: '超過這一輪的上限，下一輪再處理', deferred: true });
+  }
+  return { approved: keep, rejected };
+}
+
+/** 一個項目碰到的所有範圍（來源與目的地） */
+function targetScopes(it) {
+  const out = new Set();
+  for (const o of it.ops) {
+    if (o.op === 'create') out.add(o.scope === 'machine' ? 'machine:' : o.scope);
+    else if (o.op === 'move') { out.add(o.to); out.add(scopeKeyOfRef(o.ref)); } else if (o.op === 'core') out.add('core');
+    else for (const r of refsOfOp(o)) out.add(scopeKeyOfRef(r));
+  }
+  return [...out].filter(Boolean);
 }
 
 const brief = (it) => ({ title: it.title, reason: it.reason, action: it.action, category: it.category, risk: it.risk, refs: [...new Set(it.ops.flatMap(refsOfOp))] });
@@ -237,7 +274,7 @@ const brief = (it) => ({ title: it.title, reason: it.reason, action: it.action, 
  * 把通過的項目寫成計畫、建立整理記錄（驗證不過的剔除後重試）、自動採用並執行。
  * @returns {{ record: string|null, results: object[], invalid: object[] }}
  */
-export async function commitItems(eg, { items, scopeKey, summary, dir, task, runId, dream = null, skipped = [] }) {
+export async function commitItems(eg, { items, scopeKey, summary, dir, task, runId, dream = null, skipped = [], onRecord }) {
   const invalid = [];
   let list = items.slice();
   await fsp.mkdir(dir, { recursive: true });
@@ -288,6 +325,7 @@ export async function commitItems(eg, { items, scopeKey, summary, dir, task, run
       }
       continue;
     }
+    await onRecord?.(rec.id);
     // 自動採用：全部 accept → 產生執行指令 → 執行
     await setDecisions(eg.paths.local, rec.id, Object.fromEntries(rec.items.map((x) => [x.id, { decision: 'accept' }])));
     await updateRecord(eg.paths.local, rec.id, (r) => {
@@ -297,8 +335,9 @@ export async function commitItems(eg, { items, scopeKey, summary, dir, task, run
       }
     });
     await markReady(eg.paths.local, rec.id);
-    const res = await applyRecord(eg, rec.id);
-    const results = res.record.items.map((x, n) => ({ record: rec.id, item: x.id, title: x.title, reason: x.reason, action: x.action, category: list[n]?.category, risk: list[n]?.risk, cards: list[n]?.cards ?? [], refs: [...new Set((list[n]?.ops ?? []).flatMap(refsOfOp))], review: list[n]?.review ?? null, status: x.result?.status ?? 'unknown', undo: x.result?.undo ?? [], ...(x.result?.message ? { message: x.result.message } : {}) }));
+    // 寫進每次都會載入的範圍時不記為「使用者確認過」：下一輪的「待你確認」把關會再看一次
+    const res = await applyRecord(eg, rec.id, { reviewed: false });
+    const results = res.record.items.map((x, n) => ({ record: rec.id, item: x.id, title: x.title, reason: x.reason, action: x.action, category: list[n]?.category, risk: list[n]?.risk, cost: list[n]?.cost ?? 1, cards: list[n]?.cards ?? [], refs: [...new Set((list[n]?.ops ?? []).flatMap(refsOfOp))], review: list[n]?.review ?? null, status: x.result?.status ?? 'unknown', undo: x.result?.undo ?? [], ...(x.result?.message ? { message: x.result.message } : {}) }));
     return { record: rec.id, results, invalid };
   }
   return { record: null, results: [], invalid };
