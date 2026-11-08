@@ -15,6 +15,8 @@ const TASK = { curate: N_('整理'), dream: N_('對話回顧'), cards: N_('收�
 const REASON = { schedule: N_('自動執行'), coalesced: N_('自動執行'), manual: N_('手動執行'), enable: N_('剛開啟時') };
 const RUN_STATUS = { running: N_('執行中'), done: N_('已完成'), failed: N_('失敗'), interrupted: N_('中斷') };
 const RUN_TONE = { running: 'brand live', done: 'ok', failed: 'danger', interrupted: 'warn' };
+/** 每月上限的常用金額（1.6.0 預設 US$200；也可以自訂 1～1000） */
+const PRESET_CAPS = [50, 100, 200, 500];
 // 整理項目的動作（與記憶整理頁相同的詞）與其他種類的處理
 const ACTION = { update: N_('改寫'), move: N_('搬移'), archive: N_('封存'), merge: N_('合併'), create: N_('新增'), split: N_('拆分'), promote: N_('升為全域'), verify: N_('確認仍正確'), keep: N_('保留') };
 const KIND = { card: N_('處理卡片'), rename: N_('資料夾改名'), conflict: N_('同步衝突'), vault: N_('金鑰移到保管區'), 'not-secret': N_('標記不是金鑰'), confirm: N_('代你確認'), revert: N_('退回'), dismiss: N_('不處理') };
@@ -71,7 +73,7 @@ export function useAutopilotToggle(enabled, monthly) {
   const dialog = ask && (
     <ConfirmDialog title={t('開啟自動駕駛？')} desc={t('Engram 會立刻執行第一輪，之後每天在電腦閒置時自動執行。AI 的每個變更都會先備份、經過另一位「審核員」檢查；你可以在「自動駕駛」頁看到做了什麼，並逐項或整輪復原。')} confirmLabel={t('開啟並立即執行')}
       onConfirm={async () => { setAsk(false); await set(true); }} onClose={() => setAsk(false)}>
-      <p class="muted" style={{ fontSize: 13 }}>{t('每月用量上限約當 US$ {n}。用 Claude 訂閱時不另外計費，這是額度消耗的參考。', { n: monthly ?? 30 })}</p>
+      <p class="muted" style={{ fontSize: 13 }}>{t('每月用量上限約當 US$ {n}。用 Claude 訂閱時不另外計費，這是額度消耗的參考。', { n: monthly ?? 200 })}</p>
     </ConfirmDialog>
   );
   return { on: opt ?? !!enabled, request: (on) => (on ? setAsk(true) : set(false)), dialog };
@@ -95,6 +97,8 @@ export function Autopilot({ params, go }) {
   const tog = useAutopilotToggle(ap.data?.enabled, ap.data?.budget?.monthly);
   const [sel, setSel] = useState(params?.id || null);
   const [starting, setStarting] = useState(false);
+  // 自訂每月上限：null＝沒有在輸入；字串＝輸入框目前的值
+  const [custom, setCustom] = useState(null);
   const runningId = ap.data?.running?.id;
   useEffect(() => { if (runningId) setStarting(false); }, [runningId]);
 
@@ -106,7 +110,9 @@ export function Autopilot({ params, go }) {
   const selected = sel ?? running?.id ?? runs[0]?.id ?? null;
   const job = agent.data?.jobs?.find((j) => j.id === 'curate');
   const lastAt = job?.lastRunAt ?? runs.find((r) => r.status !== 'running')?.startedAt ?? null;
-  const caps = [...new Set([15, 30, 60, 120, d.budget.monthly])].sort((a, b) => a - b);
+  const caps = [...new Set([...PRESET_CAPS, d.budget.monthly])].sort((a, b) => a - b);
+  const capValue = Number(custom);
+  const capOk = custom !== null && String(custom).trim() !== '' && Number.isFinite(capValue) && capValue >= 1 && capValue <= 1000;
 
   const start = async () => {
     setStarting(true);
@@ -116,7 +122,17 @@ export function Autopilot({ params, go }) {
       setTimeout(() => { setStarting(false); refresh(); }, 1500);
     } catch (e) { setStarting(false); reportError(e); }
   };
-  const setCap = (e) => act(() => api.saveSettings({ autopilotBudget: Number(e.currentTarget.value) }), t('已更新每月用量上限'));
+  const setCap = (e) => {
+    const v = e.currentTarget.value;
+    if (v === 'custom') { setCustom(String(d.budget.monthly)); return; }
+    setCustom(null);
+    act(() => api.saveSettings({ autopilotBudget: Number(v) }), t('已更新每月用量上限'));
+  };
+  const saveCustom = async () => {
+    if (!capOk) return;
+    const res = await act(() => api.saveSettings({ autopilotBudget: Math.round(capValue * 100) / 100 }), t('已更新每月用量上限'));
+    if (res) setCustom(null);
+  };
   const pick = (id) => {
     setSel(id);
     // 窄螢幕的清單與內容上下排列：選了之後捲到內容
@@ -146,10 +162,12 @@ export function Autopilot({ params, go }) {
         <div class="ap-hero-body">
           <div class="ap-side">
             <dl class="kv ap-facts">
-              <dt>{t('處理共用記憶的電腦')}</dt>
+              <dt>{t('開啟自動駕駛的電腦')}</dt>
               <dd>
-                {d.host?.label ? <span class="ap-host">{d.host.label}{d.host.self && <span class="chip brand">{t('這台')}</span>}</span> : <span class="faint">{t('還沒有電腦開啟自動駕駛')}</span>}
-                <span class="faint ap-sub">{t('全域與專案記憶在每台電腦上都一樣，一次只讓一台處理，避免兩台互相改。')}</span>
+                {d.machines?.length
+                  ? <span class="ap-host">{d.machines.map((x) => <span key={x.mid} class="ap-machine">{x.label}{x.self && <span class="chip brand">{t('這台')}</span>}</span>)}</span>
+                  : <span class="faint">{t('還沒有電腦開啟自動駕駛')}</span>}
+                <span class="faint ap-sub">{t('每台電腦都一樣，都會整理全域、核心準則與專案記憶；一台整理過的版本，其他台不會重複處理。')}</span>
               </dd>
               <dt>{t('上次執行')}</dt>
               <dd>
@@ -171,10 +189,20 @@ export function Autopilot({ params, go }) {
             <Meter value={Math.round(d.budget.used * 100) / 100} max={d.budget.monthly} label={t('這台電腦本月用量（約當 US$）')} />
             <label class="ap-cap">
               <span>{t('每月上限')}</span>
-              <select class="select" value={d.budget.monthly} onChange={setCap} aria-label={t('每月用量上限')}>
+              <select class="select" value={custom !== null ? 'custom' : d.budget.monthly} onChange={setCap} aria-label={t('每月用量上限')}>
                 {caps.map((n) => <option key={n} value={n}>{t('約當 US$ {n}', { n })}</option>)}
+                <option value="custom">{t('自訂金額…')}</option>
               </select>
             </label>
+            {custom !== null && (
+              <form class="ap-cap-custom" onSubmit={(e) => { e.preventDefault(); saveCustom(); }}>
+                <span>US$</span>
+                <input class="input" type="number" min="1" max="1000" step="1" inputMode="decimal" value={custom} onInput={(e) => setCustom(e.currentTarget.value)} aria-label={t('自訂每月上限（US$）')} autoFocus />
+                <button class="btn sm primary" type="submit" disabled={!capOk}>{t('儲存')}</button>
+                <button class="btn sm ghost" type="button" onClick={() => setCustom(null)}>{t('取消')}</button>
+                {!capOk && <span class="ap-over">{t('請輸入 1 到 1000 之間的金額')}</span>}
+              </form>
+            )}
             <p class="faint ap-sub">{t('用 Claude 訂閱時不另外計費，這是額度消耗的參考。')}</p>
             {d.budget.remaining <= 0 && <p class="ap-over">{t('這個月的額度已用完，下個月會自動繼續。')}</p>}
           </div>
@@ -214,7 +242,6 @@ export function Autopilot({ params, go }) {
                     <span class={`chip ${RUN_TONE[r.status] || ''}`}>{t(RUN_STATUS[r.status] || r.status)}</span>
                     {line && <span class="desc">{line}</span>}
                     <span class="meta">
-                      {r.host?.label && <span>{r.host.label}</span>}
                       {r.summary?.costUsd > 0 && <span>{t('約當 US$ {cost}', { cost: usd(r.summary.costUsd) })}</span>}
                     </span>
                   </button>
@@ -294,7 +321,7 @@ function RunDetail({ id, go }) {
         <div class="panel-head">
           <h2>{whenText(r.startedAt)}</h2>
           <span class={`chip ${RUN_TONE[r.status] || ''}`}>{t(RUN_STATUS[r.status] || r.status)}</span>
-          <span class="sub">{[REASON[r.reason] && t(REASON[r.reason]), r.host?.label && t('共用記憶由「{label}」處理', { label: r.host.label })].filter(Boolean).join(' · ')}</span>
+          {REASON[r.reason] && <span class="sub">{t(REASON[r.reason])}</span>}
           {undoableN > 0 && r.status !== 'running' && <div class="end"><button class="btn sm danger" onClick={() => setDialog({ kind: 'all' })}><IconUndo />{t('整輪復原')}</button></div>}
         </div>
         <div class="panel-body ap-detail-body">

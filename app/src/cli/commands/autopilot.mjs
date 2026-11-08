@@ -30,8 +30,9 @@ export async function cmdAutopilot(ctx) {
   if (sub === 'status') {
     const st = await autopilotStatus(eg);
     return ctx.out.result(st, [
-      `自動駕駛：${st.enabled ? '開啟' : '關閉'}${st.enabled ? `；共用範圍由「${st.host.label ?? st.host.mid ?? '?'}」處理${st.host.self ? '（這台）' : ''}` : ''}`,
-      `本月用量：約當 US$${st.budget.used}／上限 US$${st.budget.monthly}（用 Claude 訂閱時不另外計費，代表額度的消耗）`,
+      `自動駕駛：${st.enabled ? '開啟' : '關閉'}`,
+      st.machines.length ? `開啟的電腦：${st.machines.map((x) => `${x.label ?? x.mid}${x.self ? '（這台）' : ''}`).join('、')}（每台都平等，都會整理共用記憶）` : null,
+      `本月用量：約當 US$${st.budget.used}／上限 US$${st.budget.monthly}（用 Claude 訂閱時不另外計費，代表額度的消耗；改上限：engram autopilot budget <美元>）`,
       st.paused.length ? `暫停中的類別（被你復原過多次）：${st.paused.map(categoryLabel).join('、')}` : null,
       st.running ? `正在執行：${st.running.id}` : null,
       ...(st.runs.length ? ['最近的執行：', ...st.runs.slice(0, 8).map((r) => `• ${r.id}｜${localTime(r.startedAt)}｜${STATUS[r.status] ?? r.status}｜${summaryLine(r.summary)}`)] : ['還沒有執行過']),

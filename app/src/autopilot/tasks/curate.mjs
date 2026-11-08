@@ -1,18 +1,23 @@
 // 自動駕駛：範圍整理（1.5.0）。對應 /engram:tidy：重複、過時、範圍放錯、過大、frontmatter、連結、核心準則精簡。
-// 觸發：該範圍有相關的收件匣卡片，或內容在上次整理之後變過、而且距離上次整理超過 7 天。
+// 觸發：該範圍有還沒看過的收件匣卡片，或內容在上次整理之後變過、而且距離上次整理超過 7 天。
+// 1.6.0：每台電腦都整理全域、核心準則、所有專案與自己的單機記憶（不再只有主機）。
+// 「上次整理」看所有電腦的同步紀錄（machines/<mid>/autopilot.json 的 scopes）：任何一台整理過同一個版本、
+// 也看過目前所有的卡片，這台就跳過——不重複花錢，也不會兩台輪流改同一批記憶。
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { readJson, writeJsonAtomic } from '../../cli/fsutil.mjs';
+import { readJson } from '../../cli/fsutil.mjs';
 import { CORE_REF } from '../../tidy/plan.mjs';
 import { commitItems, fillBases, keyOfScope, normalizeItems, scopeKeyOfRef, screen, snap } from '../pipeline.mjs';
 import { CURATE_SCHEMA, curatePrompt } from '../prompts.mjs';
+import { allScopeMarks } from '../state.mjs';
 
 const DAY = 86_400_000;
 export const CURATE_CODES = ['H01', 'H07', 'H08', 'H09', 'H10', 'H11', 'H12', 'H16', 'H21', 'H22'];
 const FULL_CHARS = 150_000;
 const REVISIT_MS = 7 * DAY;
 
-const stateFile = (local) => path.join(local, 'autopilot', 'scopes.json');
+/** 1.5.0 的本機整理紀錄（只讀：當成這台的紀錄一起比較；1.6.0 起寫在同步的狀態檔） */
+const legacyFile = (local) => path.join(local, 'autopilot', 'scopes.json');
 
 /** 卡片屬於哪個範圍 */
 function cardScope(f) {
@@ -26,14 +31,21 @@ function fingerprint(mems) {
   return createHash('sha1').update(mems.map((m) => `${m.ref}@${m.updatedAt ?? ''}@${m.size ?? ''}`).sort().join('|')).digest('hex').slice(0, 12);
 }
 
+/** 範圍目前內容的指紋（核心準則看全文，其他看每筆記憶的修改時間與大小） */
+async function scopeFingerprint(eg, key, all) {
+  if (key === 'core') return createHash('sha1').update((await eg.core.read()).text ?? '').digest('hex').slice(0, 12);
+  return fingerprint((all ?? await eg.memories.list()).filter((m) => keyOfScope(m.scope) === key));
+}
+
 /** 這一輪要整理哪些範圍（依優先順序） */
 export async function planScopes(ctx) {
-  const { eg, isHost, mid, findings, now } = ctx;
-  const st = (await readJson(stateFile(eg.paths.local), null)) ?? {};
+  const { eg, mid, findings, now } = ctx;
+  const legacy = await readJson(legacyFile(eg.paths.local), null);
+  const marks = await allScopeMarks(eg.paths.vault, { legacy, selfMid: mid });
   const all = await eg.memories.list();
   const projects = (await eg.projects.list({ includeArchived: false })).filter((p) => !p.mergedInto);
-  const keys = [`machine:${mid}`];
-  if (isHost) keys.unshift('global', 'core', ...projects.map((p) => `project:${p.pid}`));
+  // 多台平等：每台都看全域、核心準則、所有專案，以及自己的單機記憶（別台的單機記憶由那台處理）
+  const keys = ['global', 'core', `machine:${mid}`, ...projects.map((p) => `project:${p.pid}`)];
   const cardsBy = new Map();
   for (const f of findings.filter((x) => CURATE_CODES.includes(x.code))) {
     const k = cardScope(f);
@@ -44,12 +56,14 @@ export async function planScopes(ctx) {
   const out = [];
   for (const k of keys) {
     const mems = k === 'core' ? [] : all.filter((m) => keyOfScope(m.scope) === k);
-    const fp = k === 'core' ? createHash('sha1').update((await eg.core.read()).text ?? '').digest('hex').slice(0, 12) : fingerprint(mems);
+    if (k !== 'core' && !mems.length) continue;
+    const fp = await scopeFingerprint(eg, k, all);
     const cards = cardsBy.get(k) ?? [];
-    const last = st[k];
+    const last = marks[k];
+    // 任何一台已經整理過這個版本、也看過目前所有的卡片（處理了或判斷不必處理）→ 跳過
+    if (last && last.fp === fp && cards.every((c) => last.cards.includes(c.id))) continue;
     const stale = !last || (last.fp !== fp && now - (Date.parse(last.at) || 0) >= REVISIT_MS);
     if (!cards.length && !stale) continue;
-    if (k !== 'core' && !mems.length) continue;
     const sev = cards.some((c) => c.severity === 'high') ? 0 : cards.some((c) => c.severity === 'medium') ? 1 : cards.length ? 2 : 3;
     out.push({ key: k, cards, mems, fp, sev, project: projects.find((p) => `project:${p.pid}` === k) ?? null });
   }
@@ -57,10 +71,13 @@ export async function planScopes(ctx) {
   return out.sort((a, b) => a.sev - b.sev || order(a.key) - order(b.key));
 }
 
-async function markScope(local, key, fp, now) {
-  const st = (await readJson(stateFile(local), null)) ?? {};
-  st[key] = { fp, at: new Date(now).toISOString() };
-  await writeJsonAtomic(stateFile(local), st);
+/**
+ * 記下這個範圍整理過了：指紋取「整理之後」的內容（別台同步後看到的就是這個版本，不必再整理一次），
+ * cards 是這次看過的卡片。一輪結束時由 run.mjs 一次寫進同步的狀態檔。
+ */
+async function markScope(ctx, sc) {
+  const fp = await scopeFingerprint(ctx.eg, sc.key).catch(() => sc.fp);
+  ctx.scopeMarks[sc.key] = { fp, at: new Date(ctx.now).toISOString(), cards: sc.cards.map((c) => c.id) };
 }
 
 /** 整理一個範圍：讀 → 問 LLM → 篩選 → 執行 → 記到執行紀錄 */
@@ -91,7 +108,7 @@ export async function curateScope(ctx, sc) {
     // 核心準則與全域記憶重複時要看得到全域記憶：給名稱與說明
     others = (await eg.memories.list({ scope: 'global' })).map((m) => ({ ref: m.ref, name: m.name, description: m.description }));
   }
-  if (sc.key !== 'core' && !memories.some((m) => m.full !== undefined)) { await markScope(eg.paths.local, sc.key, sc.fp, ctx.now); return; }
+  if (sc.key !== 'core' && !memories.some((m) => m.full !== undefined)) { await markScope(ctx, sc); return; }
   const projects = (await eg.projects.list({ includeArchived: false })).map((p) => ({ pid: p.pid, name: p.name }));
   const machines = (await eg.status()).devices?.map?.((m) => ({ mid: m.id, label: m.label, self: m.id === mid })) ?? [{ mid, label: mid, self: true }];
   const goal = sc.cards.some((c) => c.code === 'H16') ? '每次對話都會載入的內容過長，請精簡核心準則（保留所有仍然有效的規則）'
@@ -103,8 +120,9 @@ export async function curateScope(ctx, sc) {
   });
   const r = await call(`整理 ${sc.key}`, { schema: CURATE_SCHEMA, prompt });
   if (!r.ok) { run.skipped.push({ task: 'curate', scope: sc.key, why: r.error?.message ?? 'LLM 失敗' }); return; }
-  const writable = (k) => (ctx.isHost ? !String(k).startsWith('machine:') || k === `machine:${mid}` : k === `machine:${mid}`);
-  const { items, dropped } = normalizeItems(r.data.items, snapshot, { allowCore: sc.key === 'core' && ctx.isHost, mid, writable });
+  // 共用範圍每台都可以改；別台的單機記憶只有那台能改
+  const writable = (k) => !String(k).startsWith('machine:') || k === `machine:${mid}`;
+  const { items, dropped } = normalizeItems(r.data.items, snapshot, { allowCore: sc.key === 'core', mid, writable });
   for (const d of dropped) run.rejected.push({ task: 'curate', scope: sc.key, title: d.title, why: d.why });
   fillBases(items, snapshot);
   const { approved, rejected } = await screen(call, items, snapshot, { paused, cap: cap.left, mid });
@@ -124,5 +142,5 @@ export async function curateScope(ctx, sc) {
     await eg.findings.dismiss(f.id, { until: new Date(ctx.now + 90 * DAY).toISOString() }).catch(() => {});
     run.actions.push({ task: 'curate', scope: sc.key, kind: 'dismiss', card: f.id, code: f.code, title: `不處理：${f.title}`, reason: String(d.reason ?? '').slice(0, 500), status: 'done', undo: [] });
   }
-  if (!rejected.some((x) => x.deferred)) await markScope(eg.paths.local, sc.key, sc.fp, ctx.now);
+  if (!rejected.some((x) => x.deferred)) await markScope(ctx, sc);
 }

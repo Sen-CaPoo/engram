@@ -157,7 +157,7 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     'GET /api/settings': async () => {
       const st = await eg.status();
       const engineSettings = typeof eg.settings?.get === 'function' ? await eg.settings.get() : {};
-      return { machineLabel: st.machine?.label ?? eg.machine?.label, remote: st.vault?.remote ?? null, bindAuto: engineSettings.bindAuto ?? 'confident', collisionRename: engineSettings.collisionRename ?? 'ask', reviewWrites: engineSettings.reviewWrites ?? 'on', autopilot: engineSettings.autopilot ?? 'off', autopilotBudget: engineSettings.autopilotBudget ?? 30, ...(settings?.get() ?? {}) };
+      return { machineLabel: st.machine?.label ?? eg.machine?.label, remote: st.vault?.remote ?? null, bindAuto: engineSettings.bindAuto ?? 'confident', collisionRename: engineSettings.collisionRename ?? 'ask', reviewWrites: engineSettings.reviewWrites ?? 'on', autopilot: engineSettings.autopilot ?? 'off', autopilotBudget: engineSettings.autopilotBudget ?? 200, ...(settings?.get() ?? {}) };
     },
     'PUT /api/settings': async ({ body }) => {
       if (body.machineLabel !== undefined) await engineFn(eg.machine?.rename, '電腦改名', 'renaming this computer')(String(body.machineLabel).trim());

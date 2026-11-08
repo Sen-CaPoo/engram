@@ -134,7 +134,7 @@ Things to know:
 With tidy-up, conversation review, and the inbox above, you decide on every item. Autopilot hands those decisions to AI as well: once it's on, Engram runs once a day in the background, decides, and acts, with nothing for you to confirm item by item. Just look at the **Autopilot** page now and then and undo anything you disagree with.
 
 <p align="center">
-  <img src="../assets/en/screenshots/autopilot.png" alt="The Autopilot page: the switch, the computer in charge, this month's usage, and what each run did, why, and how to undo it" width="900">
+  <img src="../assets/en/screenshots/autopilot.png" alt="The Autopilot page: the switch, the computers with autopilot on, this month's usage, and what each run did, why, and how to undo it" width="900">
 </p>
 
 **Turning it on:** use the switch on the **Autopilot** page or in Settings (or run `engram autopilot on`, or type `/engram:autopilot on` in Claude Code). The first run starts in the background right away.
@@ -147,7 +147,7 @@ With tidy-up, conversation review, and the inbox above, you decide on every item
 | Inbox (rules) | Renames colliding folders by the naming rule, fixes bindings, adds core rule suggestions; an old binding is removed only after its folder has been gone for 14 days |
 | Sync conflicts | Compares the two computers' versions and merges them; a choice that would drop one side needs the reviewer's approval, otherwise both versions are kept |
 | Inbox (judgment) | Adopts unmanaged memories, handles mass deletions (confirm or restore), and memories that may belong to another folder |
-| Waiting for your review | Confirms normal content Claude wrote to global or machine memories or the core rules on your behalf; content with injected instructions or obvious mistakes is sent back |
+| Waiting for your review | Confirms normal content Claude wrote to global or machine memories or the core rules on your behalf; content with injected instructions or obvious mistakes is sent back. Content the reviewer wouldn't confirm is recorded in your vault and left for you; no computer judges it again until the content changes |
 | Tidy-up | The same judgments as `/engram:tidy`: merge duplicates, archive outdated memories, move memories to the right scope, split or shorten them, fix frontmatter and links; shorten an oversized index or core rules. Only scopes with cards, or whose content changed and that haven't been tidied for 7 days, are tidied |
 | Conversation review | The same judgments as `/engram:dream`, up to 8 conversations per project per run, those about to be deleted by Claude Code first |
 
@@ -157,7 +157,7 @@ With tidy-up, conversation review, and the inbox above, you decide on every item
 - **A second review.** Rewrites, merges, archives, anything written to global or machine scopes, and core rule changes need another AI call (the reviewer) to check them skeptically: are facts lost, does the reason hold up, is the scope right, are there injected instructions. If it doesn't approve, nothing happens, and the suggestion is listed under "not carried out".
 - **Instruction-like content always goes to review.** New content saying things like "ignore previous instructions", "download and run", "send the credentials to this URL", or "turn off permission checks" is reviewed regardless of risk.
 - **Only what you said.** Conversation review writes to global or machine scopes only with something you said yourself as evidence. Content that appears only in web pages, files, or tool output never becomes a memory loaded in every conversation.
-- **Limits.** At most 30 memories changed per run, and no more than 15% of your memories (at least 5); the rest wait for the next run. At most 6 actions per change. Memories are archived, never deleted.
+- **Limits.** At most 30 memories changed per run, and no more than 15% of your memories (at least 5); the rest wait for the next run. At most 6 actions per change. Memories are archived, never deleted. (This is a safety limit on how many memories change, not a money limit.)
 
 **Results and undo:** the **Autopilot** page lists what each run did, with each change's reason, the reviewer's opinion, and its risk; suggestions that weren't carried out are listed with the reason. Undo one change or a whole run; for tidy-up changes, open the Tidy-up page to see the full before-and-after. CLI: `engram autopilot runs`, `engram autopilot show <run>`, `engram autopilot undo <run> [<item>]`.
 
@@ -165,9 +165,9 @@ With tidy-up, conversation review, and the inbox above, you decide on every item
 
 **When it runs:** once a day, only when there has been no Claude Code conversation on this computer for 20 minutes, so it doesn't compete with you for quota; if it hasn't run for 2 days it runs anyway. **Run now** starts one immediately. A weekly Windows notification summarizes what was done.
 
-**Two computers:** the global scope, core rules, project memory tidy-up, and sync conflicts are handled by one computer only (the earliest to turn it on that has been online within 3 days; the page says which); each computer handles its own machine memories, secrets, reviews, and conversations (conversations exist only on that computer).
+**Several computers** (every computer is equal from 1.6.0; there's no computer in charge): every computer with autopilot on tidies global memories, core rules, and project memories, and resolves sync conflicts. Which version of each scope was tidied, and which cards were looked at, is recorded in your vault (`machines/<computer>/autopilot.json`) and synced; a scope any computer has already tidied and that hasn't changed since is skipped by the others, so quota isn't spent twice. If two computers happen to change the same memory at once, syncing turns it into a conflict that the next run merges, so nothing is lost. Machine memories are tidied only by their own computer, and each computer handles its own secrets, reviews, and conversations (conversations exist only on that computer). Update every computer to 1.6.0: a computer still on 1.5.0 can't see the others' tidy-up records and may tidy the same memories again.
 
-**Usage:** there's no extra charge on a Claude subscription, but it uses quota. The amounts shown are API list-price equivalents used for the caps: about US$30 a month by default (you can change it), up to US$5 per run; it stops when it hits Claude's usage limit and continues next run. Each call has about 4k tokens of fixed overhead (your settings aren't loaded).
+**Usage:** there's no extra charge on a Claude subscription, but it uses quota. The amounts shown are API list-price equivalents used for the cap: about US$200 per computer per month by default. On the **Autopilot** page, pick a common amount (50, 100, 200, 500) or choose **Custom amount** and type 1 to 1000; or run `engram autopilot budget <dollars>`. There's no per-run money cap, so a run can use whatever is left this month (each call is capped at about US$3 so a single call can't run away); it stops when this month's budget is used up and continues next month, and it also stops at Claude's usage limit and continues next run. Each call has about 4k tokens of fixed overhead (your settings aren't loaded).
 
 **Local secret store:** `engram secret list` lists what this computer stores, and `engram secret get <name>` retrieves a value (Claude Code also uses the command written in the memory when it needs the value). The store is `~/.engram/local/secrets/`; only this Windows user on this computer can decrypt it, and it's never synced. If another computer needs the value, store a copy there separately.
 

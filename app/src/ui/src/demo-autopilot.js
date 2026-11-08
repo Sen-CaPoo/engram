@@ -28,8 +28,7 @@ const call = (label, ms, input, output, costUsd, model = 'sonnet') => ({ label, 
 export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', now = Date.now(), self }) {
   const L = (zh, enText) => (en ? enText : zh);
   const ago = (min) => new Date(now - min * 60000).toISOString();
-  const host = { mid: self.id, label: self.label, self: true };
-  const budget = (used, run = 5) => ({ monthly: 30, used, remaining: Math.round((30 - used) * 10000) / 10000, run });
+  const budget = (used) => { const remaining = Math.round((200 - used) * 10000) / 10000; return { monthly: 200, used, remaining, run: remaining }; };
 
   // ── 整理記錄（自動駕駛建立並已自動執行） ──
   const R1 = 'ap-20261107-031207-k4m2';
@@ -103,7 +102,7 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
   };
 
   // ── 執行紀錄 ──
-  const wrap = (x) => ({ v: 1, machine: self.id, host, endedAt: null, skipped: [], notes: [], calls: [], records: [], rejected: [], ...x });
+  const wrap = (x) => ({ v: 1, machine: self.id, endedAt: null, skipped: [], notes: [], calls: [], records: [], rejected: [], ...x });
   const act = (x) => ({ status: 'done', undo: [], ...x });
 
   const run1 = wrap({
@@ -160,7 +159,7 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
         why: L('「merge」類的處理被你復原過多次，暫停中', 'Handling of "merge" was undone by you several times and is paused') },
       { task: 'dream', pid, action: 'archive', category: 'archive', risk: 'high', refs: [`projects/${pid}/memory/release-checklist-oct.md`],
         title: L('封存：10 月的上線清單已全部完成', 'Archive: the October launch checklist is done'),
-        why: L('超過這一輪的上限，下一輪再處理', 'Over this run\'s limit; will be handled in the next run'), deferred: true },
+        why: L('超過這一輪最多改動的記憶筆數，下一輪再處理', 'Over the most memories one run may change; will be handled in the next run'), deferred: true },
       { task: 'cards', title: L('解決同步衝突：global/core-notes.md', 'Resolve sync conflict: global/core-notes.md'),
         why: L('這個修正要在介面操作', 'This fix has to be done in the dashboard') },
     ],
@@ -213,9 +212,9 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
         reason: L('存成 db-readonly-password；記憶改寫成只記存放位置。', 'Stored as db-readonly-password; the memory now records only where it is kept.') }),
       act({ task: 'conflicts', kind: 'conflict', card: 'f_H15_2', code: 'H15', refs: ['global/user-guidelines.md'], category: 'conflict-ours', undo: ['4e5f6a7b'],
         undone: ago(60 * 70),
-        title: L('處理衝突：global/user-guidelines.md（保留這台的版本）', 'Resolved conflict: global/user-guidelines.md (kept this computer\'s version)'),
-        reason: L('對方的版本只是舊的一份，這台的版本包含之後新增的兩條準則。', 'The other version is just an older copy; this computer\'s version includes two rules added later.'),
-        review: { verdict: 'approve', reason: L('這台的版本是對方版本的超集合，沒有遺失任何一條。', 'This computer\'s version is a superset of the other, so no rule is lost.') } }),
+        title: L('處理衝突：global/user-guidelines.md（保留目前的版本）', 'Resolved conflict: global/user-guidelines.md (kept the current version)'),
+        reason: L('另一個版本只是舊的一份，目前的版本包含之後新增的兩條準則。', 'The other version is just an older copy; the current version includes two rules added later.'),
+        review: { verdict: 'approve', reason: L('目前的版本是另一個版本的超集合，沒有遺失任何一條。', 'The current version is a superset of the other, so no rule is lost.') } }),
     ],
     rejected: [
       { task: 'curate', scope: 'global', action: 'archive', category: 'archive', risk: 'high', title: L('封存：舊的偏好備忘', 'Archive: an old preference note'),

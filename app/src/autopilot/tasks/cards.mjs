@@ -22,7 +22,7 @@ const seenFile = (local) => path.join(local, 'autopilot', 'seen.json');
 
 /** 規則就能處理的卡片 */
 export async function ruleCards(ctx) {
-  const { eg, run, findings, isHost, now, paused = [] } = ctx;
+  const { eg, run, findings, now, paused = [] } = ctx;
   const off = (cat) => paused.includes(cat);
   const push = async (f, title, r, extra = {}) => run.actions.push({ task: 'cards', kind: 'card', card: f?.id ?? null, code: f?.code ?? null, title, reason: extra.reason ?? '', status: r?.ok === false ? 'failed' : 'done', undo: [await undoableSha(eg, shaOf(r))].filter(Boolean), ...extra });
   const fail = (f, title, err) => run.actions.push({ task: 'cards', kind: 'card', card: f.id, code: f.code, title, reason: '', status: 'failed', undo: [], message: String(err?.message ?? err).slice(0, 300) });
@@ -44,7 +44,8 @@ export async function ruleCards(ctx) {
     const r = await eg.sync().catch((err) => ({ ok: false, error: { message: err.message } }));
     if (!r?.ok) run.notes.push({ task: 'cards', note: `同步仍然失敗（通常要你重新登入 GitHub：在終端機執行 gh auth login）：${r?.error?.message ?? ''}`.slice(0, 300) });
   }
-  if (isHost && !off('core') && findings.some((x) => x.code === 'H24') && typeof eg.core?.suggestions === 'function') {
+  // 核心準則的建議更新：1.6.0 起任何一台都可以套用（兩台套用同樣的文字，同步時不會衝突）
+  if (!off('core') && findings.some((x) => x.code === 'H24') && typeof eg.core?.suggestions === 'function') {
     try {
       const ids = (await eg.core.suggestions()).map((s) => s.id);
       if (ids.length) await push(findings.find((x) => x.code === 'H24'), '加入核心準則的建議更新', await eg.core.applySuggestions(ids), { reason: 'Engram 內建的記憶寫入協定更新', category: 'core' });

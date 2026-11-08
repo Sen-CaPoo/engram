@@ -66,7 +66,7 @@
 //   POST /api/review/revert    { ref, sha }            → ActionResult   （改回確認過的版本；新增的封存。sha 與目前內容不符時 E_CONFLICT）
 //   GET  /api/core/suggestions               → [{ id, title, reason, text, en: { title, reason } }]（1.4.0 核心準則建議，H24）
 //   POST /api/core/suggestions/apply { ids }           → ActionResult
-//   GET  /api/autopilot                      → { enabled, budget: { monthly, used, remaining }, host: { mid, label, self, enabled[] }, paused[], feedback[], running, runs[] }（1.5.0 自動駕駛）
+//   GET  /api/autopilot                      → { enabled, budget: { monthly, used, remaining }, machines: [{ mid, label, self, enabledAt, lastRunAt }], paused[], feedback[], running, runs[] }（1.5.0 自動駕駛；1.6.0 host 改成 machines）
 //   GET  /api/autopilot/run?id=              → Run（actions、rejected、skipped、notes、calls、summary；見 app/src/autopilot/run.mjs）
 //   POST /api/autopilot/run                  → { started: true }   （進度經由 SSE 的 autopilot 事件）
 //   POST /api/autopilot/undo   { id, index? } → { ok, results: [{ index, ok, message? }] }   （index 省略＝整輪依相反順序復原）

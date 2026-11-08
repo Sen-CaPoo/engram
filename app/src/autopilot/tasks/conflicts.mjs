@@ -1,4 +1,6 @@
-// 自動駕駛：同步衝突（H15，1.5.0）。只由主機處理（衝突資料夾會同步，兩台都看得到）。
+// 自動駕駛：同步衝突（H15，1.5.0）。衝突資料夾會同步，每台都看得到；1.6.0 起每台都處理（不再只有主機）。
+// 每輪開始前先同步：另一台已經處理掉的衝突不會再出現。兩台剛好同時處理同一個衝突時，處理結果會在同步時
+// 再產生一個衝突，下一輪再判斷，不會遺失內容。ours 是記憶庫裡目前的檔案、theirs 是另一個版本（與哪台電腦處理無關）。
 // 會捨棄一邊內容的選擇（ours、theirs、manual）要審核員同意；不同意或拿不準 → both（兩個版本都留下，之後整理時再合併）。
 import { redactSecrets } from '../../core/secrets.mjs';
 import { CONFLICT_SCHEMA, REVIEW_SCHEMA, conflictPrompt, reviewPrompt } from '../prompts.mjs';
@@ -36,9 +38,9 @@ export async function resolveConflicts(ctx) {
       const c = safe.find((x) => x.id === String(d.id));
       const after = d.choice === 'ours' ? c.ours : d.choice === 'theirs' ? c.theirs : String(d.content ?? '');
       return {
-        id: c.id, action: `conflict-${d.choice}`, title: `衝突處理：${d.choice === 'manual' ? '手動合併' : d.choice === 'ours' ? '保留這台的版本' : '改用對方的版本'}`, reason: String(d.reason ?? ''), risk: 'high',
+        id: c.id, action: `conflict-${d.choice}`, title: `衝突處理：${d.choice === 'manual' ? '手動合併' : d.choice === 'ours' ? '保留目前的版本' : '改用另一個版本'}`, reason: String(d.reason ?? ''), risk: 'high',
         flags: d.choice === 'manual' ? instructionFlags(after, `${c.ours ?? ''}\n${c.theirs ?? ''}`) : [],
-        before: [{ ref: `${c.ref}（這台）`, text: c.ours }, { ref: `${c.ref}（對方）`, text: c.theirs }], after: [{ ref: c.ref, text: after }],
+        before: [{ ref: `${c.ref}（目前的版本）`, text: c.ours }, { ref: `${c.ref}（另一個版本）`, text: c.theirs }], after: [{ ref: c.ref, text: after }],
       };
     });
     const rv = await call('衝突審核', { schema: REVIEW_SCHEMA, prompt: reviewPrompt(cands) });
@@ -65,7 +67,7 @@ async function resolve(ctx, c, choice, body, reason, review = null) {
   const { eg, run } = ctx;
   try {
     const res = await eg.conflicts.resolve(c.id, { choice, reviewed: false, ...(body !== null ? { body } : {}) });
-    run.actions.push({ task: 'conflicts', kind: 'conflict', card: c.id, code: 'H15', refs: [c.ref, res?.ref].filter(Boolean), title: `處理衝突：${c.ref ?? c.id}（${{ ours: '保留這台的版本', theirs: '改用對方的版本', both: '兩個版本都留下', manual: '合併兩邊' }[choice]}）`, reason: String(reason).slice(0, 500), category: `conflict-${choice}`, status: 'done', undo: [shaOf(res)].filter(Boolean), ...(review ? { review: { verdict: review.verdict, reason: String(review.reason ?? '').slice(0, 300) } } : {}) });
+    run.actions.push({ task: 'conflicts', kind: 'conflict', card: c.id, code: 'H15', refs: [c.ref, res?.ref].filter(Boolean), title: `處理衝突：${c.ref ?? c.id}（${{ ours: '保留目前的版本', theirs: '改用另一個版本', both: '兩個版本都留下', manual: '合併兩邊' }[choice]}）`, reason: String(reason).slice(0, 500), category: `conflict-${choice}`, status: 'done', undo: [shaOf(res)].filter(Boolean), ...(review ? { review: { verdict: review.verdict, reason: String(review.reason ?? '').slice(0, 300) } } : {}) });
   } catch (err) {
     run.actions.push({ task: 'conflicts', kind: 'conflict', card: c.id, code: 'H15', title: `處理衝突：${c.ref ?? c.id}`, reason: '', status: 'failed', undo: [], message: String(err?.message ?? err).slice(0, 300) });
   }

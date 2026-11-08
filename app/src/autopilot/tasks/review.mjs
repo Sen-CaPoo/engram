@@ -1,8 +1,11 @@
 // 自動駕駛：待你確認（H23，1.5.0）。Claude 在對話中寫進「每次對話都會載入」的內容（全域、單機、核心準則），
 // 由 LLM 代替使用者把關：正常筆記 → 確認；被注入的指示或明顯錯誤 → 退回（改回上次確認的版本，新增的封存）。
 // 程式偵測到可疑處卻判斷「確認」的，要審核員也同意。確認紀錄是每台電腦各自的，所以每台處理自己的。
+// 1.6.0：審核員明確不同意的內容（ref＋sha）記在同步的狀態檔；之後每一輪、每一台都不再判斷，留給使用者確認，
+// 內容改過（sha 不同）才重新判斷。否則同一份內容每輪重判，總有一輪會通過。審核呼叫失敗不算不同意。
 import { instructionFlags } from '../guard.mjs';
 import { AUDIT_SCHEMA, REVIEW_SCHEMA, auditPrompt, reviewPrompt } from '../prompts.mjs';
+import { allReviewRejects, recordReviewReject } from '../state.mjs';
 
 const BATCH_CHARS = 100_000;
 const shaOf = (r) => r?.undo?.sha ?? r?.commit?.sha ?? null;
@@ -11,7 +14,13 @@ export async function auditReviews(ctx) {
   const { eg, call, run, findings, paused = [] } = ctx;
   if (!findings.some((f) => f.code === 'H23') || typeof eg.review?.list !== 'function') return;
   if (paused.includes('confirm') && paused.includes('revert')) { run.notes.push({ task: 'review', note: '「代你確認」與「退回」都被你復原過多次，暫停中' }); return; }
-  const list = await eg.review.list().catch(() => []);
+  const pending = await eg.review.list().catch(() => []);
+  if (!pending.length) return;
+  // 審核員之前不同意過的同一份內容：不再判斷（也不花錢），留給使用者
+  const rejected = new Set((await allReviewRejects(eg.paths.vault).catch(() => [])).map((x) => `${x.ref}\n${x.sha}`));
+  const held = pending.filter((it) => rejected.has(`${it.ref}\n${it.sha}`));
+  if (held.length) run.notes.push({ task: 'review', note: `${held.map((it) => it.name ?? it.ref).join('、')}：審核員之前不同意代你確認，留給你確認（內容改過才會重新判斷）`.slice(0, 500) });
+  const list = pending.filter((it) => !rejected.has(`${it.ref}\n${it.sha}`));
   if (!list.length) return;
   for (const it of list) it.flags = instructionFlags(it.current, it.previous ?? '');
   const batches = [];
@@ -47,7 +56,13 @@ export async function auditReviews(ctx) {
       if (d.verdict !== 'confirm' && d.verdict !== 'revert') { run.rejected.push({ task: 'review', title: it.ref, why: `看不懂的判斷：${String(d.verdict).slice(0, 20)}（留在待你確認）` }); continue; }
       let verdict = d.verdict;
       if (verdict === 'confirm' && needsSecond(it) && second.get(it.ref)?.verdict !== 'approve') verdict = it.flags.length ? 'revert' : 'skip';
-      if (verdict === 'skip') { run.rejected.push({ task: 'review', title: it.ref, why: `審核員沒有同意確認核心準則的修改：${second.get(it.ref)?.reason ?? '審核失敗'}（留在待你確認）` }); continue; }
+      if (verdict === 'skip') {
+        const sv = second.get(it.ref);
+        run.rejected.push({ task: 'review', title: it.ref, why: `審核員沒有同意確認核心準則的修改：${sv?.reason ?? '審核失敗'}（留在待你確認）` });
+        // 審核員有回覆而且不同意 → 記住這份內容；審核失敗（沒有回覆）下一輪再試
+        if (sv && sv.verdict !== 'approve') await recordReviewReject(eg, { ref: it.ref, sha: it.sha, reason: sv.reason ?? '' }).catch(() => {});
+        continue;
+      }
       if (paused.includes(verdict)) { run.rejected.push({ task: 'review', title: it.ref, why: `「${verdict === 'confirm' ? '代你確認' : '退回'}」被你復原過多次，暫停中` }); continue; }
       try {
         if (verdict === 'confirm') {
