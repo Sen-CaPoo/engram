@@ -55,15 +55,23 @@ export async function auditReviews(ctx) {
       const reason = String(d.reason ?? '').slice(0, 500);
       if (d.verdict !== 'confirm' && d.verdict !== 'revert') { run.rejected.push({ task: 'review', title: it.ref, why: `看不懂的判斷：${String(d.verdict).slice(0, 20)}（留在待你確認）` }); continue; }
       let verdict = d.verdict;
-      if (verdict === 'confirm' && needsSecond(it) && second.get(it.ref)?.verdict !== 'approve') verdict = it.flags.length ? 'revert' : 'skip';
+      const sv = second.get(it.ref);
+      if (verdict === 'confirm' && needsSecond(it) && sv?.verdict !== 'approve') verdict = it.flags.length ? 'revert' : 'skip';
+      // 審核員有回覆而且明確不同意代你確認（審核失敗、漏回這一項都不算）
+      const explicitNo = d.verdict === 'confirm' && needsSecond(it) && !!sv && sv.verdict !== 'approve';
+      // 記住這份內容（ref＋sha）：之後每一輪、每一台都不再判斷，留給使用者
+      const remember = () => recordReviewReject(eg, { ref: it.ref, sha: it.sha, reason: sv?.reason ?? '' }).catch(() => {});
       if (verdict === 'skip') {
-        const sv = second.get(it.ref);
         run.rejected.push({ task: 'review', title: it.ref, why: `審核員沒有同意確認核心準則的修改：${sv?.reason ?? '審核失敗'}（留在待你確認）` });
-        // 審核員有回覆而且不同意 → 記住這份內容；審核失敗（沒有回覆）下一輪再試
-        if (sv && sv.verdict !== 'approve') await recordReviewReject(eg, { ref: it.ref, sha: it.sha, reason: sv.reason ?? '' }).catch(() => {});
+        if (explicitNo) await remember();
         continue;
       }
-      if (paused.includes(verdict)) { run.rejected.push({ task: 'review', title: it.ref, why: `「${verdict === 'confirm' ? '代你確認' : '退回'}」被你復原過多次，暫停中` }); continue; }
+      if (paused.includes(verdict)) {
+        run.rejected.push({ task: 'review', title: it.ref, why: `「${verdict === 'confirm' ? '代你確認' : '退回'}」被你復原過多次，暫停中` });
+        // 審核員不同意、但退回被暫停：內容沒變，也要記住，否則下一輪可能就被同意了
+        if (explicitNo) await remember();
+        continue;
+      }
       try {
         if (verdict === 'confirm') {
           const res = await eg.review.confirm([{ ref: it.ref, sha: it.sha }]);
@@ -75,6 +83,8 @@ export async function auditReviews(ctx) {
         }
       } catch (err) {
         run.actions.push({ task: 'review', kind: verdict, refs: [it.ref], code: 'H23', title: `${verdict === 'confirm' ? '確認' : '退回'}：${it.name}`, reason, status: 'failed', undo: [], message: String(err?.message ?? err).slice(0, 300) });
+        // 審核員不同意、但退回失敗：內容沒變，也要記住
+        if (verdict === 'revert' && explicitNo) await remember();
       }
     }
   }

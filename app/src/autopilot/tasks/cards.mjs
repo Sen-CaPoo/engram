@@ -44,8 +44,8 @@ export async function ruleCards(ctx) {
     const r = await eg.sync().catch((err) => ({ ok: false, error: { message: err.message } }));
     if (!r?.ok) run.notes.push({ task: 'cards', note: `同步仍然失敗（通常要你重新登入 GitHub：在終端機執行 gh auth login）：${r?.error?.message ?? ''}`.slice(0, 300) });
   }
-  // 核心準則的建議更新：1.6.0 起任何一台都可以套用（兩台套用同樣的文字，同步時不會衝突）
-  if (!off('core') && findings.some((x) => x.code === 'H24') && typeof eg.core?.suggestions === 'function') {
+  // 核心準則的建議更新：1.6.0 起任何一台都可以套用（兩台套用同樣的文字，同步時不會衝突）；開始前同步失敗時先不改共用的核心準則
+  if (ctx.shared !== false && !off('core') && findings.some((x) => x.code === 'H24') && typeof eg.core?.suggestions === 'function') {
     try {
       const ids = (await eg.core.suggestions()).map((s) => s.id);
       if (ids.length) await push(findings.find((x) => x.code === 'H24'), '加入核心準則的建議更新', await eg.core.applySuggestions(ids), { reason: 'Engram 內建的記憶寫入協定更新', category: 'core' });

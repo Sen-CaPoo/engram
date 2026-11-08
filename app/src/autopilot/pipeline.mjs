@@ -160,8 +160,9 @@ async function review(call, candidates) {
     const r = await call('審核', { schema: REVIEW_SCHEMA, prompt: reviewPrompt(batch) });
     for (const c of batch) {
       const v = r.ok ? (r.data.verdicts ?? []).find((x) => String(x.id) === c.id) : null;
+      // failed：審核員沒有給判斷（呼叫失敗、預算用完、被停止、漏回這一項）——不是不同意，下一輪要再審
       out.set(c.id, v ? { verdict: v.verdict === 'approve' ? 'approve' : 'reject', reason: String(v.reason ?? '').slice(0, 500), lostFacts: (Array.isArray(v.lostFacts) ? v.lostFacts : v.lostFacts ? [v.lostFacts] : []).map(String).slice(0, 10) }
-        : { verdict: 'reject', reason: r.ok ? '審核員沒有回覆這一項' : `審核失敗：${r.error?.message ?? ''}`.slice(0, 300) });
+        : { verdict: 'reject', failed: true, reason: r.ok ? '審核員沒有回覆這一項' : `審核失敗：${r.error?.message ?? ''}`.slice(0, 300) });
     }
     batch = [];
     size = 0;
@@ -253,6 +254,8 @@ export async function screen(call, items, snapshot, { dream = null, paused = [],
       it.review = v;
       // 審核員同意但列出會遺失的事實：不執行
       if (v?.verdict === 'approve' && !v.lostFacts?.length) approved.push(it);
+      // 審核沒有完成（不是不同意）：標成延後，這個範圍不記為整理過，下一輪再審
+      else if (!v || v.failed) rejected.push({ ...brief(it), why: `審核沒有完成，下一輪再處理：${v?.reason ?? '審核失敗'}`, deferred: true });
       else rejected.push({ ...brief(it), why: `審核員沒有同意：${v?.reason ?? ''}${v?.lostFacts?.length ? `（會遺失：${v.lostFacts.join('；')}）` : ''}` });
     }
   }

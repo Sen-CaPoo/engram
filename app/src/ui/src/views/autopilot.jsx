@@ -195,9 +195,9 @@ export function Autopilot({ params, go }) {
               </select>
             </label>
             {custom !== null && (
-              <form class="ap-cap-custom" onSubmit={(e) => { e.preventDefault(); saveCustom(); }}>
+              <form class="ap-cap-custom" noValidate onSubmit={(e) => { e.preventDefault(); saveCustom(); }}>
                 <span>US$</span>
-                <input class="input" type="number" min="1" max="1000" step="1" inputMode="decimal" value={custom} onInput={(e) => setCustom(e.currentTarget.value)} aria-label={t('自訂每月上限（US$）')} autoFocus />
+                <input class="input" type="number" min="1" max="1000" step="any" inputMode="decimal" value={custom} onInput={(e) => setCustom(e.currentTarget.value)} aria-label={t('自訂每月上限（US$）')} autoFocus />
                 <button class="btn sm primary" type="submit" disabled={!capOk}>{t('儲存')}</button>
                 <button class="btn sm ghost" type="button" onClick={() => setCustom(null)}>{t('取消')}</button>
                 {!capOk && <span class="ap-over">{t('請輸入 1 到 1000 之間的金額')}</span>}

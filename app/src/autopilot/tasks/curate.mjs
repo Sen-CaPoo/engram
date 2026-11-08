@@ -4,6 +4,7 @@
 // 「上次整理」看所有電腦的同步紀錄（machines/<mid>/autopilot.json 的 scopes）：任何一台整理過同一個版本、
 // 也看過目前所有的卡片，這台就跳過——不重複花錢，也不會兩台輪流改同一批記憶。
 import { createHash } from 'node:crypto';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { readJson } from '../../cli/fsutil.mjs';
 import { CORE_REF } from '../../tidy/plan.mjs';
@@ -27,14 +28,21 @@ function cardScope(f) {
   return r ? scopeKeyOfRef(r) : null;
 }
 
-function fingerprint(mems) {
-  return createHash('sha1').update(mems.map((m) => `${m.ref}@${m.updatedAt ?? ''}@${m.size ?? ''}`).sort().join('|')).digest('hex').slice(0, 12);
-}
+const sha1 = (t) => createHash('sha1').update(String(t ?? '').replace(/\r\n/g, '\n')).digest('hex');
 
-/** 範圍目前內容的指紋（核心準則看全文，其他看每筆記憶的修改時間與大小） */
-async function scopeFingerprint(eg, key, all) {
-  if (key === 'core') return createHash('sha1').update((await eg.core.read()).text ?? '').digest('hex').slice(0, 12);
-  return fingerprint((all ?? await eg.memories.list()).filter((m) => keyOfScope(m.scope) === key));
+/**
+ * 範圍目前內容的指紋：每筆記憶的 ref＋全文雜湊（核心準則看全文）。1.6.0 起要跨電腦比對，
+ * 不能用修改時間——沒有 metadata.modified 的檔案會退回檔案 mtime，而每台電腦 git pull 之後的 mtime 都不同。
+ */
+export async function scopeFingerprint(eg, key, all) {
+  if (key === 'core') return sha1((await eg.core.read()).text ?? '').slice(0, 12);
+  const refs = (all ?? await eg.memories.list()).filter((m) => keyOfScope(m.scope) === key).map((m) => m.ref).sort();
+  const parts = [];
+  for (const ref of refs) {
+    const text = await fsp.readFile(path.join(eg.paths.vault, ...ref.split('/')), 'utf8').catch(() => '');
+    parts.push(`${ref}@${sha1(text)}`);
+  }
+  return sha1(parts.join('|')).slice(0, 12);
 }
 
 /** 這一輪要整理哪些範圍（依優先順序） */
@@ -44,8 +52,9 @@ export async function planScopes(ctx) {
   const marks = await allScopeMarks(eg.paths.vault, { legacy, selfMid: mid });
   const all = await eg.memories.list();
   const projects = (await eg.projects.list({ includeArchived: false })).filter((p) => !p.mergedInto);
-  // 多台平等：每台都看全域、核心準則、所有專案，以及自己的單機記憶（別台的單機記憶由那台處理）
-  const keys = ['global', 'core', `machine:${mid}`, ...projects.map((p) => `project:${p.pid}`)];
+  // 多台平等：每台都看全域、核心準則、所有專案，以及自己的單機記憶（別台的單機記憶由那台處理）。
+  // 開始前同步失敗（ctx.shared === false）時只整理自己的單機記憶，不拿過期的內容改共用記憶
+  const keys = ctx.shared === false ? [`machine:${mid}`] : ['global', 'core', `machine:${mid}`, ...projects.map((p) => `project:${p.pid}`)];
   const cardsBy = new Map();
   for (const f of findings.filter((x) => CURATE_CODES.includes(x.code))) {
     const k = cardScope(f);
@@ -77,7 +86,7 @@ export async function planScopes(ctx) {
  */
 async function markScope(ctx, sc) {
   const fp = await scopeFingerprint(ctx.eg, sc.key).catch(() => sc.fp);
-  ctx.scopeMarks[sc.key] = { fp, at: new Date(ctx.now).toISOString(), cards: sc.cards.map((c) => c.id) };
+  ctx.scopeMarks[sc.key] = { fp, at: new Date(ctx.clock?.() ?? ctx.now).toISOString(), cards: sc.cards.map((c) => c.id) };
 }
 
 /** 整理一個範圍：讀 → 問 LLM → 篩選 → 執行 → 記到執行紀錄 */
@@ -142,5 +151,6 @@ export async function curateScope(ctx, sc) {
     await eg.findings.dismiss(f.id, { until: new Date(ctx.now + 90 * DAY).toISOString() }).catch(() => {});
     run.actions.push({ task: 'curate', scope: sc.key, kind: 'dismiss', card: f.id, code: f.code, title: `不處理：${f.title}`, reason: String(d.reason ?? '').slice(0, 500), status: 'done', undo: [] });
   }
-  if (!rejected.some((x) => x.deferred)) await markScope(ctx, sc);
+  // 有延後的項目（超過改動上限、審核沒有完成）或這一輪中途停止（預算用完、被停止、用量上限）：不記為整理過，下一輪再看
+  if (!rejected.some((x) => x.deferred) && !call.state?.stopped) await markScope(ctx, sc);
 }

@@ -127,7 +127,7 @@ export async function dreamProject(ctx, target) {
     }
   }
   // 沒有建立記錄（沒有通過的建議）：仍記為已回顧，這批對話不必再分析。有建議被延後時不記，下一輪重新分析
-  if (deferred) run.notes.push({ task: 'dream', pid: target.pid, note: '有建議超過這一輪最多改動的記憶筆數，這批對話下一輪重新分析' });
+  if (deferred) run.notes.push({ task: 'dream', pid: target.pid, note: '有建議延後處理（超過這一輪最多改動的記憶筆數，或審核沒有完成），這批對話下一輪重新分析' });
   else if (!rec) await eg.dream.done(m.id, { skip: skipped });
   run.notes.push({ task: 'dream', pid: target.pid, note: `回顧了 ${withText.length - skipped.length} 個對話${m.remaining ? `，還有 ${m.remaining} 個下一輪處理` : ''}` });
 }

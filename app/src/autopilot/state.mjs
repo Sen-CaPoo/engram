@@ -20,6 +20,7 @@ const FEEDBACK_MAX = 100;
 const REJECTS_MAX = 200;
 const SCOPE_KEY_RE = /^(global|core|machine:[a-z0-9][a-z0-9-]{0,63}|project:[a-z0-9][a-z0-9-]{0,63})$/;
 const SCOPES_MAX = 500;
+const KNOWN = new Set(['v', 'enabledAt', 'lastRunAt', 'lastRunId', 'feedback', 'scopes', 'reviewRejects']);
 const RUNS_KEEP_DAYS = 90;
 
 export const RUN_ID_RE = /^ap-\d{8}-\d{6}-[a-z0-9]{4}$/;
@@ -53,7 +54,11 @@ function normalizeRejects(list) {
 }
 
 function normalize(j) {
+  // 不認得的欄位原樣保留（之後的版本新增的欄位，不會在這一版改寫狀態檔時被丟掉）
+  const extra = {};
+  if (j && typeof j === 'object' && !Array.isArray(j)) for (const [k, val] of Object.entries(j)) if (!KNOWN.has(k) && val !== undefined) extra[k] = val;
   return {
+    ...extra,
     v: 1,
     enabledAt: j?.enabledAt ?? null,
     lastRunAt: j?.lastRunAt ?? null,
@@ -87,7 +92,8 @@ export async function allMachineStates(vault) {
   const out = [];
   for (const mid of await listMachineIds(vault)) {
     const m = await readJson(path.join(machineDir(vault, mid), 'machine.json'), null);
-    out.push({ mid, label: m?.label ?? mid, lastSeenAt: m?.lastSeenAt ?? null, ...(await readMachineState(vault, mid)) });
+    // 狀態檔的欄位先展開：同步來的檔案就算夾帶 mid、label 也蓋不掉資料夾名稱與 machine.json 的值
+    out.push({ ...(await readMachineState(vault, mid)), mid, label: m?.label ?? mid, lastSeenAt: m?.lastSeenAt ?? null });
   }
   return out;
 }

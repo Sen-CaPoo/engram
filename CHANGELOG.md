@@ -11,8 +11,8 @@
 ### 多台電腦平等
 
 - **拿掉「主機」**：1.5.0 只讓最早開啟的那台電腦整理共用記憶、處理同步衝突。現在開啟自動駕駛的每台電腦都平等，都會整理全域、核心準則與所有專案的記憶，也都會處理同步衝突與核心準則的建議更新。單機記憶仍只由自己那台整理；金鑰、待你確認與對話回顧也各台處理自己的。
-- **不重複整理**：每個範圍整理到哪個版本、看過哪些卡片，記在記憶庫的 `machines/<電腦>/autopilot.json`（每台只寫自己的檔案，跟著同步）。任何一台整理過、內容也沒再變、目前的卡片都看過的範圍，其他台就跳過；記錄的是整理「之後」的版本，所以另一台不會再整理一次剛整理好的結果。1.5.0 留在本機的整理紀錄也會一起參考。
-- **不互相覆蓋**：每輪開始前先同步；寫入沿用版本檢查。兩台剛好同時改到同一筆時，同步會產生衝突，下一輪再合併，兩邊的內容都不會遺失。
+- **不重複整理**：每個範圍整理到哪個版本、看過哪些卡片，記在記憶庫的 `machines/<電腦>/autopilot.json`（每台只寫自己的檔案，跟著同步）。任何一台整理過、內容也沒再變、目前的卡片都看過的範圍，其他台就跳過；記錄的是整理「之後」的版本，而且以記憶內容判斷（不看檔案時間，每台電腦同步後的檔案時間都不同），所以另一台不會再整理一次剛整理好的結果。審核沒有完成或這一輪中途停止時不記，下一輪再處理。1.5.0 留在本機的整理紀錄也會一起參考。
+- **不互相覆蓋**：每輪開始前先同步，同步失敗（例如離線）時這一輪只處理這台自己的部分，共用記憶與衝突等同步恢復後再處理；寫入沿用版本檢查。兩台剛好同時改到同一筆時，同步會產生衝突，下一輪再合併，兩邊的內容都不會遺失。
 - 自動駕駛處理衝突時的用語改成「目前的版本／另一個版本」（原本是「這台／對方」，換一台處理時會說反）。
 - 「自動駕駛」頁的「處理共用記憶的電腦」改成「開啟自動駕駛的電腦」，列出每一台；`engram autopilot status` 同樣列出開啟的電腦。API `GET /api/autopilot` 的 `host` 改成 `machines`，執行紀錄不再記主機。
 - 請把每台電腦都更新到 1.6.0：還在 1.5.0 的電腦看不到其他電腦的整理紀錄，可能重複整理同一批記憶。
@@ -39,8 +39,8 @@
 **Every computer running autopilot is now equal, and the budget is roomier: quality first.**
 
 - **No more computer in charge:** in 1.5.0 only the earliest computer to turn autopilot on tidied shared memories and resolved sync conflicts. Now every computer with autopilot on tidies global memories, core rules, and every project's memories, and resolves sync conflicts and core rule suggestions. Machine memories are still tidied only by their own computer, and each computer handles its own secrets, reviews, and conversations.
-- **No duplicate work:** which version of each scope was tidied, and which cards were looked at, is recorded in `machines/<computer>/autopilot.json` in your vault (each computer writes only its own file, and it syncs). A scope any computer has tidied that hasn't changed since, with no new cards, is skipped by the others; the version recorded is the one after tidying, so another computer won't tidy the fresh result again. Records 1.5.0 kept on the computer are taken into account too.
-- **No overwriting each other:** each run syncs first, and writes keep the version checks. If two computers change the same memory at once, syncing turns it into a conflict that the next run merges, and neither side is lost.
+- **No duplicate work:** which version of each scope was tidied, and which cards were looked at, is recorded in `machines/<computer>/autopilot.json` in your vault (each computer writes only its own file, and it syncs). A scope any computer has tidied that hasn't changed since, with no new cards, is skipped by the others; the version recorded is the one after tidying, judged by the memories' content rather than file times (which differ on every computer after syncing), so another computer won't tidy the fresh result again. Nothing is recorded when a review didn't complete or the run stopped early; the next run picks it up. Records 1.5.0 kept on the computer are taken into account too.
+- **No overwriting each other:** each run syncs first; if that fails (for example when offline), the run handles only this computer's own work, and shared memories and conflicts wait until syncing works again. Writes keep the version checks. If two computers change the same memory at once, syncing turns it into a conflict that the next run merges, and neither side is lost.
 - Autopilot's conflict wording is now "the current version / the other version" (it said "this computer / the other computer", which is backwards when a different computer handles it).
 - On the Autopilot page, "Handles shared memories" becomes "Computers with autopilot on" and lists each one; `engram autopilot status` lists them too. In `GET /api/autopilot`, `host` becomes `machines`, and runs no longer record a host.
 - Update every computer to 1.6.0: a computer still on 1.5.0 can't see the others' tidy-up records and may tidy the same memories again.

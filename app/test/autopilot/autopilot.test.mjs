@@ -17,6 +17,7 @@ import { normalizeItems, quoteFromUser, scopeKeyOfRef, screen } from '../../src/
 import * as guardMod from '../../src/autopilot/guard.mjs';
 import { fence, AUDIT_SCHEMA, CARDS_SCHEMA, CONFLICT_SCHEMA, CURATE_SCHEMA, DREAM_ANALYZE_SCHEMA, DREAM_PLAN_SCHEMA, REVIEW_SCHEMA, SECRET_SCHEMA } from '../../src/autopilot/prompts.mjs';
 import { autopilotStatus, runAutopilot, undoRun } from '../../src/autopilot/run.mjs';
+import { scopeFingerprint } from '../../src/autopilot/tasks/curate.mjs';
 import { createJobs } from '../../src/agent/jobs.mjs';
 import { readRecord } from '../../src/tidy/store.mjs';
 import { machinePaths, makeRepo, mkTmp, rmTmp, writeDriverCli } from '../core/helpers.mjs';
@@ -940,7 +941,65 @@ describe('1.6.0：多台平等、拿掉每輪上限、審核員的拒絕要記�
     assert.ok(!(await corePending()), '下一輪審核員同意 → 確認');
   });
 
-  test('沒有每輪上限：一輪可以用到本月剩下的全部；本月用完時說明是「這個月」', async () => {
+  test('範圍指紋只看內容：檔案修改時間不同（每台電腦 git pull 之後都不同）也算同一個版本（第一輪審查）', async () => {
+    const before = await scopeFingerprint(eg, 'global');
+    const dir = path.join(eg.paths.vault, 'global');
+    const old = new Date('2026-01-02T03:04:05Z');
+    for (const n of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) fs.utimesSync(path.join(dir, n), old, old);
+    assert.equal(await scopeFingerprint(eg, 'global'), before, '只改修改時間，指紋不變');
+    await eg.memories.create({ scope: { kind: 'global' }, name: 'fp-probe', type: 'reference', description: '指紋測試', body: '內容' });
+    assert.notEqual(await scopeFingerprint(eg, 'global'), before, '內容變了，指紋就變');
+  });
+
+  test('1.5.0 留在本機的整理紀錄（scopes.json）當成這台的紀錄一起比較（第一輪審查）', async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const marks = await allScopeMarks(eg.paths.vault, { legacy: { global: { fp: 'legacy00000', at: future } }, selfMid: eg.machine.id });
+    assert.deepEqual([marks.global.fp, marks.global.mid], ['legacy00000', eg.machine.id]);
+    assert.deepEqual(marks.global.cards, []);
+  });
+
+  test('審核沒有完成（呼叫失敗）：不算不同意，這個範圍不記為整理過，下一輪再審（第一輪審查）', async () => {
+    await eg.memories.create({ scope: { kind: 'project', pid }, name: 'stale-plan', type: 'project', description: '已完成的舊計畫', body: '2026-08 的計畫，2026-09 已完成。' });
+    await resetScopes();
+    const ref = `projects/${pid}/memory/stale-plan.md`;
+    const archivePlan = (prompt) => (prompt.includes(`範圍：project:${pid}`) && prompt.includes(ref) ? { summary: '', items: [{ ref, action: 'archive', title: '封存已完成的舊計畫', reason: '已完成', ops: [{ op: 'remove', ref }] }], dismiss: [] } : EMPTY.curate);
+    const judge = fakeJudge({ curate: archivePlan, review: { __fail: 'E_LLM' } });
+    const r = await runAutopilot(eg, { judge, reason: 'test' });
+    assert.ok(exists(ref), '沒有審核同意就不執行');
+    assert.ok(r.run.rejected.some((x) => x.title === '封存已完成的舊計畫' && /審核沒有完成/.test(x.why)), JSON.stringify(r.run.rejected));
+    assert.equal((await readMachineState(eg.paths.vault, eg.machine.id)).scopes[`project:${pid}`], undefined, '不記為整理過');
+    // 下一輪：審核員同意 → 執行
+    await runAutopilot(eg, { judge: fakeJudge({ curate: archivePlan, review: reviewer() }), reason: 'test' });
+    assert.ok(!exists(ref), '下一輪再審，同意後執行');
+    assert.ok((await readMachineState(eg.paths.vault, eg.machine.id)).scopes[`project:${pid}`]?.fp);
+  });
+
+  test('開始前同步失敗（離線）：不整理共用記憶、不處理衝突，只做這台自己的部分（第一輪審查）', async () => {
+    await resetScopes();
+    const ref = `projects/${pid}/memory/offline-notes.md`;
+    const body = mem({ name: 'offline-notes', description: '離線測試', type: 'reference', body: 'A' });
+    fs.writeFileSync(vaultFile(ref), body);
+    const id = await quarantine(eg.paths.vault, { ref, ours: body, theirs: mem({ name: 'offline-notes', description: '離線測試', type: 'reference', body: 'B' }), summary: '兩台都改了' });
+    const realSync = eg.sync;
+    eg.sync = async () => ({ ok: false, state: 'offline', error: { message: '無法連線' } });
+    try {
+      const judge = fakeJudge({ conflict: { decisions: [{ id, choice: 'both', reason: 'x' }] }, review: reviewer() });
+      const r = await runAutopilot(eg, { judge, reason: 'test' });
+      assert.ok(r.run.notes.some((n) => /開始前同步失敗（offline）/.test(n.note)), JSON.stringify(r.run.notes));
+      assert.ok(!judge.calls.some((c) => c.kind === 'conflict'), '不處理衝突');
+      assert.ok(!curatedScopes(judge).some((p) => /範圍：(global|core|project:)/.test(p)), '不整理共用記憶');
+      assert.ok((await eg.conflicts.list()).some((c) => c.id === id), '衝突留著等同步恢復');
+    } finally {
+      eg.sync = realSync;
+      await eg.conflicts.resolve(id, { choice: 'ours' });
+    }
+  });
+
+  test('沒有每輪上限：一輪可以用到本月剩下的全部（超過舊的 US$5）；本月用完時說明是「這個月」', async () => {
+    const used1 = (await readLedger(eg.paths.local)).costUsd;
+    await eg.settings.set({ autopilotBudget: used1 + 7 });
+    const big = await runAutopilot(eg, { judge: fakeJudge({ review: reviewer() }), reason: 'test' });
+    assert.ok(Math.abs(big.run.budget.run - 7) < 0.05, `剩 7 美元就能用 7 美元（1.5.0 會被每輪 US$5 封頂）：${JSON.stringify(big.run.budget)}`);
     const used0 = (await readLedger(eg.paths.local)).costUsd;
     if (used0 < 1) await charge(eg.paths.local, 'sonnet', { input: 0, output: 0, costUsd: 1 - used0 });
     const used = (await readLedger(eg.paths.local)).costUsd;

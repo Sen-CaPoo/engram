@@ -67,8 +67,16 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
   const run = { v: 1, id, reason, machine: eg.machine.id, startedAt: new Date(now()).toISOString(), status: 'running', pid: process.pid, budget: null, actions: [], rejected: [], skipped: [], notes: [], calls: [], records: [] };
   const save = async () => { await writeRun(local, run).catch(() => {}); onProgress?.(run); };
   const workDir = path.join(workRoot(local), id);
-  // 這一輪整理過的範圍：結束時一次寫進同步的狀態檔，其他電腦就不會重複整理同一個版本
+  // 這一輪整理過的範圍：分批寫進同步的狀態檔（對話回顧之前、最後一次同步之前，以及結束時保底），其他電腦就不會重複整理同一個版本
   const scopeMarks = {};
+  const flushMarks = async () => {
+    const batch = { ...scopeMarks };
+    if (!Object.keys(batch).length) return;
+    try {
+      await updateMachineState(eg, (s) => { s.scopes = mergeScopeMarks(s.scopes, batch); return s; }, 'autopilot scopes');
+      for (const k of Object.keys(batch)) if (scopeMarks[k] === batch[k]) delete scopeMarks[k];
+    } catch (err) { log?.warn?.('autopilot', `整理紀錄寫入失敗，稍後再試：${err?.message ?? err}`); }
+  };
   try {
     await save();
     // 上一輪被中斷（程序被關掉）：標成中斷
@@ -77,9 +85,13 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
       const st = await readMachineState(eg.paths.vault, eg.machine.id);
       if (!st.enabledAt) await updateMachineState(eg, (s) => { s.enabledAt = new Date(now()).toISOString(); return s; }, 'autopilot on').catch((err) => log?.warn?.('autopilot', err));
     }
-    // 先拿到另一台的變更
-    const s0 = await eg.sync().catch((err) => ({ ok: false, error: { message: err.message } }));
-    if (s0?.ok === false) run.notes.push({ task: 'run', note: `開始前同步失敗，先用本機的內容處理：${s0.error?.message ?? ''}`.slice(0, 300) });
+    // 先拿到另一台的變更。同步正在進行（另一個同步或自動存檔拿著鎖）時等一下再試一次
+    const trySync = () => eg.sync().catch((err) => ({ ok: false, state: 'error', error: { message: err.message } }));
+    let s0 = await trySync();
+    if (s0?.ok === false && ['locked', 'busy'].includes(s0.state)) { await new Promise((r) => setTimeout(r, 3000)); s0 = await trySync(); }
+    // 1.6.0：每台都處理共用記憶。沒拿到另一台的最新變更（離線、登入失效…）時，不拿過期的內容整理共用記憶或解衝突
+    const shared = s0?.ok !== false;
+    if (!shared) run.notes.push({ task: 'run', note: `開始前同步失敗（${s0?.state ?? 'error'}）：這一輪只處理這台自己的部分（單機記憶、金鑰、待你確認、收件匣、對話回顧），共用記憶的整理與同步衝突等同步恢復後再處理。${s0?.error?.message ?? ''}`.slice(0, 300) });
     const budget = await runBudget(local, settings.autopilotBudget, now());
     run.budget = budget;
     if (budget.run <= 0) {
@@ -93,7 +105,7 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
     const paused = pausedCategories(feedback, now());
     if (paused.length) run.notes.push({ task: 'run', note: `暫停中的類別（被你復原過多次）：${paused.map(categoryLabel).join('、')}` });
     const memCount = (await eg.memories.list()).length;
-    const ctx = { eg, call, run, mid: eg.machine.id, feedback, paused, cap: { left: changeCap(memCount) }, workDir, log, now: now(), findings: [], save, scopeMarks };
+    const ctx = { eg, call, run, mid: eg.machine.id, feedback, paused, cap: { left: changeCap(memCount) }, workDir, log, now: now(), clock: now, findings: [], save, scopeMarks, shared };
     const refresh = async () => { ctx.findings = (await eg.health().catch(() => [])) ?? []; };
     const stopped = () => !!call.state.stopped || signal?.aborted;
     const step = async (name, fn) => {
@@ -107,14 +119,17 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
     await refresh();
     await step('secrets', () => secretCards(ctx));
     await step('cards', async () => { await refresh(); await ruleCards(ctx); });
-    await step('conflicts', () => resolveConflicts(ctx));
+    if (shared) await step('conflicts', () => resolveConflicts(ctx));
     await step('cards', async () => { await refresh(); await judgedCards(ctx); });
     await step('review', async () => { await refresh(); await auditReviews(ctx); });
     await refresh();
     const scopes = await planScopes(ctx).catch(() => []);
     for (const sc of scopes.filter((x) => x.sev < 3)) await step('curate', () => curateScope(ctx, sc));
+    await flushMarks();
     for (const t of await dreamTargets(ctx).catch(() => [])) await step('dream', () => dreamProject(ctx, t));
     for (const sc of scopes.filter((x) => x.sev >= 3)) await step('curate', () => curateScope(ctx, sc));
+    // 整理紀錄在最後一次同步之前寫入，這一輪結束時就推給其他電腦
+    await flushMarks();
     if (call.state.stopped) run.notes.push({ task: 'run', note: call.state.stopped === 'budget' ? `這個月的預算用完了（約當 US$${budget.monthly}），其餘的下個月處理；需要的話可以在「自動駕駛」頁提高每月上限` : call.state.stopped === 'cancelled' ? '常駐程式結束，這一輪提前停止' : '已達 Claude 的用量上限，其餘的下一輪處理' });
     // 收尾：更新收件匣、把變更推到另一台
     await eg.health().catch(() => null);
@@ -132,7 +147,9 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
     run.summary = summarize(run);
     if (run.status === 'running') run.status = 'failed';
     await save();
-    await updateMachineState(eg, (s) => { s.lastRunAt = run.endedAt; s.lastRunId = run.id; s.scopes = mergeScopeMarks(s.scopes, scopeMarks); return s; }, 'autopilot run').catch(() => {});
+    // 保底：還沒寫進去的整理紀錄（例如中途出錯）跟上次執行時間一起寫
+    await updateMachineState(eg, (s) => { s.lastRunAt = run.endedAt; s.lastRunId = run.id; s.scopes = mergeScopeMarks(s.scopes, scopeMarks); return s; }, 'autopilot run')
+      .catch((err) => log?.warn?.('autopilot', `執行狀態寫入失敗：${err?.message ?? err}`));
     await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
     await cleanupClaudeProject(eg, local).catch(() => {});
     await pruneRuns(local).catch(() => {});
