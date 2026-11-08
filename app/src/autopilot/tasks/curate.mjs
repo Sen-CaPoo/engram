@@ -69,7 +69,7 @@ export async function planScopes(ctx) {
     const mems = k === 'core' ? [] : all.filter((m) => keyOfScope(m.scope) === k);
     if (k !== 'core' && !mems.length) continue;
     const fp = await scopeFingerprint(eg, k, all);
-    if (fp === null) continue;
+    if (fp === null) { ctx.run?.notes.push({ task: 'curate', scope: k, note: `${k} 有記憶檔讀不到（可能暫時被其他程式鎖住），這一輪略過這個範圍` }); continue; }
     const cards = cardsBy.get(k) ?? [];
     const last = marks[k];
     // 任何一台已經整理過這個版本、也看過目前所有的卡片（處理了或判斷不必處理）→ 跳過
@@ -160,9 +160,10 @@ export async function curateScope(ctx, sc) {
   if (call.state?.stopped || rejected.some((x) => x.deferred && !x.reviewIncomplete)) return;
   // 審核沒有完成（不是不同意）：下一輪再審；連續 MAX_REVIEW_DEFERRALS 輪都沒完成就當作看過，避免每輪空轉花錢
   if (rejected.some((x) => x.reviewIncomplete)) {
-    const n = await noteReviewDeferral(eg.paths.local, sc.key, true);
+    const n = await noteReviewDeferral(eg.paths.local, sc.key, true, { tag: sc.fp, now: ctx.clock?.() ?? Date.now() });
     if (n < MAX_REVIEW_DEFERRALS) return;
-    run.notes.push({ task: 'curate', scope: sc.key, note: `審核連續 ${n} 輪沒有完成，這個範圍先記為看過；內容改變或出現新的卡片時再整理` });
+    // 讓使用者看得到：列在「沒有執行的建議」，不只是備註
+    run.rejected.push({ task: 'curate', scope: sc.key, title: `整理${label}`, why: `審核連續 ${n} 輪沒有完成，這個範圍先記為看過；內容改變或出現新的卡片時再整理` });
   }
   await noteReviewDeferral(eg.paths.local, sc.key, false);
   await markScope(ctx, sc);

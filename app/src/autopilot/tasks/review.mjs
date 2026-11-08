@@ -18,10 +18,20 @@ export async function auditReviews(ctx) {
   if (!pending.length) return;
   // 審核員之前不同意過的同一份內容：不再判斷（也不花錢），留給使用者。
   // 因為「退回」暫停中才記下的（held），只在那一類仍暫停時有效：使用者恢復之後重新判斷，該退回的就退回
-  const rejected = new Set((await allReviewRejects(eg.paths.vault).catch(() => [])).filter((x) => !x.held || paused.includes(x.held)).map((x) => `${x.ref}\n${x.sha}`));
-  const held = pending.filter((it) => rejected.has(`${it.ref}\n${it.sha}`));
-  if (held.length) run.notes.push({ task: 'review', note: `${held.map((it) => it.name ?? it.ref).join('、')}：審核員之前不同意代你確認，留給你確認（內容改過才會重新判斷）`.slice(0, 500) });
-  const list = pending.filter((it) => !rejected.has(`${it.ref}\n${it.sha}`));
+  // key → 只因為暫停才記的（true）／審核員不同意（false，有任何一筆就算）
+  const rejected = new Map();
+  for (const x of await allReviewRejects(eg.paths.vault).catch(() => [])) {
+    if (x.held && !paused.includes(x.held)) continue;
+    const k = `${x.ref}\n${x.sha}`;
+    rejected.set(k, rejected.has(k) ? rejected.get(k) && !!x.held : !!x.held);
+  }
+  const keyOf = (it) => `${it.ref}\n${it.sha}`;
+  const names = (fn) => pending.filter((it) => rejected.has(keyOf(it)) && fn(rejected.get(keyOf(it)))).map((it) => it.name ?? it.ref).join('、');
+  const noList = names((h) => !h);
+  const heldList = names((h) => h);
+  if (noList) run.notes.push({ task: 'review', note: `${noList}：審核員之前不同意代你確認，留給你確認（內容改過才會重新判斷）`.slice(0, 500) });
+  if (heldList) run.notes.push({ task: 'review', note: `${heldList}：判斷為應該退回，但「退回」暫停中，留給你確認（恢復退回之後會重新判斷）`.slice(0, 500) });
+  const list = pending.filter((it) => !rejected.has(keyOf(it)));
   if (!list.length) return;
   for (const it of list) it.flags = instructionFlags(it.current, it.previous ?? '');
   const batches = [];

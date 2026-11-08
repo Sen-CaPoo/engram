@@ -67,8 +67,9 @@ export async function ruleCards(ctx) {
 /** 要判斷的卡片：一次問 LLM，再逐張執行 */
 export async function judgedCards(ctx) {
   const { eg, call, run, findings, feedback, now } = ctx;
-  // 開始前沒有同步時略過 H19（會把共用的專案記憶搬到別的專案）；H05 收編、H18 大量刪除看的是這台自己的狀態，照常處理
-  const cards = findings.filter((x) => JUDGED_CODES.includes(x.code) && (x.fixes?.length || x.fix) && !(ctx.paused ?? []).includes(`card-${x.code}`) && (ctx.shared !== false || x.code !== 'H19'));
+  // 開始前沒有同步時略過 H19（會把共用的專案記憶搬到別的專案）與 H05 收編（依過期的專案清單可能建立重複的專案）；
+  // H18 大量刪除看的是這台自己待推送的狀態，照常處理
+  const cards = findings.filter((x) => JUDGED_CODES.includes(x.code) && (x.fixes?.length || x.fix) && !(ctx.paused ?? []).includes(`card-${x.code}`) && (ctx.shared !== false || x.code === 'H18'));
   if (!cards.length) return;
   const rows = [];
   for (const c of cards) {

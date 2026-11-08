@@ -13,7 +13,7 @@ import { createClaudeJudge, judgeArgs, limitHit, parseJudgeOutput } from '../../
 import { addedLines, changeCap, instructionFlags, riskOf } from '../../src/autopilot/guard.mjs';
 import { DEFAULT_MONTHLY_USD, charge, readLedger, runBudget } from '../../src/autopilot/budget.mjs';
 import { acquireRunLock, allFeedback, allReviewRejects, allScopeMarks, enabledMachines, pausedCategories, readMachineState, readRun, recordUndoFeedback, setEnabledState, updateMachineState } from '../../src/autopilot/state.mjs';
-import { normalizeItems, quoteFromUser, scopeKeyOfRef, screen } from '../../src/autopilot/pipeline.mjs';
+import { noteReviewDeferral, normalizeItems, quoteFromUser, scopeKeyOfRef, screen } from '../../src/autopilot/pipeline.mjs';
 import * as guardMod from '../../src/autopilot/guard.mjs';
 import { fence, AUDIT_SCHEMA, CARDS_SCHEMA, CONFLICT_SCHEMA, CURATE_SCHEMA, DREAM_ANALYZE_SCHEMA, DREAM_PLAN_SCHEMA, REVIEW_SCHEMA, SECRET_SCHEMA } from '../../src/autopilot/prompts.mjs';
 import { autopilotStatus, runAutopilot, undoRun } from '../../src/autopilot/run.mjs';
@@ -1028,10 +1028,21 @@ describe('1.6.0：多台平等、拿掉每輪上限、審核員的拒絕要記�
       if (i < 3) assert.equal(await state(), undefined, `第 ${i} 輪：延後，不記`);
       else {
         assert.ok((await state())?.fp, '第 3 輪：記為看過');
-        assert.ok(r.run.notes.some((n) => /審核連續 3 輪沒有完成/.test(n.note)), JSON.stringify(r.run.notes));
+        assert.ok(r.run.rejected.some((x) => x.task === 'curate' && /審核連續 3 輪沒有完成/.test(x.why)), '列在「沒有執行的建議」讓使用者看得到');
       }
     }
     assert.ok(exists(ref), '始終沒有審核同意，所以沒有執行');
+  });
+
+  test('審核延後的計數綁定內容版本：版本不同或超過 7 天就從 1 重算（第三輪審查）', async () => {
+    const local = path.join(root, 'deferral-local');
+    const t0 = Date.parse('2026-11-01T00:00:00Z');
+    assert.equal(await noteReviewDeferral(local, 'project:x', true, { tag: 'fp1', now: t0 }), 1);
+    assert.equal(await noteReviewDeferral(local, 'project:x', true, { tag: 'fp1', now: t0 + 1000 }), 2, '同一個版本累加');
+    assert.equal(await noteReviewDeferral(local, 'project:x', true, { tag: 'fp2', now: t0 + 2000 }), 1, '內容變了，舊版本累積的次數不算');
+    assert.equal(await noteReviewDeferral(local, 'project:x', true, { tag: 'fp2', now: t0 + 8 * 86_400_000 }), 1, '超過 7 天重算');
+    assert.equal(await noteReviewDeferral(local, 'project:x', false), 0);
+    assert.equal(await noteReviewDeferral(local, 'project:x', true, { tag: 'fp2', now: t0 + 9 * 86_400_000 }), 1, '清掉之後從 1 開始');
   });
 
   test('審核員不同意、但「退回」暫停中：暫停期間不再判斷；恢復退回之後重新判斷並退回（第二輪審查）', async () => {

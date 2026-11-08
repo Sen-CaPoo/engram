@@ -92,7 +92,7 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
     // 1.6.0：每台都處理共用記憶。沒拿到另一台的最新變更（離線、登入失效、使用者暫停了同步…）時，
     // 不拿過期的內容整理共用記憶、解衝突或代為確認／退回（確認紀錄是所有電腦共用的）
     const shared = s0?.ok !== false && s0?.state !== 'paused';
-    if (!shared) run.notes.push({ task: 'run', note: `開始前沒有同步（${s0?.state ?? 'error'}）：這一輪只處理這台自己的部分（單機記憶、金鑰、收編與大量刪除的卡片、對話回顧），共用記憶的整理、同步衝突與待你確認下一輪再處理。${s0?.error?.message ?? ''}`.slice(0, 300) });
+    if (!shared) run.notes.push({ task: 'run', note: `開始前沒有同步（${s0?.state ?? 'error'}）：這一輪只處理這台自己的部分（單機記憶、金鑰、大量刪除的卡片、對話回顧），共用記憶的整理、同步衝突與待你確認下一輪再處理。${s0?.error?.message ?? ''}`.slice(0, 300) });
     const budget = await runBudget(local, settings.autopilotBudget, now());
     run.budget = budget;
     if (budget.run <= 0) {

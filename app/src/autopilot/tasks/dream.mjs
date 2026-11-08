@@ -120,9 +120,11 @@ export async function dreamProject(ctx, target) {
   const reviewDeferred = rejected.some((x) => x.reviewIncomplete);
   let deferred = rejected.some((x) => x.deferred && !x.reviewIncomplete) || (reviewDeferred && !!call.state?.stopped);
   if (!deferred && reviewDeferred) {
-    const n = await noteReviewDeferral(eg.paths.local, `dream:${target.pid}`, true);
+    // 版本標記用這批對話的 session id（回顧編號 m.id 每輪都不同，不能用）
+    const tag = m.sessions.map((s) => String(s.sid ?? '')).sort().join(',').slice(0, 2000);
+    const n = await noteReviewDeferral(eg.paths.local, `dream:${target.pid}`, true, { tag, now: ctx.clock?.() ?? Date.now() });
     if (n < MAX_REVIEW_DEFERRALS) deferred = true;
-    else run.notes.push({ task: 'dream', pid: target.pid, note: `審核連續 ${n} 輪沒有完成，這批對話先記為已回顧` });
+    else run.rejected.push({ task: 'dream', pid: target.pid, title: `回顧「${target.name}」的對話`, why: `審核連續 ${n} 輪沒有完成，這批對話先記為已回顧` });
   }
   if (!deferred) await noteReviewDeferral(eg.paths.local, `dream:${target.pid}`, false);
   let rec = null;

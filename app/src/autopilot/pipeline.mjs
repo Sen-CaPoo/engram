@@ -361,19 +361,24 @@ export async function commitItems(eg, { items, scopeKey, summary, dir, task, run
 export const MAX_REVIEW_DEFERRALS = 3;
 const deferralsFile = (local) => path.join(local, 'autopilot', 'deferrals.json');
 
+const DEFERRAL_STALE_MS = 7 * 86_400_000;
+
 /**
  * 記錄「審核沒有完成」造成的延後（每台各自計算，不同步）。deferred=false 時清掉計數。
- * @returns {Promise<number>} 連續第幾次（清掉時回傳 0）
+ * tag：這次處理的內容版本（範圍指紋）；版本不同或上次延後已超過 7 天就從 1 重算，舊內容累積的次數不算到新內容上。
+ * @returns {Promise<number>} 同一個版本連續第幾次（清掉時回傳 0）
  */
-export async function noteReviewDeferral(local, key, deferred) {
+export async function noteReviewDeferral(local, key, deferred, { tag = '', now = Date.now() } = {}) {
   const st = (await readJson(deferralsFile(local), null)) ?? {};
   if (!deferred) {
     if (st[key]) { delete st[key]; await writeJsonAtomic(deferralsFile(local), st).catch(() => {}); }
     return 0;
   }
-  st[key] = (Number(st[key]) || 0) + 1;
+  const cur = st[key] && typeof st[key] === 'object' ? st[key] : null;
+  const same = cur && cur.tag === tag && now - (Date.parse(cur.at) || 0) < DEFERRAL_STALE_MS;
+  st[key] = { n: same ? (Number(cur.n) || 0) + 1 : 1, tag, at: new Date(now).toISOString() };
   await writeJsonAtomic(deferralsFile(local), st).catch(() => {});
-  return st[key];
+  return st[key].n;
 }
 
 /** 依 snapshot 補上版本 */
