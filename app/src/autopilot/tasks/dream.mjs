@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { readJson, writeJsonAtomic } from '../../cli/fsutil.mjs';
 import { allBindingViews, readBindings } from '../../core/vault.mjs';
-import { commitItems, fillBases, normalizeItems, screen, snap } from '../pipeline.mjs';
+import { MAX_REVIEW_DEFERRALS, commitItems, fillBases, noteReviewDeferral, normalizeItems, screen, snap } from '../pipeline.mjs';
 import { DREAM_ANALYZE_SCHEMA, DREAM_PLAN_SCHEMA, dreamAnalyzePrompt, dreamPlanPrompt } from '../prompts.mjs';
 
 /** 一個專案一輪最多回顧幾個對話（由舊到新；舊的先被 Claude Code 清除） */
@@ -115,7 +115,16 @@ export async function dreamProject(ctx, target) {
   const transcript = await eg.dream.text(m.id).catch(() => '');
   const { approved, rejected } = await screen(call, items, snapshot, { dream: { pid: target.pid, transcript }, paused, cap: cap.left, mid });
   for (const x of rejected) run.rejected.push({ task: 'dream', pid: target.pid, ...x });
-  const deferred = rejected.some((x) => x.deferred);
+  // 延後：超過改動上限、或這一輪中途停止時審核沒完成 → 這批對話下一輪重新分析。
+  // 審核沒有完成（不是因為停止）連續 MAX_REVIEW_DEFERRALS 輪就不再延後，避免同一批對話每輪重新花錢分析
+  const reviewDeferred = rejected.some((x) => x.reviewIncomplete);
+  let deferred = rejected.some((x) => x.deferred && !x.reviewIncomplete) || (reviewDeferred && !!call.state?.stopped);
+  if (!deferred && reviewDeferred) {
+    const n = await noteReviewDeferral(eg.paths.local, `dream:${target.pid}`, true);
+    if (n < MAX_REVIEW_DEFERRALS) deferred = true;
+    else run.notes.push({ task: 'dream', pid: target.pid, note: `審核連續 ${n} 輪沒有完成，這批對話先記為已回顧` });
+  }
+  if (!deferred) await noteReviewDeferral(eg.paths.local, `dream:${target.pid}`, false);
   let rec = null;
   if (approved.length) {
     const res = await commitItems(eg, { items: approved, scopeKey: `project:${target.pid}`, summary: String(r.data.summary ?? ''), dir: path.join(ctx.workDir, `dream-${target.pid}`), task: 'dream', runId: run.id, ...(deferred ? {} : { dream: { id: m.id }, skipped: skipped.map((s) => s.slice(0, 8)) }), onRecord: async (id) => { run.records.push(id); await ctx.save?.(); } });

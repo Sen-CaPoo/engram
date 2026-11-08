@@ -88,10 +88,11 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
     // 先拿到另一台的變更。同步正在進行（另一個同步或自動存檔拿著鎖）時等一下再試一次
     const trySync = () => eg.sync().catch((err) => ({ ok: false, state: 'error', error: { message: err.message } }));
     let s0 = await trySync();
-    if (s0?.ok === false && ['locked', 'busy'].includes(s0.state)) { await new Promise((r) => setTimeout(r, 3000)); s0 = await trySync(); }
-    // 1.6.0：每台都處理共用記憶。沒拿到另一台的最新變更（離線、登入失效…）時，不拿過期的內容整理共用記憶或解衝突
-    const shared = s0?.ok !== false;
-    if (!shared) run.notes.push({ task: 'run', note: `開始前同步失敗（${s0?.state ?? 'error'}）：這一輪只處理這台自己的部分（單機記憶、金鑰、待你確認、收件匣、對話回顧），共用記憶的整理與同步衝突等同步恢復後再處理。${s0?.error?.message ?? ''}`.slice(0, 300) });
+    for (let i = 0; i < 6 && s0?.ok === false && ['locked', 'busy'].includes(s0.state) && !signal?.aborted; i++) { await new Promise((r) => setTimeout(r, 5000)); s0 = await trySync(); }
+    // 1.6.0：每台都處理共用記憶。沒拿到另一台的最新變更（離線、登入失效、使用者暫停了同步…）時，
+    // 不拿過期的內容整理共用記憶、解衝突或代為確認／退回（確認紀錄是所有電腦共用的）
+    const shared = s0?.ok !== false && s0?.state !== 'paused';
+    if (!shared) run.notes.push({ task: 'run', note: `開始前沒有同步（${s0?.state ?? 'error'}）：這一輪只處理這台自己的部分（單機記憶、金鑰、收編與大量刪除的卡片、對話回顧），共用記憶的整理、同步衝突與待你確認下一輪再處理。${s0?.error?.message ?? ''}`.slice(0, 300) });
     const budget = await runBudget(local, settings.autopilotBudget, now());
     run.budget = budget;
     if (budget.run <= 0) {
@@ -121,7 +122,7 @@ export async function runAutopilot(eg, { judge, notifier, log, reason = 'manual'
     await step('cards', async () => { await refresh(); await ruleCards(ctx); });
     if (shared) await step('conflicts', () => resolveConflicts(ctx));
     await step('cards', async () => { await refresh(); await judgedCards(ctx); });
-    await step('review', async () => { await refresh(); await auditReviews(ctx); });
+    if (shared) await step('review', async () => { await refresh(); await auditReviews(ctx); });
     await refresh();
     const scopes = await planScopes(ctx).catch(() => []);
     for (const sc of scopes.filter((x) => x.sev < 3)) await step('curate', () => curateScope(ctx, sc));

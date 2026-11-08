@@ -9,6 +9,7 @@
 // 驗證不過的項目剔除後重試，再自動採用並 applyRecord（備份、逐步記錄、可逐項復原）。
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { readJson, writeJsonAtomic } from '../cli/fsutil.mjs';
 import { revOf } from '../cli/commands/safe.mjs';
 import { scopeOfRef } from '../core/memories.mjs';
 import { parseMemoryFile } from '../core/frontmatter.mjs';
@@ -255,7 +256,7 @@ export async function screen(call, items, snapshot, { dream = null, paused = [],
       // 審核員同意但列出會遺失的事實：不執行
       if (v?.verdict === 'approve' && !v.lostFacts?.length) approved.push(it);
       // 審核沒有完成（不是不同意）：標成延後，這個範圍不記為整理過，下一輪再審
-      else if (!v || v.failed) rejected.push({ ...brief(it), why: `審核沒有完成，下一輪再處理：${v?.reason ?? '審核失敗'}`, deferred: true });
+      else if (!v || v.failed) rejected.push({ ...brief(it), why: `審核沒有完成，下一輪再處理：${v?.reason ?? '審核失敗'}`, deferred: true, reviewIncomplete: true });
       else rejected.push({ ...brief(it), why: `審核員沒有同意：${v?.reason ?? ''}${v?.lostFacts?.length ? `（會遺失：${v.lostFacts.join('；')}）` : ''}` });
     }
   }
@@ -354,6 +355,25 @@ export async function commitItems(eg, { items, scopeKey, summary, dir, task, run
     return { record: rec.id, results, invalid };
   }
   return { record: null, results: [], invalid };
+}
+
+/** 審核連續幾輪沒有完成就不再延後（當作看過），避免同一批每輪重新花錢、最後又在審核失敗 */
+export const MAX_REVIEW_DEFERRALS = 3;
+const deferralsFile = (local) => path.join(local, 'autopilot', 'deferrals.json');
+
+/**
+ * 記錄「審核沒有完成」造成的延後（每台各自計算，不同步）。deferred=false 時清掉計數。
+ * @returns {Promise<number>} 連續第幾次（清掉時回傳 0）
+ */
+export async function noteReviewDeferral(local, key, deferred) {
+  const st = (await readJson(deferralsFile(local), null)) ?? {};
+  if (!deferred) {
+    if (st[key]) { delete st[key]; await writeJsonAtomic(deferralsFile(local), st).catch(() => {}); }
+    return 0;
+  }
+  st[key] = (Number(st[key]) || 0) + 1;
+  await writeJsonAtomic(deferralsFile(local), st).catch(() => {});
+  return st[key];
 }
 
 /** 依 snapshot 補上版本 */

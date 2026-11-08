@@ -16,8 +16,9 @@ export async function auditReviews(ctx) {
   if (paused.includes('confirm') && paused.includes('revert')) { run.notes.push({ task: 'review', note: '「代你確認」與「退回」都被你復原過多次，暫停中' }); return; }
   const pending = await eg.review.list().catch(() => []);
   if (!pending.length) return;
-  // 審核員之前不同意過的同一份內容：不再判斷（也不花錢），留給使用者
-  const rejected = new Set((await allReviewRejects(eg.paths.vault).catch(() => [])).map((x) => `${x.ref}\n${x.sha}`));
+  // 審核員之前不同意過的同一份內容：不再判斷（也不花錢），留給使用者。
+  // 因為「退回」暫停中才記下的（held），只在那一類仍暫停時有效：使用者恢復之後重新判斷，該退回的就退回
+  const rejected = new Set((await allReviewRejects(eg.paths.vault).catch(() => [])).filter((x) => !x.held || paused.includes(x.held)).map((x) => `${x.ref}\n${x.sha}`));
   const held = pending.filter((it) => rejected.has(`${it.ref}\n${it.sha}`));
   if (held.length) run.notes.push({ task: 'review', note: `${held.map((it) => it.name ?? it.ref).join('、')}：審核員之前不同意代你確認，留給你確認（內容改過才會重新判斷）`.slice(0, 500) });
   const list = pending.filter((it) => !rejected.has(`${it.ref}\n${it.sha}`));
@@ -60,7 +61,7 @@ export async function auditReviews(ctx) {
       // 審核員有回覆而且明確不同意代你確認（審核失敗、漏回這一項都不算）
       const explicitNo = d.verdict === 'confirm' && needsSecond(it) && !!sv && sv.verdict !== 'approve';
       // 記住這份內容（ref＋sha）：之後每一輪、每一台都不再判斷，留給使用者
-      const remember = () => recordReviewReject(eg, { ref: it.ref, sha: it.sha, reason: sv?.reason ?? '' }).catch(() => {});
+      const remember = (held = null) => recordReviewReject(eg, { ref: it.ref, sha: it.sha, reason: sv?.reason ?? reason, held }).catch(() => {});
       if (verdict === 'skip') {
         run.rejected.push({ task: 'review', title: it.ref, why: `審核員沒有同意確認核心準則的修改：${sv?.reason ?? '審核失敗'}（留在待你確認）` });
         if (explicitNo) await remember();
@@ -68,8 +69,9 @@ export async function auditReviews(ctx) {
       }
       if (paused.includes(verdict)) {
         run.rejected.push({ task: 'review', title: it.ref, why: `「${verdict === 'confirm' ? '代你確認' : '退回'}」被你復原過多次，暫停中` });
-        // 審核員不同意、但退回被暫停：內容沒變，也要記住，否則下一輪可能就被同意了
-        if (explicitNo) await remember();
+        // 判斷為不該確認（審核員不同意，或判斷者自己就說要退回），但退回暫停中：記下來，暫停期間不再判斷，
+        // 免得下一輪被翻成「確認」；使用者恢復「退回」之後重新判斷
+        if (verdict === 'revert' && (explicitNo || d.verdict === 'revert')) await remember('revert');
         continue;
       }
       try {

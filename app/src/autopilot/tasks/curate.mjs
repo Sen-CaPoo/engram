@@ -8,7 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { readJson } from '../../cli/fsutil.mjs';
 import { CORE_REF } from '../../tidy/plan.mjs';
-import { commitItems, fillBases, keyOfScope, normalizeItems, scopeKeyOfRef, screen, snap } from '../pipeline.mjs';
+import { MAX_REVIEW_DEFERRALS, commitItems, fillBases, keyOfScope, noteReviewDeferral, normalizeItems, scopeKeyOfRef, screen, snap } from '../pipeline.mjs';
 import { CURATE_SCHEMA, curatePrompt } from '../prompts.mjs';
 import { allScopeMarks } from '../state.mjs';
 
@@ -35,11 +35,13 @@ const sha1 = (t) => createHash('sha1').update(String(t ?? '').replace(/\r\n/g, '
  * 不能用修改時間——沒有 metadata.modified 的檔案會退回檔案 mtime，而每台電腦 git pull 之後的 mtime 都不同。
  */
 export async function scopeFingerprint(eg, key, all) {
-  if (key === 'core') return sha1((await eg.core.read()).text ?? '').slice(0, 12);
+  // 讀不到（例如防毒或編輯器暫時鎖住檔案）時回傳 null：這一輪略過這個範圍、也不記為整理過，免得把錯的版本同步給其他電腦
+  if (key === 'core') { const t = await eg.core.read().then((c) => c.text ?? '').catch(() => null); return t === null ? null : sha1(t).slice(0, 12); }
   const refs = (all ?? await eg.memories.list()).filter((m) => keyOfScope(m.scope) === key).map((m) => m.ref).sort();
   const parts = [];
   for (const ref of refs) {
-    const text = await fsp.readFile(path.join(eg.paths.vault, ...ref.split('/')), 'utf8').catch(() => '');
+    const text = await fsp.readFile(path.join(eg.paths.vault, ...ref.split('/')), 'utf8').catch(() => null);
+    if (text === null) return null;
     parts.push(`${ref}@${sha1(text)}`);
   }
   return sha1(parts.join('|')).slice(0, 12);
@@ -67,6 +69,7 @@ export async function planScopes(ctx) {
     const mems = k === 'core' ? [] : all.filter((m) => keyOfScope(m.scope) === k);
     if (k !== 'core' && !mems.length) continue;
     const fp = await scopeFingerprint(eg, k, all);
+    if (fp === null) continue;
     const cards = cardsBy.get(k) ?? [];
     const last = marks[k];
     // 任何一台已經整理過這個版本、也看過目前所有的卡片（處理了或判斷不必處理）→ 跳過
@@ -85,7 +88,8 @@ export async function planScopes(ctx) {
  * cards 是這次看過的卡片。一輪結束時由 run.mjs 一次寫進同步的狀態檔。
  */
 async function markScope(ctx, sc) {
-  const fp = await scopeFingerprint(ctx.eg, sc.key).catch(() => sc.fp);
+  const fp = await scopeFingerprint(ctx.eg, sc.key).catch(() => null);
+  if (fp === null) return; // 讀不到目前的內容：不記，下一輪再看
   ctx.scopeMarks[sc.key] = { fp, at: new Date(ctx.clock?.() ?? ctx.now).toISOString(), cards: sc.cards.map((c) => c.id) };
 }
 
@@ -129,8 +133,9 @@ export async function curateScope(ctx, sc) {
   });
   const r = await call(`整理 ${sc.key}`, { schema: CURATE_SCHEMA, prompt });
   if (!r.ok) { run.skipped.push({ task: 'curate', scope: sc.key, why: r.error?.message ?? 'LLM 失敗' }); return; }
-  // 共用範圍每台都可以改；別台的單機記憶只有那台能改
-  const writable = (k) => !String(k).startsWith('machine:') || k === `machine:${mid}`;
+  // 共用範圍每台都可以改；別台的單機記憶只有那台能改。開始前同步失敗時只能改自己的單機記憶
+  // （卡片會帶入別的範圍的記憶，不能讓 LLM 拿過期的內容把記憶搬進或合併進共用範圍）
+  const writable = (k) => (ctx.shared === false ? k === `machine:${mid}` : !String(k).startsWith('machine:') || k === `machine:${mid}`);
   const { items, dropped } = normalizeItems(r.data.items, snapshot, { allowCore: sc.key === 'core', mid, writable });
   for (const d of dropped) run.rejected.push({ task: 'curate', scope: sc.key, title: d.title, why: d.why });
   fillBases(items, snapshot);
@@ -151,6 +156,14 @@ export async function curateScope(ctx, sc) {
     await eg.findings.dismiss(f.id, { until: new Date(ctx.now + 90 * DAY).toISOString() }).catch(() => {});
     run.actions.push({ task: 'curate', scope: sc.key, kind: 'dismiss', card: f.id, code: f.code, title: `不處理：${f.title}`, reason: String(d.reason ?? '').slice(0, 500), status: 'done', undo: [] });
   }
-  // 有延後的項目（超過改動上限、審核沒有完成）或這一輪中途停止（預算用完、被停止、用量上限）：不記為整理過，下一輪再看
-  if (!rejected.some((x) => x.deferred) && !call.state?.stopped) await markScope(ctx, sc);
+  // 這一輪中途停止（預算用完、被停止、用量上限）或有項目超過改動上限：不記為整理過，下一輪再看
+  if (call.state?.stopped || rejected.some((x) => x.deferred && !x.reviewIncomplete)) return;
+  // 審核沒有完成（不是不同意）：下一輪再審；連續 MAX_REVIEW_DEFERRALS 輪都沒完成就當作看過，避免每輪空轉花錢
+  if (rejected.some((x) => x.reviewIncomplete)) {
+    const n = await noteReviewDeferral(eg.paths.local, sc.key, true);
+    if (n < MAX_REVIEW_DEFERRALS) return;
+    run.notes.push({ task: 'curate', scope: sc.key, note: `審核連續 ${n} 輪沒有完成，這個範圍先記為看過；內容改變或出現新的卡片時再整理` });
+  }
+  await noteReviewDeferral(eg.paths.local, sc.key, false);
+  await markScope(ctx, sc);
 }

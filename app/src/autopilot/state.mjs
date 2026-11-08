@@ -21,6 +21,8 @@ const REJECTS_MAX = 200;
 const SCOPE_KEY_RE = /^(global|core|machine:[a-z0-9][a-z0-9-]{0,63}|project:[a-z0-9][a-z0-9-]{0,63})$/;
 const SCOPES_MAX = 500;
 const KNOWN = new Set(['v', 'enabledAt', 'lastRunAt', 'lastRunId', 'feedback', 'scopes', 'reviewRejects']);
+const EXTRA_KEYS_MAX = 20;
+const EXTRA_BYTES_MAX = 16 * 1024;
 const RUNS_KEEP_DAYS = 90;
 
 export const RUN_ID_RE = /^ap-\d{8}-\d{6}-[a-z0-9]{4}$/;
@@ -49,14 +51,15 @@ function normalizeScopes(s) {
 function normalizeRejects(list) {
   if (!Array.isArray(list)) return [];
   return list.filter((x) => x && typeof x.ref === 'string' && typeof x.sha === 'string' && /^[0-9a-f]{40}$/.test(x.sha))
-    .map((x) => ({ ref: x.ref.slice(0, 300), sha: x.sha, at: typeof x.at === 'string' ? x.at.slice(0, 40) : '', reason: String(x.reason ?? '').slice(0, 300) }))
+    .map((x) => ({ ref: x.ref.slice(0, 300), sha: x.sha, at: typeof x.at === 'string' ? x.at.slice(0, 40) : '', reason: String(x.reason ?? '').slice(0, 300), ...(typeof x.held === 'string' && /^[a-z-]{1,40}$/.test(x.held) ? { held: x.held } : {}) }))
     .slice(-REJECTS_MAX);
 }
 
 function normalize(j) {
-  // 不認得的欄位原樣保留（之後的版本新增的欄位，不會在這一版改寫狀態檔時被丟掉）
-  const extra = {};
+  // 不認得的欄位原樣保留（之後的版本新增的欄位，不會在這一版改寫狀態檔時被丟掉）；數量或大小超過上限就整批不留，避免檔案被塞大
+  let extra = {};
   if (j && typeof j === 'object' && !Array.isArray(j)) for (const [k, val] of Object.entries(j)) if (!KNOWN.has(k) && val !== undefined) extra[k] = val;
+  if (Object.keys(extra).length > EXTRA_KEYS_MAX || JSON.stringify(extra).length > EXTRA_BYTES_MAX) extra = {};
   return {
     ...extra,
     v: 1,
@@ -135,10 +138,13 @@ export async function allReviewRejects(vault) {
   return out;
 }
 
-/** 記下審核員不同意確認的一份內容（ref＋sha）。同一份內容之後每一輪、每一台都不再判斷，留給使用者 */
-export async function recordReviewReject(eg, { ref, sha, reason = '' }, now = Date.now()) {
+/**
+ * 記下審核員不同意確認的一份內容（ref＋sha）。同一份內容之後每一輪、每一台都不再判斷，留給使用者。
+ * held：因為某類處理暫停中才沒有執行（例如退回被暫停）——只在那一類仍暫停時有效，使用者恢復後會重新判斷
+ */
+export async function recordReviewReject(eg, { ref, sha, reason = '', held = null }, now = Date.now()) {
   return updateMachineState(eg, (s) => {
-    if (!s.reviewRejects.some((x) => x.ref === ref && x.sha === sha)) s.reviewRejects.push({ ref, sha, at: new Date(now).toISOString(), reason: String(reason).slice(0, 300) });
+    if (!s.reviewRejects.some((x) => x.ref === ref && x.sha === sha && (x.held ?? null) === held)) s.reviewRejects.push({ ref, sha, at: new Date(now).toISOString(), reason: String(reason).slice(0, 300), ...(held ? { held } : {}) });
     s.reviewRejects = s.reviewRejects.slice(-REJECTS_MAX);
     return s;
   }, 'autopilot review reject');
