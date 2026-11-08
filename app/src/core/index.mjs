@@ -216,8 +216,9 @@ export async function open(opts = {}) {
           // 1.4.0：Claude 寫入每次都會載入的內容（全域、單機、核心準則）時，在收件匣請你確認（H23）
           reviewWrites: s.reviewWrites === 'off' ? 'off' : 'on',
           // 1.5.0：自動駕駛（AI 自主判斷並處理收件匣、整理、對話回顧）。autopilotBudget：每月上限（API 牌價的美元）
+          // 1.6.0：預設從 US$30 提高到 US$200（品質優先；沒有自己設定過的電腦直接套用新的預設）
           autopilot: s.autopilot === 'on' ? 'on' : 'off',
-          autopilotBudget: Number.isFinite(s.autopilotBudget) && s.autopilotBudget > 0 ? s.autopilotBudget : 30,
+          autopilotBudget: Number.isFinite(s.autopilotBudget) && s.autopilotBudget > 0 ? s.autopilotBudget : 200,
         };
       },
       async set(patch = {}) {

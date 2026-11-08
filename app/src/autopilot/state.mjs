@@ -1,6 +1,9 @@
 // 自動駕駛的狀態（1.5.0）。
-// - 每台電腦一份同步的狀態檔 vault/machines/<mid>/autopilot.json：啟用時間、上次執行、復原回饋。
+// - 每台電腦一份同步的狀態檔 vault/machines/<mid>/autopilot.json：啟用時間、上次執行、復原回饋；
+//   1.6.0 加上範圍整理紀錄（scopes）與審核員的拒絕（reviewRejects）。
 //   每台只寫自己的檔案，兩台同時更新也不會衝突；讀取時彙整所有電腦。
+// - 1.6.0：多台電腦完全平等，沒有主機。每台都整理共用記憶、處理衝突；靠同步的整理紀錄避免重複處理，
+//   靠寫入時比對版本（整理記錄的 base）與同步時的衝突處理避免互相覆蓋。
 // - 本機的執行紀錄 local/autopilot/runs/<run>.json（不同步）：這一輪做了什麼、為什麼、怎麼復原。
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -10,12 +13,16 @@ import { readJson, writeJsonAtomic } from '../cli/fsutil.mjs';
 import { commitPaths, listMachineIds, machineDir } from '../core/vault.mjs';
 
 const DAY = 86_400_000;
-/** 主機超過這麼久沒上線，就由其他啟用中的電腦接手共用範圍 */
-export const HOST_STALE_MS = 3 * DAY;
 /** 同一類動作在這段時間內被復原幾次就暫停（只記錄、不執行） */
 export const PAUSE_AFTER_UNDOS = 2;
 export const PAUSE_WINDOW_MS = 60 * DAY;
 const FEEDBACK_MAX = 100;
+const REJECTS_MAX = 200;
+const SCOPE_KEY_RE = /^(global|core|machine:[a-z0-9][a-z0-9-]{0,63}|project:[a-z0-9][a-z0-9-]{0,63})$/;
+const SCOPES_MAX = 500;
+const KNOWN = new Set(['v', 'enabledAt', 'lastRunAt', 'lastRunId', 'feedback', 'scopes', 'reviewRejects']);
+const EXTRA_KEYS_MAX = 20;
+const EXTRA_BYTES_MAX = 16 * 1024;
 const RUNS_KEEP_DAYS = 90;
 
 export const RUN_ID_RE = /^ap-\d{8}-\d{6}-[a-z0-9]{4}$/;
@@ -29,13 +36,39 @@ export function newRunId(now = new Date()) {
 const stateRel = (mid) => `machines/${mid}/autopilot.json`;
 const stateFile = (vault, mid) => path.join(machineDir(vault, mid), 'autopilot.json');
 
+/** 範圍整理紀錄：{ key: { fp, at, cards } }（同步的檔案，格式不對的一律丟掉） */
+function normalizeScopes(s) {
+  const out = {};
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return out;
+  // 超過上限時留最近整理的（已經不存在的專案、合併掉的範圍自然被擠掉）
+  const rows = Object.entries(s).filter(([k, v]) => SCOPE_KEY_RE.test(k) && v && typeof v.fp === 'string' && typeof v.at === 'string')
+    .sort((a, b) => String(b[1].at).localeCompare(String(a[1].at))).slice(0, SCOPES_MAX);
+  for (const [k, v] of rows) out[k] = { fp: v.fp.slice(0, 40), at: v.at.slice(0, 40), cards: Array.isArray(v.cards) ? v.cards.filter((c) => typeof c === 'string').map((c) => c.slice(0, 120)).slice(0, 200) : [] };
+  return out;
+}
+
+/** 審核員的拒絕：[{ ref, sha, at, reason }] */
+function normalizeRejects(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((x) => x && typeof x.ref === 'string' && typeof x.sha === 'string' && /^[0-9a-f]{40}$/.test(x.sha))
+    .map((x) => ({ ref: x.ref.slice(0, 300), sha: x.sha, at: typeof x.at === 'string' ? x.at.slice(0, 40) : '', reason: String(x.reason ?? '').slice(0, 300), ...(typeof x.held === 'string' && /^[a-z-]{1,40}$/.test(x.held) ? { held: x.held } : {}) }))
+    .slice(-REJECTS_MAX);
+}
+
 function normalize(j) {
+  // 不認得的欄位原樣保留（之後的版本新增的欄位，不會在這一版改寫狀態檔時被丟掉）；數量或大小超過上限就整批不留，避免檔案被塞大
+  let extra = {};
+  if (j && typeof j === 'object' && !Array.isArray(j)) for (const [k, val] of Object.entries(j)) if (!KNOWN.has(k) && val !== undefined) extra[k] = val;
+  if (Object.keys(extra).length > EXTRA_KEYS_MAX || JSON.stringify(extra).length > EXTRA_BYTES_MAX) extra = {};
   return {
+    ...extra,
     v: 1,
     enabledAt: j?.enabledAt ?? null,
     lastRunAt: j?.lastRunAt ?? null,
     lastRunId: j?.lastRunId ?? null,
     feedback: Array.isArray(j?.feedback) ? j.feedback.filter((f) => f && typeof f.category === 'string').slice(-FEEDBACK_MAX) : [],
+    scopes: normalizeScopes(j?.scopes),
+    reviewRejects: normalizeRejects(j?.reviewRejects),
   };
 }
 
@@ -62,23 +95,62 @@ export async function allMachineStates(vault) {
   const out = [];
   for (const mid of await listMachineIds(vault)) {
     const m = await readJson(path.join(machineDir(vault, mid), 'machine.json'), null);
-    out.push({ mid, label: m?.label ?? mid, lastSeenAt: m?.lastSeenAt ?? null, ...(await readMachineState(vault, mid)) });
+    // 狀態檔的欄位先展開：同步來的檔案就算夾帶 mid、label 也蓋不掉資料夾名稱與 machine.json 的值
+    out.push({ ...(await readMachineState(vault, mid)), mid, label: m?.label ?? mid, lastSeenAt: m?.lastSeenAt ?? null });
   }
   return out;
 }
 
 /**
- * 主機：啟用中、HOST_STALE_MS 內有上線（或就是這台）、最早啟用的那台。只有主機處理共用範圍
- * （全域、核心準則、專案記憶的整理、同步衝突），避免兩台同時改同一筆記憶。
+ * 開啟自動駕駛的電腦（依開啟時間排序）。1.6.0 起多台平等、沒有主機：這份清單只用來顯示。
+ * @returns {Promise<{ mid, label, self, enabledAt, lastSeenAt, lastRunAt }[]>}
  */
-export async function electHost(vault, selfMid, now = Date.now()) {
+export async function enabledMachines(vault, selfMid) {
   const states = await allMachineStates(vault);
-  const live = states.filter((s) => s.enabledAt && (s.mid === selfMid || now - (Date.parse(s.lastSeenAt ?? '') || 0) <= HOST_STALE_MS || now - (Date.parse(s.lastRunAt ?? '') || 0) <= HOST_STALE_MS));
-  live.sort((a, b) => String(a.enabledAt).localeCompare(String(b.enabledAt)) || a.mid.localeCompare(b.mid));
-  return { host: live[0]?.mid ?? null, label: live[0]?.label ?? null, enabled: live.map((s) => s.mid) };
+  return states.filter((s) => s.enabledAt)
+    .sort((a, b) => String(a.enabledAt).localeCompare(String(b.enabledAt)) || a.mid.localeCompare(b.mid))
+    .map((s) => ({ mid: s.mid, label: s.label, self: s.mid === selfMid, enabledAt: s.enabledAt, lastSeenAt: s.lastSeenAt, lastRunAt: s.lastRunAt }));
 }
 
-/** 開關改變時更新這台的啟用時間：關閉時清掉，另一台才會接手共用範圍；重新開啟時從現在算起 */
+/**
+ * 所有電腦的範圍整理紀錄，每個範圍取最近的一筆：{ key: { fp, at, cards, mid } }。
+ * legacy：1.5.0 的本機紀錄 local/autopilot/scopes.json（{ key: { fp, at } }），當成這台的紀錄一起比較。
+ */
+export async function allScopeMarks(vault, { legacy = null, selfMid = null } = {}) {
+  const out = {};
+  const take = (k, v, mid) => {
+    if (!SCOPE_KEY_RE.test(k) || !v || typeof v.fp !== 'string') return;
+    const cur = out[k];
+    if (!cur || String(v.at ?? '') > String(cur.at ?? '')) out[k] = { fp: v.fp, at: String(v.at ?? ''), cards: Array.isArray(v.cards) ? v.cards : [], mid };
+  };
+  for (const s of await allMachineStates(vault)) for (const [k, v] of Object.entries(s.scopes)) take(k, v, s.mid);
+  if (legacy && typeof legacy === 'object') for (const [k, v] of Object.entries(legacy)) take(k, { ...v, cards: Array.isArray(v?.cards) ? v.cards : [] }, selfMid);
+  return out;
+}
+
+/** 這一輪整理過的範圍併進這台的紀錄（同一個範圍以新的為準；上限由 normalize 依時間修剪） */
+export const mergeScopeMarks = (scopes, marks) => normalizeScopes({ ...(scopes ?? {}), ...(marks ?? {}) });
+
+/** 所有電腦記下的審核員拒絕 */
+export async function allReviewRejects(vault) {
+  const out = [];
+  for (const s of await allMachineStates(vault)) for (const r of s.reviewRejects) out.push({ ...r, mid: s.mid });
+  return out;
+}
+
+/**
+ * 記下審核員不同意確認的一份內容（ref＋sha）。同一份內容之後每一輪、每一台都不再判斷，留給使用者。
+ * held：因為某類處理暫停中才沒有執行（例如退回被暫停）——只在那一類仍暫停時有效，使用者恢復後會重新判斷
+ */
+export async function recordReviewReject(eg, { ref, sha, reason = '', held = null }, now = Date.now()) {
+  return updateMachineState(eg, (s) => {
+    if (!s.reviewRejects.some((x) => x.ref === ref && x.sha === sha && (x.held ?? null) === held)) s.reviewRejects.push({ ref, sha, at: new Date(now).toISOString(), reason: String(reason).slice(0, 300), ...(held ? { held } : {}) });
+    s.reviewRejects = s.reviewRejects.slice(-REJECTS_MAX);
+    return s;
+  }, 'autopilot review reject');
+}
+
+/** 開關改變時更新這台的啟用時間：關閉時清掉；重新開啟時從現在算起 */
 export async function setEnabledState(eg, on, now = Date.now()) {
   const cur = await readMachineState(eg.paths.vault, eg.machine.id);
   if (on ? cur.enabledAt : !cur.enabledAt) return cur;

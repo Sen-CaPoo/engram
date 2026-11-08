@@ -2,6 +2,56 @@
 
 版本號遵循[語意化版本](https://semver.org/lang/zh-TW/)。
 
+## 1.6.0（2026-11-08）
+
+自動駕駛的多台電腦完全平等，預算也更寬裕：品質優先。
+
+<img src="docs/assets/screenshots/autopilot-peers.png" alt="自動駕駛頁上方：開啟的電腦清單與可以自訂的每月上限" width="720">
+
+### 多台電腦平等
+
+- **拿掉「主機」**：1.5.0 只讓最早開啟的那台電腦整理共用記憶、處理同步衝突。現在開啟自動駕駛的每台電腦都平等，都會整理全域、核心準則與所有專案的記憶，也都會處理同步衝突與核心準則的建議更新。單機記憶仍只由自己那台整理；金鑰、待你確認與對話回顧也各台處理自己的。
+- **不重複整理**：每個範圍整理到哪個版本、看過哪些卡片，記在記憶庫的 `machines/<電腦>/autopilot.json`（每台只寫自己的檔案，跟著同步）。任何一台整理過、內容也沒再變、目前的卡片都看過的範圍，其他台就跳過；記錄的是整理「之後」的版本，而且以記憶內容判斷（不看檔案時間，每台電腦同步後的檔案時間都不同），所以另一台不會再整理一次剛整理好的結果。審核沒有完成或這一輪中途停止時不記，下一輪再處理（審核連續 3 輪都沒完成就當作看過，避免每輪空轉花錢）。1.5.0 留在本機的整理紀錄也會一起參考。
+- **不互相覆蓋**：每輪開始前先同步；沒有同步成功（例如離線、暫停了同步）時，這一輪只處理這台自己的部分（單機記憶、金鑰、大量刪除的卡片、對話回顧），共用記憶的整理、同步衝突與待你確認下一輪再處理。寫入沿用版本檢查。兩台剛好同時改到同一筆時，同步會產生衝突，下一輪再合併，兩邊的內容都不會遺失。
+- 自動駕駛處理衝突時的用語改成「目前的版本／另一個版本」（原本是「這台／對方」，換一台處理時會說反）。
+- 「自動駕駛」頁的「處理共用記憶的電腦」改成「開啟自動駕駛的電腦」，列出每一台；`engram autopilot status` 同樣列出開啟的電腦。API `GET /api/autopilot` 的 `host` 改成 `machines`，執行紀錄不再記主機。
+- 請把每台電腦都更新到 1.6.0：還在 1.5.0 的電腦看不到其他電腦的整理紀錄，可能重複整理同一批記憶。
+
+### 預算
+
+- 每台每月的上限預設從約當 US$30 提高到 **US$200**（API 牌價；用 Claude 訂閱時不另外計費，代表額度的消耗）。沒有自己設定過的電腦直接套用新的預設。
+- **拿掉每輪 US$5 的上限**：一輪可以用到本月剩下的全部，把該做的事做完；本月用完就停，下個月再繼續。每次呼叫仍有約當 US$3 的上限，避免單次失控。「每輪最多改動 30 筆記憶」是安全上限，不是金額，維持不變。
+- **自訂上限**：「自動駕駛」頁的每月上限可以選常用金額（50、100、200、500），或選「自訂金額」自己輸入 1～1000；也可以執行 `engram autopilot budget <美元>`，或在 Claude Code 輸入 `/engram:autopilot 預算 <美元>`。
+
+### 審核員的「不同意」會記住
+
+- 審核員不同意代你確認的內容（例如核心準則的修改），會以「記憶＋內容版本」記在記憶庫（跟著同步）。之後每一輪、每一台都不再判斷，留給你確認，也不再花額度；內容改過才重新判斷。原本同一份內容每輪重新判斷，總有一輪會通過。審核呼叫失敗不算不同意，下一輪會再試。因為「退回」被你暫停而沒有退回的內容，只在暫停期間不再判斷，恢復之後會重新判斷。
+
+### 修正
+
+- 窄螢幕（寬度 960px 以下）上，藍色的小標籤（例如「這台」）會被清掉左右內距，560px 以下更會整個不見：側邊欄 Logo 的樣式和標籤撞名了。現在 Logo 的樣式只套用在側邊欄。
+
+- 實測 Claude Code 2.1.319 可用，更早的版本未測試。
+
+<details>
+<summary>English</summary>
+
+**Every computer running autopilot is now equal, and the budget is roomier: quality first.**
+
+- **No more computer in charge:** in 1.5.0 only the earliest computer to turn autopilot on tidied shared memories and resolved sync conflicts. Now every computer with autopilot on tidies global memories, core rules, and every project's memories, and resolves sync conflicts and core rule suggestions. Machine memories are still tidied only by their own computer, and each computer handles its own secrets, reviews, and conversations.
+- **No duplicate work:** which version of each scope was tidied, and which cards were looked at, is recorded in `machines/<computer>/autopilot.json` in your vault (each computer writes only its own file, and it syncs). A scope any computer has tidied that hasn't changed since, with no new cards, is skipped by the others; the version recorded is the one after tidying, judged by the memories' content rather than file times (which differ on every computer after syncing), so another computer won't tidy the fresh result again. Nothing is recorded when a review didn't complete or the run stopped early; the next run picks it up (after 3 runs in a row with the review not completing, the scope counts as looked at, so quota isn't spent in a loop). Records 1.5.0 kept on the computer are taken into account too.
+- **No overwriting each other:** each run syncs first; if it can't (for example when offline, or when syncing is paused), the run handles only this computer's own work (machine memories, secrets, mass-deletion cards, conversation review), and tidying shared memories, sync conflicts, and items waiting for your review wait for the next run. Writes keep the version checks. If two computers change the same memory at once, syncing turns it into a conflict that the next run merges, and neither side is lost.
+- Autopilot's conflict wording is now "the current version / the other version" (it said "this computer / the other computer", which is backwards when a different computer handles it).
+- On the Autopilot page, "Handles shared memories" becomes "Computers with autopilot on" and lists each one; `engram autopilot status` lists them too. In `GET /api/autopilot`, `host` becomes `machines`, and runs no longer record a host.
+- Update every computer to 1.6.0: a computer still on 1.5.0 can't see the others' tidy-up records and may tidy the same memories again.
+- **Budget:** the default monthly cap per computer goes from about US$30 to **US$200** (API list prices; no extra charge on a Claude subscription, it reflects quota use); computers that never set one get the new default. **The US$5 per-run cap is gone**: a run can use whatever is left this month; it stops when the month's budget is used up. Each call is still capped at about US$3. "At most 30 memories changed per run" is a safety limit, not money, and stays.
+- **Set your own cap:** pick a common amount (50, 100, 200, 500) on the Autopilot page or choose **Custom amount** and type 1 to 1000; or run `engram autopilot budget <dollars>`, or type `/engram:autopilot budget <dollars>` in Claude Code.
+- **A reviewer's "no" is remembered:** content the reviewer wouldn't confirm on your behalf (for example a change to the core rules) is recorded in your vault by memory and content version, and synced. From then on no run on any computer judges it again or spends quota on it; it's left for you until the content changes. Before, the same content was judged again every run, so sooner or later one run would pass it. A failed review call doesn't count as a "no"; the next run tries again. Content that wasn't sent back only because you paused "send back" is skipped only while it stays paused, and is judged again once you resume it.
+- **Fix:** on narrow screens (960px wide or less) small blue chips such as "This computer" lost their side padding, and below 560px they disappeared, because the sidebar logo's styles shared their class name. The logo's styles now apply only in the sidebar.
+- Tested with Claude Code 2.1.319; earlier versions are untested.
+
+</details>
+
 ## 1.5.0（2026-11-08）
 
 自動駕駛：開啟後，原本要你判斷或觸發的整理工作全部交給 AI 自主處理，不需要逐項確認；每一項都可以事後復原。

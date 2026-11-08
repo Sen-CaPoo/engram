@@ -1,10 +1,10 @@
 // 自動駕駛的用量帳本（1.5.0）：local/autopilot/usage-YYYY-MM.json（只屬於這台電腦）。
 // 金額是 claude -p 回報的 API 牌價（total_cost_usd）：用訂閱登入時不另外計費，但代表訂閱額度的消耗，拿來當上限的尺度。
+// 1.6.0：品質優先——預設每月 US$200、拿掉每輪 US$5 的上限（一輪可以用到本月剩下的全部）；每月上限可以自訂（1～1000）。
 import path from 'node:path';
 import { readJson, writeJsonAtomic } from '../cli/fsutil.mjs';
 
-export const DEFAULT_MONTHLY_USD = 30;
-export const RUN_USD = 5;
+export const DEFAULT_MONTHLY_USD = 200;
 
 const pad = (n) => String(n).padStart(2, '0');
 export const monthKey = (now = Date.now()) => { const d = new Date(now); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
@@ -32,11 +32,12 @@ export async function charge(local, model, usage, now = Date.now()) {
 }
 
 /**
- * 一輪的預算：每月上限扣掉已用的，再以每輪上限封頂。
+ * 一輪的預算：每月上限扣掉已用的（1.6.0 起沒有每輪上限，run 就是本月剩下的）。
  * @returns {{ monthly, used, remaining, run }}
  */
 export async function runBudget(local, monthlyUsd = DEFAULT_MONTHLY_USD, now = Date.now()) {
+  const monthly = Number.isFinite(monthlyUsd) && monthlyUsd > 0 ? monthlyUsd : DEFAULT_MONTHLY_USD;
   const l = await readLedger(local, now);
-  const remaining = Math.max(0, monthlyUsd - l.costUsd);
-  return { monthly: monthlyUsd, used: l.costUsd, remaining, run: Math.min(RUN_USD, remaining) };
+  const remaining = Math.max(0, Math.round((monthly - l.costUsd) * 1e6) / 1e6);
+  return { monthly, used: l.costUsd, remaining, run: remaining };
 }

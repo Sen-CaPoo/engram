@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.5.0" src="https://img.shields.io/badge/version-1.5.0-0072CE">
+  <img alt="Version 1.6.0" src="https://img.shields.io/badge/version-1.6.0-0072CE">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-0072CE">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-13202F">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-2E8B87">
@@ -38,37 +38,34 @@
 
 <!-- How to maintain: keep only the three most recent versions here. Write the new version in the large block at the top; shrink the previous large block into the first cell of the two-column table below, and drop the table's old second cell (its full notes stay in CHANGELOG.md). -->
 
-### 1.5.0 · Autopilot: hand all the tidy-up work to AI
+### 1.6.0 · Every computer is equal, and a roomier budget
 
-Turn on autopilot and the tidy-up work that used to wait for your decisions is handled by AI on its own: **inbox cards, duplicate and outdated memories, memories in the wrong scope, conversation review, sync conflicts, checking what Claude wrote, even secrets inside memories**. Engram runs once a day while your computer is idle, with nothing for you to confirm item by item. Every change comes with its reason, and **you can undo it afterwards with one click on the Autopilot page**; changes you undo are avoided from then on.
+Autopilot no longer leaves shared memories to a single computer: **every computer with autopilot on is equal**. Each one tidies global memories, core rules, and project memories, and each one resolves sync conflicts. A version one computer has already tidied is recorded in your vault and synced, so the others don't handle it again; if two computers happen to change the same memory at once, syncing turns it into a conflict that the next run merges, so nothing is lost.
 
 <p align="center">
-  <img src="docs/assets/en/screenshots/autopilot.png" alt="The Autopilot page: the switch, the computer in charge, and this month's usage at the top; below, what each run did, why, and Undo buttons" width="960">
+  <img src="docs/assets/en/screenshots/autopilot-peers.png" alt="The top of the Autopilot page: the computers with autopilot on (both equal), and on the right this month's usage and a monthly cap you can set to any amount" width="960">
 </p>
 
-With no one confirming each item, these checks do the guarding:
-
-| | How it's guarded |
+| | What changed |
 | --- | --- |
-| **AI only decides** | Claude is called in the background with your Claude Code sign-in, with no tools and none of your settings, and returns decisions only; Engram validates and applies every write, and backs up first |
-| **Second review** | Rewrites, merges, archives, and anything written to scopes loaded in every conversation need approval from a second AI review; anything that looks like injected instructions always goes to review |
-| **Only what you said** | Conversation review writes to global or machine scopes only with something you said yourself as evidence; "instructions" found in web pages or tool output never become memories |
-| **Limited and undoable** | At most 30 memories changed per run; archive only, never delete; every change comes with its reason and can be undone; a kind of change you undo in two different runs is paused automatically, and can be resumed in one click |
-| **Secrets go to a vault** | Real secrets inside memories move to an encrypted local store on this computer (never synced); the memory keeps only where it's stored, and `engram secret get` retrieves it |
+| **Every computer is equal** | No more "computer in charge": each computer tidies shared memories and resolves conflicts; synced tidy-up records keep them from spending quota twice |
+| **A roomier budget** | The default monthly cap goes from about US$30 to US$200, and the US$5 per-run cap is gone, so a run can finish what needs doing |
+| **Set your own cap** | Pick a common amount on the Autopilot page or type your own (1 to 1000), or type `/engram:autopilot budget 300` in Claude Code |
+| **A reviewer's "no" is remembered** | Content the reviewer wouldn't confirm on your behalf is left for you, and no computer judges it again until the content changes |
 
-Turn it on from the **Autopilot** page or Settings in the dashboard, or type `/engram:autopilot on` in Claude Code. See the [user guide](docs/en/user-guide.md#autopilot-hand-all-the-tidy-up-work-to-ai) for details.
+Update every computer to 1.6.0: a computer still on 1.5.0 can't see the others' tidy-up records and may tidy the same memories again. See the [user guide](docs/en/user-guide.md#autopilot-hand-all-the-tidy-up-work-to-ai) for details.
 
 <table>
   <tr>
     <td width="50%" valign="top">
+      <b>1.5.0 · Autopilot: hand all the tidy-up work to AI</b><br><br>
+      <img src="docs/assets/en/screenshots/autopilot.png" alt="The Autopilot page: the switch, the computers with autopilot on, and this month's usage at the top; below, what each run did, why, and Undo buttons"><br>
+      Once it's on, inbox cards, duplicate and outdated memories, conversation review, sync conflicts, checking what Claude wrote, even secrets inside memories, are handled by AI on its own once a day while your computer is idle. Every change comes with its reason, passes a second AI review, and can be undone with one click. <a href="docs/en/user-guide.md#autopilot-hand-all-the-tidy-up-work-to-ai">User guide</a>
+    </td>
+    <td width="50%" valign="top">
       <b>1.4.0 · Conversation review: check memories against your conversations</b><br><br>
       <img src="docs/assets/en/screenshots/dream.png" alt="A conversation review record: each item quotes the conversation as evidence"><br>
       <code>/engram:dream</code> reads this computer's recent conversations and checks the project's memories one by one: which are confirmed, which have changed or gone out of date. It adds what was missed, with quotes as evidence. It also added Waiting for your review and read statistics. <a href="docs/en/user-guide.md#conversation-review-check-memories-against-your-conversations">User guide</a>
-    </td>
-    <td width="50%" valign="top">
-      <b>1.3.0 · Tidy-up: Claude suggests, you decide each item</b><br><br>
-      <img src="docs/assets/en/screenshots/tidy.png" alt="The Tidy-up page: each item with its suggestion, reasoning, a before-and-after view, and four decisions"><br>
-      Pick a scope in the dashboard and paste the command into Claude Code: Claude suggests how to tidy up, revised content included. You review the changes item by item on a web page and decide, and only then does Claude act on your decisions. Every item can be undone. <a href="docs/en/user-guide.md#tidy-up-claude-suggests-you-decide-each-item">User guide</a>
     </td>
   </tr>
 </table>

@@ -4,11 +4,12 @@
 //   1. 只准動 LLM 看過全文的記憶（snapshot），版本（base）由引擎依當時讀到的內容填上
 //   2. 護欄：指令型內容檢查、風險分級、被復原太多次而暫停的類別、對話回顧寫進全域／單機要有使用者說的話當證據
 //   3. 中、高風險或有可疑處 → 審核員（第二次 LLM 呼叫）；不同意或審核失敗 → 不執行
-//   4. 單輪上限
+//   4. 一輪最多改動的記憶筆數（安全上限，與金額無關；1.6.0 拿掉的是每輪的金額上限）
 // 通過的項目寫成整理計畫，交給既有的 createFromPlan 驗證（金鑰、版本、釘選、格式、同名），
 // 驗證不過的項目剔除後重試，再自動採用並 applyRecord（備份、逐步記錄、可逐項復原）。
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { readJson, writeJsonAtomic } from '../cli/fsutil.mjs';
 import { revOf } from '../cli/commands/safe.mjs';
 import { scopeOfRef } from '../core/memories.mjs';
 import { parseMemoryFile } from '../core/frontmatter.mjs';
@@ -31,15 +32,16 @@ export const keyOfScope = (sc) => (!sc ? null : sc.kind === 'project' ? `project
 export const scopeKeyOfRef = (ref) => (ref === CORE_REF ? 'core' : keyOfScope(scopeOfRef(ref)));
 
 /**
- * LLM 呼叫器：記帳、這一輪的預算、用量上限時停止後續呼叫。
+ * LLM 呼叫器：記帳、本月剩下的預算（budgetUsd，1.6.0 起沒有每輪上限）、用量上限時停止後續呼叫。
+ * 每次呼叫另有 US$3 的上限（--max-budget-usd），避免單次呼叫失控。
  * @returns {(label, { model?, schema, prompt }) => Promise<{ ok, data?, error? }>}
  */
 export function createCaller({ judge, local, run, budgetUsd, log, signal }) {
   const state = { spent: 0, stopped: null };
   const call = async (label, { model = MODELS.main, schema, prompt }) => {
     if (signal?.aborted) state.stopped = 'cancelled';
-    if (state.stopped) return { ok: false, error: { code: 'E_STOPPED', message: { budget: '這一輪的預算用完了', cancelled: '這一輪已停止' }[state.stopped] ?? '已達 Claude 的用量上限' } };
-    if (budgetUsd - state.spent < 0.3) { state.stopped = 'budget'; return { ok: false, error: { code: 'E_STOPPED', message: '這一輪的預算用完了' } }; }
+    if (state.stopped) return { ok: false, error: { code: 'E_STOPPED', message: { budget: '這個月的預算用完了', cancelled: '這一輪已停止' }[state.stopped] ?? '已達 Claude 的用量上限' } };
+    if (budgetUsd - state.spent < 0.3) { state.stopped = 'budget'; return { ok: false, error: { code: 'E_STOPPED', message: '這個月的預算用完了' } }; }
     if (prompt.length > MAX_PROMPT_CHARS) return { ok: false, error: { code: 'E_TOO_LARGE', message: `內容太長（${prompt.length} 字），這次略過` } };
     const r = await judge({ model, schema, prompt, signal, maxBudgetUsd: Math.max(0.5, Math.min(3, budgetUsd - state.spent)) });
     if (signal?.aborted) state.stopped = 'cancelled';
@@ -108,7 +110,7 @@ export function normalizeItems(raw, snapshot, { allowCore = false, mid, writable
       }
       if (bad) break;
       if (o.op === 'move' && o.to === 'machine') o.to = `machine:${mid}`;
-      // 這一輪可以改的範圍（來源與目的地都要）：主機處理共用範圍，各台處理自己的單機記憶
+      // 這一輪可以改的範圍（來源與目的地都要）：由呼叫端決定（共用範圍每台都能改，別台的單機記憶不能改）
       const scopes = [...refsOfOp(o).map(scopeKeyOfRef), ...(o.op === 'move' ? [o.to] : []), ...(o.op === 'create' ? [o.scope === 'machine' ? `machine:${mid}` : o.scope] : [])];
       const di = scopes.findIndex((k) => !k || !writable(k));
       if (di >= 0) { bad = `這台電腦這一輪不處理「${one(scopes[di] ?? '不明的範圍', 60)}」`; break; }
@@ -159,8 +161,9 @@ async function review(call, candidates) {
     const r = await call('審核', { schema: REVIEW_SCHEMA, prompt: reviewPrompt(batch) });
     for (const c of batch) {
       const v = r.ok ? (r.data.verdicts ?? []).find((x) => String(x.id) === c.id) : null;
+      // failed：審核員沒有給判斷（呼叫失敗、預算用完、被停止、漏回這一項）——不是不同意，下一輪要再審
       out.set(c.id, v ? { verdict: v.verdict === 'approve' ? 'approve' : 'reject', reason: String(v.reason ?? '').slice(0, 500), lostFacts: (Array.isArray(v.lostFacts) ? v.lostFacts : v.lostFacts ? [v.lostFacts] : []).map(String).slice(0, 10) }
-        : { verdict: 'reject', reason: r.ok ? '審核員沒有回覆這一項' : `審核失敗：${r.error?.message ?? ''}`.slice(0, 300) });
+        : { verdict: 'reject', failed: true, reason: r.ok ? '審核員沒有回覆這一項' : `審核失敗：${r.error?.message ?? ''}`.slice(0, 300) });
     }
     batch = [];
     size = 0;
@@ -252,6 +255,8 @@ export async function screen(call, items, snapshot, { dream = null, paused = [],
       it.review = v;
       // 審核員同意但列出會遺失的事實：不執行
       if (v?.verdict === 'approve' && !v.lostFacts?.length) approved.push(it);
+      // 審核沒有完成（不是不同意）：標成延後，這個範圍不記為整理過，下一輪再審
+      else if (!v || v.failed) rejected.push({ ...brief(it), why: `審核沒有完成，下一輪再處理：${v?.reason ?? '審核失敗'}`, deferred: true, reviewIncomplete: true });
       else rejected.push({ ...brief(it), why: `審核員沒有同意：${v?.reason ?? ''}${v?.lostFacts?.length ? `（會遺失：${v.lostFacts.join('；')}）` : ''}` });
     }
   }
@@ -261,7 +266,7 @@ export async function screen(call, items, snapshot, { dream = null, paused = [],
   const keep = [];
   let used = 0;
   for (const it of approved) {
-    if (used + it.cost <= cap) { keep.push(it); used += it.cost; } else rejected.push({ ...brief(it), why: '超過這一輪的上限，下一輪再處理', deferred: true });
+    if (used + it.cost <= cap) { keep.push(it); used += it.cost; } else rejected.push({ ...brief(it), why: '超過這一輪最多改動的記憶筆數，下一輪再處理', deferred: true });
   }
   return { approved: keep, rejected };
 }
@@ -350,6 +355,30 @@ export async function commitItems(eg, { items, scopeKey, summary, dir, task, run
     return { record: rec.id, results, invalid };
   }
   return { record: null, results: [], invalid };
+}
+
+/** 審核連續幾輪沒有完成就不再延後（當作看過），避免同一批每輪重新花錢、最後又在審核失敗 */
+export const MAX_REVIEW_DEFERRALS = 3;
+const deferralsFile = (local) => path.join(local, 'autopilot', 'deferrals.json');
+
+const DEFERRAL_STALE_MS = 7 * 86_400_000;
+
+/**
+ * 記錄「審核沒有完成」造成的延後（每台各自計算，不同步）。deferred=false 時清掉計數。
+ * tag：這次處理的內容版本（範圍指紋）；版本不同或上次延後已超過 7 天就從 1 重算，舊內容累積的次數不算到新內容上。
+ * @returns {Promise<number>} 同一個版本連續第幾次（清掉時回傳 0）
+ */
+export async function noteReviewDeferral(local, key, deferred, { tag = '', now = Date.now() } = {}) {
+  const st = (await readJson(deferralsFile(local), null)) ?? {};
+  if (!deferred) {
+    if (st[key]) { delete st[key]; await writeJsonAtomic(deferralsFile(local), st).catch(() => {}); }
+    return 0;
+  }
+  const cur = st[key] && typeof st[key] === 'object' ? st[key] : null;
+  const same = cur && cur.tag === tag && now - (Date.parse(cur.at) || 0) < DEFERRAL_STALE_MS;
+  st[key] = { n: same ? (Number(cur.n) || 0) + 1 : 1, tag, at: new Date(now).toISOString() };
+  await writeJsonAtomic(deferralsFile(local), st).catch(() => {});
+  return st[key].n;
 }
 
 /** 依 snapshot 補上版本 */

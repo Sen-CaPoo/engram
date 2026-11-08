@@ -69,7 +69,11 @@ Autopilot doesn't ask you to confirm each change, so code and a second AI review
 
 ### How much quota does autopilot use, and what does it send?
 
-It calls Claude with the Claude Code sign-in on your computer and sends the memories and conversation text being judged (possible secrets are masked on your computer first), just like when you type `/engram:tidy` or `/engram:dream` yourself. It doesn't load your CLAUDE.md or settings and doesn't save a transcript. There's no extra charge on a subscription, but it uses quota: the monthly cap defaults to about US$30 at API list prices (change it on the **Autopilot** page), up to US$5 per run, and it stops at Claude's usage limit. It runs only after the computer has been idle for 20+ minutes so it doesn't compete with you.
+It calls Claude with the Claude Code sign-in on your computer and sends the memories and conversation text being judged (possible secrets are masked on your computer first), just like when you type `/engram:tidy` or `/engram:dream` yourself. It doesn't load your CLAUDE.md or settings and doesn't save a transcript. There's no extra charge on a subscription, but it uses quota: the monthly cap per computer defaults to about US$200 at API list prices (pick a common amount or set your own from 1 to 1000 on the **Autopilot** page, or run `engram autopilot budget <dollars>`). There's no per-run money cap, so a run can use whatever is left this month; it stops when this month's budget is used up or at Claude's usage limit. It runs only after the computer has been idle for 20+ minutes so it doesn't compete with you.
+
+### If two computers both have autopilot on, will they edit against each other?
+
+From 1.6.0 every computer is equal: each one tidies the shared memories (global, core rules, project memories) and resolves sync conflicts. Each run syncs first to get the other computer's changes; which version of each scope was tidied is recorded in your vault and synced, and a scope another computer already tidied that hasn't changed since is skipped. So the same memories aren't tidied twice, and two computers don't take turns changing the same ones. If two computers happen to change the same memory at once, syncing turns it into a conflict that the next run merges, and neither side's content is lost. Machine memories are tidied only by their own computer. Update every computer to 1.6.0.
 
 ### Where did autopilot move my secrets?
 

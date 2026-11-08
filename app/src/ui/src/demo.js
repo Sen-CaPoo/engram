@@ -65,7 +65,7 @@ const REDACTED = EN_DATA ? '[redacted: stored in Windows Credential Manager]' : 
 let importState = { applied: false, tag: null };
 let guidelinesAdopted = false;
 let pendingList = projects.slice(0, 1).map((p) => ({ path: 'C:\\Users\\Demo\\Desktop\\' + (p.aliases?.[0] || p.name) + '-v2', pid: p.pid, encoded: 'C--Users-Demo-Desktop-example-v2', since: minutesAgo(35), reason: 'ask' }));
-const settings = { machineLabel: RAW.self.label, remote: 'https://github.com/demo/engram-vault.git', syncIntervalMin: 10, bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on', autopilot: ['off', 'empty'].includes(AP_VARIANT) ? 'off' : 'on', autopilotBudget: 30, healthTime: '09:30', paused: false };
+const settings = { machineLabel: RAW.self.label, remote: 'https://github.com/demo/engram-vault.git', syncIntervalMin: 10, bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on', autopilot: ['off', 'empty'].includes(AP_VARIANT) ? 'off' : 'on', autopilotBudget: 200, healthTime: '09:30', paused: false };
 
 const byRef = (ref) => memories.find((m) => m.ref === ref);
 const projectName = (pid) => projects.find((p) => p.pid === pid)?.name || pid;
@@ -680,10 +680,11 @@ export const demoApi = {
     await wait(80);
     const on = settings.autopilot === 'on';
     const monthly = settings.autopilotBudget;
-    const known = on || apRuns.length > 0;
+    // 1.6.0：多台平等，列出開啟自動駕駛的電腦（展示版：另一台一直開著，這台依開關）
+    const machines = AP_VARIANT === 'empty' ? [] : [{ mid: other.id, label: other.label, self: false, enabledAt: minutesAgo(60 * 24 * 3), lastRunAt: minutesAgo(60 * 5) }, ...(on ? [{ mid: self.id, label: self.label, self: true, enabledAt: minutesAgo(60 * 24), lastRunAt: apRuns[0]?.endedAt ?? null }] : [])];
     return {
       enabled: on, budget: { monthly, used: apUsed, remaining: Math.max(0, Math.round((monthly - apUsed) * 10000) / 10000) },
-      host: known ? { mid: self.id, label: self.label, self: true, enabled: on ? [self.id] : [] } : { mid: null, label: null, self: false, enabled: [] },
+      machines,
       paused: apPaused(), feedback: clone(apFeedback.slice(-20)), running: apRunning ? clone(apRunning) : null, runs: apRuns.map(apEntry),
     };
   },
@@ -726,7 +727,7 @@ let apFeedback = AP_VARIANT === 'empty' ? [] : AP.feedback;
 let apUsed = AP_VARIANT === 'empty' ? 0 : 4.31;
 let apRunning = null;
 let apSeq = 0;
-const apEntry = (r) => ({ id: r.id, reason: r.reason, startedAt: r.startedAt, endedAt: r.endedAt ?? null, status: r.status, summary: r.summary ?? null, host: r.host ?? null });
+const apEntry = (r) => ({ id: r.id, reason: r.reason, startedAt: r.startedAt, endedAt: r.endedAt ?? null, status: r.status, summary: r.summary ?? null });
 const apById = (id) => {
   const r = apRuns.find((x) => x.id === id);
   if (!r) throw Object.assign(new Error('找不到這次的執行紀錄'), { code: 'E_NOT_FOUND', en: { message: 'This run was not found' } });
@@ -753,7 +754,7 @@ function markUndone(a) {
 function startDemoRun(reason) {
   if (apRunning) return;
   const monthly = settings.autopilotBudget;
-  const run = { v: 1, id: `ap-demo-${apSeq++}`, reason, machine: self.id, startedAt: new Date().toISOString(), endedAt: null, status: 'running', host: { mid: self.id, label: self.label, self: true }, budget: { monthly, used: apUsed, remaining: Math.max(0, monthly - apUsed), run: 5 }, actions: [], rejected: [], skipped: [], notes: [], calls: [], records: [], summary: null };
+  const run = { v: 1, id: `ap-demo-${apSeq++}`, reason, machine: self.id, startedAt: new Date().toISOString(), endedAt: null, status: 'running', budget: { monthly, used: apUsed, remaining: Math.max(0, monthly - apUsed), run: Math.max(0, monthly - apUsed) }, actions: [], rejected: [], skipped: [], notes: [], calls: [], records: [], summary: null };
   apRuns.unshift(run);
   apRunning = run;
   const live = AP.live();

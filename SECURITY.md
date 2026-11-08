@@ -16,8 +16,8 @@
 
 | 版本 | 安全性更新 |
 | --- | --- |
-| 1.5.x | 支援 |
-| < 1.5 | 不支援（請更新到最新版） |
+| 1.6.x | 支援 |
+| < 1.6 | 不支援（請更新到最新版） |
 
 ## Engram 如何處理你的資料
 
@@ -55,8 +55,8 @@ We'll confirm and reply as soon as we can, and note the fix in the [changelog](C
 
 | Version | Security updates |
 | --- | --- |
-| 1.5.x | Supported |
-| < 1.5 | Not supported (please update to the latest version) |
+| 1.6.x | Supported |
+| < 1.6 | Not supported (please update to the latest version) |
 
 ## How Engram handles your data
 

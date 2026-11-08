@@ -98,13 +98,13 @@ p { margin: 0; }
   padding: var(--sp-4) var(--sp-3) var(--sp-3);
   padding-top: max(var(--sp-4), env(safe-area-inset-top, 0px));
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 18px; color: var(--brand); text-decoration: none; }
-.brand svg { height: 30px; width: auto; flex: none; }
-.brand .word { display: grid; line-height: 1.1; }
-.brand .word b { color: var(--text); font: 650 15px/1.15 var(--font-display); letter-spacing: 0.01em; }
-.brand .word small { color: var(--text-3); font-size: 12px; letter-spacing: 0.04em; }
+.sidebar > .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 18px; color: var(--brand); text-decoration: none; }
+.sidebar > .brand svg { height: 30px; width: auto; flex: none; }
+.sidebar > .brand .word { display: grid; line-height: 1.1; }
+.sidebar > .brand .word b { color: var(--text); font: 650 15px/1.15 var(--font-display); letter-spacing: 0.01em; }
+.sidebar > .brand .word small { color: var(--text-3); font-size: 12px; letter-spacing: 0.04em; }
 /* 英文介面：字距是為中文設計的，英文標語不加字距、不換行 */
-html[lang="en"] .brand .word small { letter-spacing: 0; white-space: nowrap; }
+html[lang="en"] .sidebar > .brand .word small { letter-spacing: 0; white-space: nowrap; }
 
 .nav { display: grid; gap: 2px; }
 .nav-label { font-size: 12px; letter-spacing: 0.08em; color: var(--text-3); padding: 14px 10px 6px; }
@@ -463,8 +463,8 @@ html[lang="en"] .steps li::before { content: "Step " counter(st); }
 @media (max-width: 960px) {
   .app { grid-template-columns: 64px minmax(0, 1fr); }
   .sidebar { padding-inline: 8px; }
-  .brand .word, .nav-label, .nav a .txt, .nav .count, .sidebar-foot .trace, .demo-badge { display: none; }
-  .brand { justify-content: center; padding-inline: 0; }
+  .sidebar > .brand .word, .nav-label, .nav a .txt, .nav .count, .sidebar-foot .trace, .demo-badge { display: none; }
+  .sidebar > .brand { justify-content: center; padding-inline: 0; }
   .nav a { justify-content: center; }
   .nav a .count.hot { display: block; position: absolute; top: 2px; right: 6px; min-width: 8px; height: 8px; padding: 0; font-size: 0; }
   .searchbox { width: auto; flex: 1; }
@@ -473,7 +473,7 @@ html[lang="en"] .steps li::before { content: "Step " counter(st); }
 @media (max-width: 560px) {
   .app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
   .sidebar { order: 2; flex-direction: row; padding: 6px 8px; padding-bottom: max(6px, env(safe-area-inset-bottom, 0px)); border-right: 0; border-top: 1px solid var(--border); overflow-x: auto; }
-  .brand, .sidebar-foot, .nav-label { display: none; }
+  .sidebar > .brand, .sidebar-foot, .nav-label { display: none; }
   .nav { grid-auto-flow: column; gap: 4px; }
   .main { order: 1; }
   .content, .topbar { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -689,7 +689,10 @@ dialog.dialog[open] { display: flex; }
 .ap-hero-body { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: var(--sp-4) var(--sp-8); align-items: start; border-top: 1px solid var(--border); padding-top: var(--sp-4); }
 .ap-side { display: grid; gap: var(--sp-3); }
 .ap-facts dd { display: grid; gap: 2px; }
-.ap-facts .ap-host { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; }
+.ap-facts .ap-host { display: inline-flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; font-weight: 600; }
+.ap-machine { display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap; }
+.ap-cap-custom { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-2); }
+.ap-cap-custom .input { width: 7.5em; }
 .ap-sub { font-size: var(--fs-xs); }
 .ap-budget { display: grid; gap: 10px; }
 .ap-cap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-2); }
