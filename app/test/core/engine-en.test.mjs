@@ -95,7 +95,7 @@ describe('範圍分類理由的英文版', () => {
       { type: 'reference', text: '這台電腦的網路設定' },
       { type: 'project', text: '已安裝在 C:\\tools\\cua' },
       { type: 'project', text: 'D 槽寫滿了', hostnames: [] },
-      { type: 'project', text: '主機 SHPC-T5EB 的設定', hostnames: ['SHPC-T5EB'] },
+      { type: 'project', text: '主機 DESK-A1B2 的設定', hostnames: ['DESK-A1B2'] },
     ];
     for (const c of cases) {
       const s = suggestScope(c);

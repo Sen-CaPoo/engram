@@ -16,7 +16,7 @@ const HEARTBEAT_MS = 30 * 1000;
 const als = new AsyncLocalStorage();
 const queues = new Map(); // lockPath → 程序內排隊的 Promise 尾端
 
-function processAlive(pid) {
+export function processAlive(pid) {
   if (!pid) return false;
   if (pid === process.pid) return true;
   try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }

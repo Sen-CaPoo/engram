@@ -2,6 +2,7 @@
 //   node build.mjs           正式版 → app/src/ui/dist/
 //   node build.mjs --watch   開發時持續建置
 //   node build.mjs --demo    單檔展示版（內建展示資料，點兩下就能開）→ 專案根目錄 23_介面原型_展示版.html
+//                            找不到開發者的記憶盤點時，改用合成的正體中文資料（demo-sample-zh.mjs）
 //   node build.mjs --demo-en 英文展示版（合成資料，介面預設英文，用來拍英文截圖）→ 專案根目錄 23_介面原型_展示版.en.html
 import * as esbuild from 'esbuild';
 import { cpSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -9,6 +10,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDemoData } from './demo-data.mjs';
 import { buildSampleDataEn } from './demo-sample-en.mjs';
+import { buildSampleDataZh } from './demo-sample-zh.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(here, '../..');
@@ -44,7 +46,7 @@ async function buildApp() {
 }
 
 async function buildDemo(en = false) {
-  const data = en ? buildSampleDataEn() : buildDemoData(rootDir);
+  const data = en ? buildSampleDataEn() : (buildDemoData(rootDir) ?? buildSampleDataZh());
   const res = await esbuild.build({
     ...common, write: false, outdir: 'demo-out', entryNames: 'app', minify: true,
     define: { __DEMO__: 'true', __DEMO_DATA__: JSON.stringify(data) },

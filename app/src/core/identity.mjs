@@ -330,15 +330,24 @@ function memoryPathFor(homes, encoded) {
  * （Engram 的設定檔綁定，R-52），否則是 Claude Code 自己的編碼資料夾（junction 綁定與未綁定）。檔案不存在時回傳 null。
  * @param {{ root: string, encoded: string|null, fromSub: boolean }} where
  */
-export function loadedMemoryIndex(homes, { root, encoded, fromSub }) {
+export function loadedMemoryIndex(homes, where) {
+  const file = memoryIndexCandidate(homes, where);
+  return file && fs.existsSync(file) ? file : null;
+}
+
+/**
+ * loadedMemoryIndex 會看的那個 MEMORY.md 路徑（不管存不存在）；決定它的是根目錄的 settings.local.json（SETTINGS_LOCAL）。
+ * 2.0.0 S5：開場的快取記下這兩個檔案的修改時間，變了就不用快取。
+ */
+export function memoryIndexCandidate(homes, { root, encoded, fromSub }) {
   const dir = fromSub ? null : readJsonSyncSafe(path.join(root, SETTINGS_LOCAL))?.autoMemoryDirectory;
   let memDir = null;
   if (typeof dir === 'string' && dir) memDir = /^~[\\/]/.test(dir) ? path.join(homes.userHome, dir.slice(2)) : path.resolve(root, dir);
   else if (encoded) memDir = memoryPathFor(homes, encoded);
-  if (!memDir) return null;
-  const file = path.join(memDir, 'MEMORY.md');
-  return fs.existsSync(file) ? file : null;
+  return memDir ? path.join(memDir, 'MEMORY.md') : null;
 }
+
+export { SETTINGS_LOCAL };
 
 /** 寫一個探針檔確認 junction 可用。 */
 function probeJunction(linkPath, targetDir) {

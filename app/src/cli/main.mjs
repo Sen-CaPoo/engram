@@ -6,7 +6,10 @@ import { cmdCore, cmdMemory, cmdNotSecret, cmdRemember, cmdSearch, cmdUndo } fro
 import { cmdAgent, cmdDoctor, cmdHook, cmdInstall, cmdMergeDriver, cmdSchedule, cmdUi, cmdUninstall, cmdUpdate, cmdVersion } from './commands/system.mjs';
 import { cmdTidy } from './commands/tidy.mjs';
 import { cmdDream } from './commands/dream.mjs';
+import { cmdEnv } from './commands/env.mjs';
 import { cmdAutopilot, cmdSecret } from './commands/autopilot.mjs';
+import { cmdGuardrails } from './commands/guardrails.mjs';
+import { cmdHolding } from './commands/holding.mjs';
 import { cmdBind, cmdCollisions, cmdImport, cmdProjects, cmdStatus, cmdSync, cmdUnbind } from './commands/vault.mjs';
 import { loadEngine } from './engine.mjs';
 import { CliError } from './errors.mjs';
@@ -62,12 +65,24 @@ export const COMMANDS = {
   },
   autopilot: {
     run: cmdAutopilot,
-    args: { '': 0, status: 0, on: 0, off: 0, run: 0, runs: 0, show: 1, undo: 2, budget: 1, resume: 1 },
+    args: { '': 0, status: 0, on: 0, off: 0, run: 0, runs: 0, show: 1, undo: 2, budget: 1, resume: 1, preferences: 0, digest: 1 },
     options: { force: bool, wait: bool },
-    usage: 'autopilot [status] | on | off | run [--wait] [--force] | runs | show <執行編號> | undo <執行編號> [<項目編號>] | resume <類別> | budget <美元>',
-    summary: '自動駕駛：AI 自主判斷並處理收件匣、記憶整理與對話回顧（不需要你逐項確認，每一項都可以復原）',
+    usage: 'autopilot [status] | on | off | run [--wait] [--force] | runs | show <執行編號> | undo <執行編號> [<項目編號>] | resume <類別> | budget <美元> | preferences | digest [<週一日期>]',
+    summary: '自動駕駛：AI 自主判斷並處理收件匣、記憶整理與對話回顧（不需要你逐項確認，每一項都可以復原）；preferences 列出判斷時遵守的偏好（採用與還沒採用的）、digest 看每週摘要',
+  },
+  holding: {
+    run: cmdHolding,
+    args: { '': 0, list: 0, show: 1, adopt: 1, dismiss: 1 },
+    usage: 'holding [list] | show <編號> | adopt <編號> | dismiss <編號>',
+    summary: '保留區：自動駕駛沒有執行的提案（審核員不同意、別的範圍、退回的版本）連同完整內容；adopt 寫進記憶（可復原），dismiss 不再重審',
   },
   secret: { run: cmdSecret, args: { '': 0, list: 0, check: 0, get: 1, delete: 1 }, usage: 'secret list | check | get <名稱> | delete <名稱>', summary: '本機保管區：自動駕駛從記憶移出來的金鑰（只在這台電腦、加密保存）；check 檢查每一筆解不解得開，delete 只刪解不開的' },
+  guardrails: {
+    run: cmdGuardrails,
+    args: { '': 0, list: 0, test: 1, approve: 1, disable: 1, enable: 1 },
+    usage: 'guardrails [list] | test "<指令>" | approve <規則 id> | disable <規則 id> | enable <規則 id>',
+    summary: '護欄：把踩過的坑編成規則，Bash／PowerShell 指令送出前比對（把握高的擋下並附正確寫法，把握低的附提醒）；list 列出規則、核可狀態與近 30 天命中、test 測試一個指令（多行的從標準輸入傳入）、approve 核可同步來的擋下規則（沒核可只當提醒）、disable／enable 在這台電腦停用或恢復一條規則',
+  },
   core: { run: cmdCore, args: { '': 0, write: 0 }, options: { base: str, file: str }, usage: 'core | core write [--base <版本>] [--file <檔案>]', summary: '讀取核心準則 CORE.md；write 從標準輸入或 --file 寫入' },
   undo: { run: cmdUndo, args: 1, usage: 'undo <版本>', summary: '復原一次寫入、移動、封存、合併或衝突處理' },
   'not-secret': {
@@ -78,6 +93,13 @@ export const COMMANDS = {
     summary: '確認被判定為疑似金鑰的值其實不是金鑰：記入會同步到所有電腦的「不是金鑰」清單（只存雜湊）。新增只能由你在自己的終端機執行，不能在 Claude Code 裡執行；--remove 撤銷',
   },
   doctor: { run: cmdDoctor, args: 0, options: { probe: bool }, usage: 'doctor [--probe]', summary: '檢查環境；--probe 另外執行 Claude Code 相容性探測' },
+  env: {
+    run: cmdEnv,
+    args: { '': 0, status: 0, diff: 0, fix: 1, set: 1, approve: 1, unset: 1, 'remove-skill': 1, 'remove-plugin': 1, skip: 1, unskip: 1, export: 0, plan: 0, apply: 0, undo: 0, 'disable-plugin': 1, 'enable-plugin': 1 },
+    options: { refresh: bool, skill: { type: 'string', multiple: true }, force: bool },
+    usage: 'env [status [--refresh]] | diff | fix <卡片 id> | set <鍵>=<值> | approve [項目] | unset <鍵> | remove-skill <名稱> | remove-plugin <外掛> | skip <項目> | unskip <項目> | export [--skill <名稱>]... [--force] | plan | apply | undo | disable-plugin <外掛> | enable-plugin <外掛>',
+    summary: '環境健檢：這台電腦的 Claude Code 環境指紋與發現（只讀名稱、版本、雜湊與耗時）、各台電腦的差異、修正一張可修的卡片（先備份）；環境設定同步：set 寫入環境變數、approve 核可從記憶庫同步來的項目（沒核可的不會被套用）、unset（設定寫成 setting:<鍵>）／remove-skill／remove-plugin 從環境設定檔移除、skip／unskip 這台電腦略過或不再略過某一項、export 匯出這台的設定與指定的技能（別台改過的技能要 --force 才覆蓋）、plan 看套用後會改什麼、apply 套用已核可的項目（先備份）、undo 還原最近一次、disable-plugin／enable-plugin 停用或啟用外掛',
+  },
   ui: { run: cmdUi, args: 0, usage: 'ui', summary: '開啟管理介面（常駐程式沒在跑就先啟動）' },
   agent: { run: cmdAgent, args: 0, options: { port: str }, usage: 'agent [--port 4777]', summary: '在前景執行常駐程式' },
   import: { run: cmdImport, args: { plan: 0, apply: 0, undo: 1 }, options: { yes: bool }, usage: 'import plan | apply --yes | undo <tag>', summary: '匯入舊的 Claude Code 記憶' },
@@ -100,17 +122,18 @@ export const COMMANDS = {
 
 const GROUPS = [
   ['記憶', ['search', 'remember']],
-  ['自動駕駛', ['autopilot', 'secret']],
+  ['自動駕駛', ['autopilot', 'holding', 'secret']],
+  ['護欄', ['guardrails']],
   ['整理（給 Claude Code 的 /engram 技能使用，也可以自己執行）', ['inbox', 'tidy', 'dream', 'memory', 'core', 'undo', 'not-secret']],
   ['專案與同步', ['status', 'sync', 'bind', 'unbind', 'projects', 'import', 'collisions']],
-  ['管理', ['ui', 'agent', 'doctor', 'schedule', 'install', 'update', 'uninstall']],
+  ['管理', ['ui', 'agent', 'doctor', 'env', 'schedule', 'install', 'update', 'uninstall']],
   ['其他', ['hook', 'merge-driver', 'version', 'help']],
 ];
 
 export function helpText(name) {
   const c = COMMANDS[name];
   if (c) return `用法：engram ${c.usage}\n${c.summary}\n\n加上 --json 輸出機器可讀的 JSON。\n`;
-  const lines = ['Engram 憶跡：Claude Code 個人記憶的跨裝置同步與管理', '', '用法：engram <指令> [選項]', ''];
+  const lines = ['Engram 憶跡：Claude Code 的記憶與環境管家', '', '用法：engram <指令> [選項]', ''];
   for (const [title, names] of GROUPS) {
     lines.push(title);
     for (const n of names) lines.push(`  ${COMMANDS[n].usage}`, `      ${COMMANDS[n].summary}`);

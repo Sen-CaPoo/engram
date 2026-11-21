@@ -91,7 +91,11 @@ async function dismissDecided(eg, plan, edits) {
 }
 
 /** 套用：建立還原點 → 依調整後的計畫收編並綁定 → 留下紀錄。 */
-export async function applyImport(eg, { edits } = {}) {
+/**
+ * by：收進全域或單機的記憶記為確認過的來源（第四輪審查 F-02）。由呼叫端決定、不從請求內容讀：
+ * 管理介面的匯入精靈是 user；CLI（engram import apply）在 Claude Code 裡是 claude、在終端機是 user。
+ */
+export async function applyImport(eg, { edits } = {}, { by } = {}) {
   const clean = sanitizeEdits(edits);
   const raw = await eg.sweepLegacy({ dryRun: true });
   const { plan, held } = holdChanged(raw, applyEdits(raw, clean), clean.revs);
@@ -105,7 +109,7 @@ export async function applyImport(eg, { edits } = {}) {
   const startedAt = new Date().toISOString();
   let result;
   try {
-    result = await eg.sweepLegacy({ dryRun: false, plan, bindSources: true });
+    result = await eg.sweepLegacy({ dryRun: false, plan, bindSources: true, by });
   } catch (err) {
     // 中途失敗：引擎已撤銷失敗那一步未提交的寫入，並在錯誤附上還原點；這裡留下紀錄，讓使用者能「還原到匯入前」
     const restorePoint = err.restorePoint;

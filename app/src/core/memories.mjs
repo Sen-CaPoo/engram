@@ -7,7 +7,7 @@ import { engramMeta, getField, parseMemoryFile, replaceBody, setFields, stringif
 import { exists, listMarkdown, mtimeMs, readText, safeWrite, sha1 } from './fsx.mjs';
 import { git } from './git.mjs';
 import { memoryFileName, uniqueFileName } from './ids.mjs';
-import { computeIndexBudget, normalizeProjectIndex, PROJECT_INDEX, rebuildScopeIndex, SCOPE_INDEX } from './normalize.mjs';
+import { computeIndexBudget, hasOmitLine, indexLayersFor, listedFiles, normalizeProjectIndex, PROJECT_INDEX, rebuildScopeIndex, SCOPE_INDEX } from './normalize.mjs';
 import { fromRef, toRef } from './paths.mjs';
 import { assertNoNewSecrets, assertNotHeld } from './secretallow.mjs';
 import { commitPaths, machineDir, projectMemoryDir, readProject } from './vault.mjs';
@@ -71,7 +71,7 @@ export function verifiedDate(v) {
 }
 
 /** 解析檔案，整理成 MemorySummary 需要的欄位。 */
-export function summarize(ref, text, { mtime = 0, indexed = false } = {}) {
+export function summarize(ref, text, { mtime = 0, listed = false, omitted = false } = {}) {
   const parsed = parseMemoryFile(text);
   const d = parsed.data ?? {};
   const em = engramMeta(d) ?? {};
@@ -88,7 +88,11 @@ export function summarize(ref, text, { mtime = 0, indexed = false } = {}) {
     verified: verifiedDate(em.verified),
     tags: Array.isArray(em.tags) ? em.tags.map(String) : [],
     project: em.project ? String(em.project) : null,
-    indexed,
+    // listed：索引裡真的有這筆的一行（手寫說明句裡提到不算）；omitted：索引放不下、刻意省略了（沒列出但不是漏掉）。
+    // indexed＝兩者之一（向下相容）。情境召回要看「索引裡有沒有」時用 listed
+    listed,
+    omitted,
+    indexed: listed || omitted,
     findings: [],
     _parsed: parsed,
   };
@@ -99,13 +103,16 @@ async function listDir(vaultDir, dir) {
   const names = await listMarkdown(dir, { exclude: [PROJECT_INDEX, SCOPE_INDEX] });
   if (!names.length) return [];
   const idxText = (await readText(path.join(dir, PROJECT_INDEX))) ?? (await readText(path.join(dir, SCOPE_INDEX))) ?? '';
+  // 索引因為放不下而省略了一部分（有「另有 N 筆未列出」那行）：沒列出的是刻意省略（omitted），不算漏掉（H03 說「下次同步會補上」是不對的）
+  const listedNames = listedFiles(idxText);
+  const omitting = hasOmitLine(idxText);
   const out = [];
   for (const name of names) {
     const abs = path.join(dir, name);
     const text = await readText(abs);
     if (text === null) continue;
-    const indexed = idxText.includes(`](${name})`) || idxText.includes(`/${name})`) || idxText.includes(`](./${name})`);
-    out.push(summarize(toRef(vaultDir, abs), text, { mtime: mtimeMs(abs), indexed }));
+    const listed = listedNames.has(name.toLowerCase());
+    out.push(summarize(toRef(vaultDir, abs), text, { mtime: mtimeMs(abs), listed, omitted: omitting && !listed }));
   }
   return out;
 }
@@ -160,7 +167,9 @@ export async function refreshIndex(ctx, scope) {
   const budget = (await computeIndexBudget(ctx.vault))[scope.kind];
   const { readsForScope } = await import('./usage.mjs');
   const reads = await readsForScope(ctx.vault, scope.kind === 'global' ? 'global' : `machines/${scope.mid}`);
-  const r = await rebuildScopeIndex({ kind: scope.kind, dir, userHome: ctx.homes.userHome, label, projectNames, budget, reads });
+  // 2.0.0 P2：索引分層的設定（和同步時的 tidy 用同一個值，不然索引會在寫入與同步之間換來換去）
+  const layers = await indexLayersFor(ctx.vault);
+  const r = await rebuildScopeIndex({ kind: scope.kind, dir, userHome: ctx.homes.userHome, label, projectNames, budget, reads, layers });
   return r.changed ? [toRef(ctx.vault, path.join(dir, SCOPE_INDEX))] : [];
 }
 
@@ -185,7 +194,8 @@ function result(commit) {
  */
 async function reviewPaths(ctx, refs, reviewed) {
   const { markReviewed } = await import('./review.mjs');
-  return markReviewed(ctx, reviewed ? refs : refs.filter((r) => !exists(fromRef(ctx.vault, r))));
+  // reviewed 可以是確認的來源（2.0.0，例如自動駕駛審核員同意過的寫入傳 'autopilot'）；true 是使用者
+  return markReviewed(ctx, reviewed ? refs : refs.filter((r) => !exists(fromRef(ctx.vault, r))), { by: typeof reviewed === 'string' ? reviewed : 'user' });
 }
 
 /** HEAD 裡這個檔案的內容（沒有進過 git 時為 null） */
@@ -213,7 +223,9 @@ export async function createMemory(ctx, { scope, name, type, description, body =
     if (typeof rawText === 'string' && file !== wanted) {
       throw new EngramError(E.CONFLICT, `已經有同名的記憶：${wanted}，沒有寫入`, '重新讀取後再決定要合併還是改名').withEn(`A memory named ${wanted} already exists, so nothing was written`, 'Reload, then decide whether to merge or rename.');
     }
-    const metadata = { type };
+    // modified：全域與單機索引放不下時，「近 14 天的新記憶優先」靠它；Claude Code 自己寫的記憶有，engram 寫的也要有。
+    // 整份 text 寫入的（記憶整理頁核可的內容）維持原樣：續做時靠內容比對認得做過的那一步；沒有 modified 的由索引用 git 首次加入的時間排序
+    const metadata = { type, modified: new Date().toISOString() };
     if (project && sc.kind !== 'project') metadata.engram = { project };
     const text = typeof rawText === 'string'
       ? `${rawText.replace(/\r\n/g, '\n').replace(/\n*$/, '')}\n`
@@ -255,7 +267,7 @@ export async function writeMemory(ctx, ref, input) {
     if (next === cur) {
       // 內容沒有變化：只補確認紀錄（使用者同意的 --reviewed 寫入，內容剛好和現在相同）
       if (input?.reviewed) {
-        const rv = await reviewPaths(ctx, [ref], true);
+        const rv = await reviewPaths(ctx, [ref], input.reviewed);
         if (rv.length) return result(await commitPaths(ctx.vault, rv, `review ${ref}`, { action: 'review', refs: [ref], mid: ctx.mid }));
       }
       return { ok: true };
@@ -267,7 +279,7 @@ export async function writeMemory(ctx, ref, input) {
     // carryReviewed：機械式的改寫（記下驗證日期、改連結、遮蔽金鑰）：改之前確認過才算確認過，不會把沒看過的內容一起確認掉
     const rv = input?.carryReviewed
       ? await (await import('./review.mjs')).carryReviewed(ctx, new Map([[ref, cur]]))
-      : await reviewPaths(ctx, [ref], !!input?.reviewed);
+      : await reviewPaths(ctx, [ref], input?.reviewed ?? false);
     const commit = await commitPaths(ctx.vault, [ref, ...idx, ...allowed, ...rv], `edit ${ref}`, { action: 'edit', refs: [ref], mid: ctx.mid });
     return result(commit);
   });

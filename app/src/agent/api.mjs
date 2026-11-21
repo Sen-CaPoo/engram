@@ -120,7 +120,7 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     'POST /api/secrets/allow': async ({ body }) => done(await eg.secrets.allow(need(body.ref, 'ref'), body.line)),
     // 引擎遇到 merge、edit、open-* 時回傳 { ok:false, needsUi:true, action, args }，原樣轉回給介面處理
     // 收件匣的一鍵修正：使用者沒有看過全文（例如「升級為全域」），搬進每次都會載入的範圍後留在「待你確認」
-    'POST /api/apply': async ({ body }) => done(await eg.apply(need(body.fix, 'fix'))),
+    'POST /api/apply': async ({ body }) => done(await eg.apply(need(body.fix, 'fix'), { by: 'user' })),
     'GET /api/conflicts': () => eg.conflicts.list(),
     'POST /api/conflicts/resolve': async ({ body }) => done(await eg.conflicts.resolve(need(body.id, 'id'), { choice: need(body.choice, 'choice'), body: body.body })),
     'GET /api/history': ({ q }) => eg.history(clean({ ref: q('ref'), limit: q('limit') ? toInt(q('limit'), 50) : undefined })),
@@ -157,7 +157,7 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     'GET /api/settings': async () => {
       const st = await eg.status();
       const engineSettings = typeof eg.settings?.get === 'function' ? await eg.settings.get() : {};
-      return { machineLabel: st.machine?.label ?? eg.machine?.label, remote: st.vault?.remote ?? null, bindAuto: engineSettings.bindAuto ?? 'confident', collisionRename: engineSettings.collisionRename ?? 'ask', reviewWrites: engineSettings.reviewWrites ?? 'on', autopilot: engineSettings.autopilot ?? 'off', autopilotBudget: engineSettings.autopilotBudget ?? 200, ...(settings?.get() ?? {}) };
+      return { machineLabel: st.machine?.label ?? eg.machine?.label, remote: st.vault?.remote ?? null, bindAuto: engineSettings.bindAuto ?? 'confident', collisionRename: engineSettings.collisionRename ?? 'ask', reviewWrites: engineSettings.reviewWrites ?? 'on', autopilot: engineSettings.autopilot ?? 'off', autopilotBudget: engineSettings.autopilotBudget ?? 200, envHealth: engineSettings.envHealth ?? 'on', envSync: engineSettings.envSync ?? 'report', ...(settings?.get() ?? {}) };
     },
     'PUT /api/settings': async ({ body }) => {
       if (body.machineLabel !== undefined) await engineFn(eg.machine?.rename, '電腦改名', 'renaming this computer')(String(body.machineLabel).trim());
@@ -165,6 +165,14 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       if (body.collisionRename !== undefined) await engineFn(eg.settings?.set, '撞名資料夾改名設定', 'the colliding folder rename setting')({ collisionRename: body.collisionRename });
       if (body.reviewWrites !== undefined) await engineFn(eg.settings?.set, '確認寫入設定', 'the review setting')({ reviewWrites: body.reviewWrites });
       if (body.autopilotBudget !== undefined) await engineFn(eg.settings?.set, '自動駕駛預算', 'the autopilot budget')({ autopilotBudget: Number(body.autopilotBudget) });
+      if (body.envHealth !== undefined) await engineFn(eg.settings?.set, '環境健檢設定', 'the environment check setting')({ envHealth: body.envHealth });
+      if (body.guardrails !== undefined) await engineFn(eg.settings?.set, '護欄設定', 'the guardrails setting')({ guardrails: body.guardrails });
+      if (body.envSync !== undefined) await engineFn(eg.settings?.set, '環境設定同步設定', 'the environment sync setting')({ envSync: body.envSync });
+      if (body.autoUpdate !== undefined) await engineFn(eg.settings?.set, '自動更新設定', 'the automatic update setting')({ autoUpdate: body.autoUpdate });
+      // 2.0.0 WP4a：情境召回與索引分層一起改（兩者互斥的檢查要看合併後的值，分開改會因為先後順序被擋）
+      if (body.recall !== undefined || body.indexLayers !== undefined) {
+        await engineFn(eg.settings?.set, '情境召回設定', 'the context recall setting')({ ...(body.recall !== undefined ? { recall: body.recall } : {}), ...(body.indexLayers !== undefined ? { indexLayers: body.indexLayers } : {}) });
+      }
       if (body.autopilot !== undefined) {
         await engineFn(eg.settings?.set, '自動駕駛設定', 'the autopilot setting')({ autopilot: body.autopilot });
         // 開關跟著排程的「自動駕駛」工作；開啟時立即執行一輪
@@ -223,6 +231,42 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       return autopilotStatus(eg);
     },
     'POST /api/autopilot/undo': ({ body }) => undoRun(eg, need(body.id, 'id'), body.index === undefined || body.index === null ? undefined : Number(body.index)),
+
+    // 環境健檢與兩台差異（2.0.0 R1、R5）：這台的環境指紋與發現、兩台差異、修正一張卡片
+    'GET /api/env': async () => ({
+      envHealth: (await eg.settings?.get?.())?.envHealth ?? 'on',
+      fingerprint: await engineFn(eg.env?.fingerprint, '環境健檢', 'the environment check')(),
+      findings: await eg.env.findings(),
+    }),
+    'GET /api/env/diff': () => engineFn(eg.env?.diff, '環境差異比較', 'the environment comparison')(),
+    'POST /api/env/fix': async ({ body }) => done(await engineFn(eg.env?.fix, '環境健檢的修正', 'environment check fixes')(need(body.id, 'id'))),
+    // 保留區（2.0.0）：自動駕駛沒有執行的提案；使用者採用（寫進記憶、可復原）或忽略
+    'GET /api/holding': ({ q }) => engineFn(eg.holding?.list, '保留區', 'the holding area')(clean({ status: q('status') })),
+    'GET /api/holding/item': ({ q }) => engineFn(eg.holding?.get, '保留區', 'the holding area')(need(q('id'), 'id')),
+    'POST /api/holding/adopt': async ({ body }) => done(await engineFn(eg.holding?.adopt, '採用保留區的項目', 'adopting a held item')(need(body.id, 'id'))),
+    'POST /api/holding/dismiss': async ({ body }) => done(await engineFn(eg.holding?.dismiss, '忽略保留區的項目', 'dismissing a held item')(need(body.id, 'id'))),
+
+    // 環境設定同步與瘦身（2.0.0 WP8）：plan（套用後這台會改什麼、近 30 天沒用過的外掛）、套用、還原最近一次、停用或啟用外掛
+    'GET /api/env/plan': () => engineFn(eg.env?.plan, '環境設定同步', 'environment sync')(),
+    'POST /api/env/apply': async () => done(await engineFn(eg.env?.apply, '套用環境設定', 'applying the environment settings')()),
+    'POST /api/env/undo': async () => done(await engineFn(eg.env?.undo, '還原環境設定', 'undoing the environment settings')()),
+    // 核可：沒有在這台核可過的環境變數、設定與技能不會被套用。body 可以是 {}（核可目前 plan 裡等待核可的全部）、{ name }、{ name, hash }（hash 是 plan 顯示該項目時附的；內容變了就拒絕），
+    // 或 { items: [字串或 { item, hash }] }
+    'POST /api/env/approve': async ({ body }) => {
+      const items = Array.isArray(body.items) ? body.items : body.name !== undefined ? [body.hash !== undefined ? { item: String(body.name), hash: String(body.hash) } : String(body.name)] : undefined;
+      return done(await engineFn(eg.env?.approve, '核可環境設定', 'approving environment settings')(items));
+    },
+    // 環境設定檔的移除與這台電腦的略過：{ action: 'unset'|'remove-skill'|'remove-plugin'|'skip'|'unskip', name }
+    'POST /api/env/profile': async ({ body }) => {
+      const actions = { unset: eg.env?.unset, 'remove-skill': eg.env?.removeSkill, 'remove-plugin': eg.env?.removePlugin, skip: eg.env?.skip, unskip: eg.env?.unskip };
+      const action = need(body.action, 'action');
+      if (!Object.hasOwn(actions, action)) throw new HttpError(400, 'E_INVALID', `看不懂的動作：${String(action).slice(0, 40)}`, `動作只有 ${Object.keys(actions).join('、')}。`).withEn(`Unrecognized action: ${String(action).slice(0, 40)}`, `The action must be one of ${Object.keys(actions).join(', ')}.`);
+      return done(await engineFn(actions[action], '修改環境設定檔', 'editing the environment profile')(String(need(body.name, 'name'))));
+    },
+    'POST /api/env/plugin': async ({ body }) => {
+      if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'E_INVALID', 'enabled 必須是 true 或 false').withEn('enabled must be true or false');
+      return done(await engineFn(eg.env?.setPlugin, '停用或啟用外掛', 'disabling or enabling plugins')(need(body.name, 'name'), body.enabled));
+    },
     'POST /api/tidy/delete': async ({ body }) => {
       // 1.4.0：還沒決定就刪掉的對話回顧記錄，那批對話改回「未回顧」，下次再分析
       const id = need(body.id, 'id');
@@ -231,6 +275,23 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
       if (rec?.dream?.id && rec.status === 'pending' && typeof eg.dream?.reset === 'function') await eg.dream.reset(rec.dream.id).catch(() => {});
       return r;
     },
+
+    // 護欄（2.0.0 WP4b）：規則（含這台電腦的覆寫與目前實際的動作）、近 30 天的命中數與誤擋數
+    'GET /api/guardrails': () => engineFn(eg.guardrails?.status, '護欄', 'guardrails')(),
+    // 核可同步來的擋下規則（使用者在介面看過樣式與訊息之後按下）：沒核可的規則只當提醒
+    'POST /api/guardrails/approve': async ({ body }) => engineFn(eg.guardrails?.approve, '核可護欄規則', 'approving a guardrail rule')(need(body.id, 'id')),
+
+    // 自動更新（2.0.0 R2）：設定、本機版本、記憶庫裡的發佈資訊與最近一次檢查的結果（含沒有更新的原因）；立刻檢查用 POST /api/jobs/run { id: 'update' }
+    'GET /api/update': async () => (await import('../../install/autoupdate.mjs')).updateStatus({ home: paths.home, autoUpdate: (await eg.settings?.get?.())?.autoUpdate ?? 'on' }),
+    // 情境召回與索引分層（2.0.0 WP4a）：設定（recall、indexLayers）、索引檔，以及並行觀察的數字
+    // （兩種模式下索引的位元組與參考類筆數、近 30 天帶出與其中被打開的次數）；改設定用 PUT /api/settings
+    'GET /api/recall': () => engineFn(eg.recall?.status, '情境召回', 'context recall')(),
+
+    // 管理介面（2.0.0 WP10）：環境頁要看共用設定檔的內容；護欄的「試試看」與這台電腦的停用／啟用（引擎已有，這裡只轉接）
+    'GET /api/env/profile': () => engineFn(eg.env?.profile, '環境設定檔', 'the environment profile')(),
+    'POST /api/guardrails/test': ({ body }) => engineFn(eg.guardrails?.test, '護欄', 'guardrails')(need(body.command, 'command'), body.tool !== undefined ? { tool: body.tool } : {}),
+    'POST /api/guardrails/disable': async ({ body }) => done(await engineFn(eg.guardrails?.disable, '護欄', 'guardrails')(String(need(body.id, 'id')))),
+    'POST /api/guardrails/enable': async ({ body }) => done(await engineFn(eg.guardrails?.enable, '護欄', 'guardrails')(String(need(body.id, 'id')))),
 
     // 「交給 Claude」的引導：外掛是否已安裝並啟用、有哪些 /engram 技能（唯讀）
     'GET /api/claude-plugin': () => claudePluginStatus({ claudeHome, installFile: paths.installFile }),
@@ -245,9 +306,15 @@ export function createApi({ eg, jobs, paths, info, settings, claudeHome = defaul
     },
     'GET /api/logs': ({ q }) => readLogs(paths.logs, 'agent', { level: q('level'), limit: Math.min(toInt(q('limit'), 200), 1000) }),
 
+    // ───────── 2.0.0 WP9：自動駕駛的偏好、每週摘要 ─────────
+    // 偏好區塊目前採用與還沒採用的項目（還沒採用的附 ref 與 sha，由使用者用 POST /api/review/confirm 確認）
+    'GET /api/autopilot/preferences': () => engineFn(eg.autopilot?.preferences, '偏好區塊', 'the preference block')(),
+    // 每週摘要：?week=YYYY-MM-DD（那一週的週一）；不帶就是最近一週。回傳的 previous 是更早有摘要的週
+    'GET /api/digest': ({ q }) => engineFn(eg.digest?.get, '每週摘要', 'the weekly digest')(q('week')),
+
     'POST /api/import/plan': async ({ body }) => (await migrate('planImport'))(eg, body),
     'POST /api/import/rehearse': async ({ body }) => (await migrate('rehearseImport'))(eg, body),
-    'POST /api/import/apply': async ({ body }) => (await migrate('applyImport'))(eg, body),
+    'POST /api/import/apply': async ({ body }) => (await migrate('applyImport'))(eg, body, { by: 'user' }),
     'POST /api/import/undo': async ({ body }) => (await migrate('undoImport'))(eg, { ...body, tag: need(body.tag, 'tag') }),
   };
 

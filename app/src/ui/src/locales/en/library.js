@@ -102,4 +102,9 @@ export default {
   "連到：": "Links to: ",
   "被連結：": "Linked from: ",
   "{name}（還沒有這筆記憶）": "{name} (no memory with this name yet)",
+  // 2.0.0：情境召回帶出、搜尋列出、護欄命中
+  '帶出與命中': 'Recalled & matched',
+  '近 90 天：情境召回帶出 {r} 次（之後被打開 {o} 次{rate}）、搜尋列出 {s} 次、護欄命中 {g} 次': 'Last 90 days: brought up by context recall {r} times (opened afterwards {o} times{rate}), listed by search {s} times, matched by guardrails {g} times',
+  '，{p}%': ', {p}%',
+  '「帶出」是情境召回在相關的訊息後面附上這筆記憶；「搜尋列出」是 engram search 的結果有它；「護欄命中」是由這筆記憶變成的護欄規則擋下或提醒的次數。': '"Brought up" means context recall attached this memory to a related message; "listed by search" means engram search returned it; "matched by guardrails" counts the blocks and hints of guardrail rules made from this memory.',
 };

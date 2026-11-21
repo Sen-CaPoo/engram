@@ -27,18 +27,20 @@ export function Projects({ go, params = {} }) {
   const others = status?.devices?.filter((d) => !d.isSelf) || [];
   const all = data.data;
   const problem = (p) => p.counts.findings > 0 || Object.values(p.paths).some((x) => !x.exists) || (p.index?.lines || 0) >= 150;
-  const list = all.filter((p) => (filter === 'all' ? true : filter === 'active' ? !p.archived : filter === 'archived' ? p.archived : problem(p)))
+  // 休眠（90 天沒有對話、任何電腦都沒有綁定）的專案預設收合：不在「使用中」，要看請切到「休眠」
+  const list = all.filter((p) => (filter === 'all' ? true : filter === 'active' ? !p.archived && !p.dormant : filter === 'archived' ? p.archived : filter === 'dormant' ? p.dormant : problem(p)))
     .sort((a, b) => (b.lastActivityAt || '').localeCompare(a.lastActivityAt || ''));
 
   return (
     <div class="page">
       <div class="filters">
         <div class="seg" role="group" aria-label={t('篩選')}>
-          <button aria-pressed={filter === 'active'} onClick={() => setFilter('active')}>{t('使用中')}<span class="n">{all.filter((p) => !p.archived).length}</span></button>
+          <button aria-pressed={filter === 'active'} onClick={() => setFilter('active')}>{t('使用中')}<span class="n">{all.filter((p) => !p.archived && !p.dormant).length}</span></button>
           <button aria-pressed={filter === 'problem'} onClick={() => setFilter('problem')}>{t('需要注意')}<span class="n">{all.filter(problem).length}</span></button>
+          <button aria-pressed={filter === 'dormant'} onClick={() => setFilter('dormant')}>{t('休眠')}<span class="n">{all.filter((p) => p.dormant).length}</span></button>
           <button aria-pressed={filter === 'archived'} onClick={() => setFilter('archived')}>{t('已封存')}<span class="n">{all.filter((p) => p.archived).length}</span></button>
         </div>
-        <span class="faint" style={{ fontSize: 13 }}>{t('專案用固定 ID 識別，資料夾搬家或改名都不影響記憶。')}</span>
+        <span class="faint" style={{ fontSize: 13 }}>{filter === 'dormant' ? t('90 天沒有對話、任何電腦都沒有綁定的專案會休眠：記憶完整保留、照常搜尋，重新綁定或有新的對話就會恢復。') : t('專案用固定 ID 識別，資料夾搬家或改名都不影響記憶。')}</span>
       </div>
 
       {pending.data?.length > 0 && (
@@ -90,6 +92,7 @@ export function Projects({ go, params = {} }) {
                         </div>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }}>
                           <span class="mono faint" style={{ fontSize: 11.5 }}>{p.pid}</span>
+                          {p.dormant && <span class="chip">{t('休眠')}</span>}
                           {p.counts.findings > 0 && <span class="chip warn">{t('{n} 項發現', { n: p.counts.findings })}</span>}
                         </div>
                       </td>

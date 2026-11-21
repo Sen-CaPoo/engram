@@ -29,7 +29,7 @@ Pick one:
   ```
 - **Download the ZIP**: on the GitHub page click **Code → Download ZIP** and unzip it somewhere convenient, for example `C:\Users\YourName\engram`.
 
-**Keep this folder.** You'll need it for updates.
+**Keep this folder.** You'll need it for updates. A computer installed with git can catch up on its own after another computer updates to a new version (automatic updates, new in 2.0). A computer installed from a ZIP has to download the new version itself and then run `engram update`.
 
 ## 3. Double-click `setup.cmd`
 
@@ -63,7 +63,7 @@ If you've been using Claude Code for a while, your computer already holds old me
 1. **Generate plan**: Engram lists which project each memory belongs to, plus the suggested scope and action. Duplicates and older versions are skipped automatically. This step writes nothing.
 2. **Check the suggested scopes**: the rule of thumb is one question: **would this still hold true on another computer?** If not, it goes in **Machine**. If so, ask next: **would it still hold true in a different project?** If so, it goes in **Global**; if not, it goes in **Project**.
 3. **Start rehearsal**: it runs a complete import, verification, and restore on a copy without touching any real files, in about 20 seconds. **Apply plan** can't be clicked until all four checks pass.
-4. **Apply plan**: when it finishes, Engram shows a restore point (for example `engram-import-20261022-…`), and you can restore with one click at any time afterwards. Your original memory files are always kept and never deleted.
+4. **Apply plan**: when it finishes, Engram shows a restore point (for example `engram-import-20261022-…`), and you can restore with one click at any time afterwards. Your original memory files are always kept and never deleted. What you apply here counts as confirmed by you; if `engram import apply` is run inside a Claude Code conversation, it is recorded as "confirmed on your behalf by Claude", and autopilot won't treat it as your preferences.
 
 ## 5. Confirm it's connected
 
@@ -75,6 +75,21 @@ If you've been using Claude Code for a while, your computer already holds old me
    ```
    `doctor` checks the memory links, the GitHub connection, the agent, and the sign-in task one by one. If a project you just imported has a conversation open, its link connects automatically once that conversation ends; until then it's normal to see ✗.
 
+### Defaults after installation
+
+You don't need to set anything up: after installation, these features work like this. To change them, go to **Settings** in the dashboard.
+
+| Feature | Default |
+| --- | --- |
+| Sync | Every 10 minutes (while you're offline, changes are saved on this computer first) |
+| Context recall | On: when you send a message, it brings up at most 3 related memories from your global memories, this computer's memories, and the current project's memories for Claude |
+| Index layers | Observe: the index stays as it was, and Engram only collects numbers in the background; it never switches by itself |
+| Guardrails | Block: when Engram is confident a command is written in a way that goes wrong, it blocks the command and tells Claude the right way to write it; the rest only remind |
+| Environment check | On: checks this computer's Claude Code environment every day, reading only names, versions, hashes, and timings |
+| Environment sync | Report only: it never changes your settings by itself, and items synced from another computer are applied only after you approve them on this computer |
+| Automatic updates | On: after another computer releases a new version, this one (if installed with git) updates itself; a failed update is rolled back and you are notified |
+| Autopilot | **Off**. You can decide later whether to turn it on |
+
 ## 6. Second computer
 
 The steps are exactly the same as for the first one: get Engram, double-click `setup.cmd`, and choose a different name (for example "Home PC").
@@ -82,6 +97,7 @@ The steps are exactly the same as for the first one: get Engram, double-click `s
 - **Git projects**: as long as the remote is the same, the first time you open Claude Code on this computer it connects automatically.
 - **This computer has old memories too**: import them the same way under **Import memories**; anything identical to the first computer is skipped automatically.
 - **Folders that aren't git repos**: they start out as a new project. On the **Projects** page you can use **Merge into another project** to merge one with the same project from the other computer.
+- **Keep the versions the same**: please run 2.0.0 on all your computers. The new index rules take effect only once every computer is updated; with only one updated, the shared indexes are temporarily written the old way (nothing is lost), and the older computer has to be updated by hand with `git pull` and `engram update`. See the [user guide](user-guide.md#when-only-one-computer-is-updated-and-another-is-still-on-an-older-version).
 
 ## 7. Install from the command line
 
@@ -102,11 +118,12 @@ Other options: `--no-cli` (don't create the `engram` terminal command), `--no-sc
 | --- | --- |
 | `%USERPROFILE%\.engram\` | The vault, the program itself, local state, and backups |
 | `~/.claude/CLAUDE.md` | Adds a two-line Engram block at the end of the file and leaves the existing content alone; backed up before the change |
-| Claude Code plugin `engram` | Hooks at the start and end of conversations, the `/engram:` commands, and the memory pane (watches which memory files the conversation loads and reads, and adds a **◆ Engram** button at the bottom of Claude Code and the `/engram-memories` command) |
+| Claude Code plugin `engram` | Hooks at the start and end of conversations, the `/engram:` commands, and the memory pane (watches which memory files the conversation loads and reads, and adds a **◆ Engram** button at the bottom of Claude Code and the `/engram-memories` command), and context recall and guardrails (they check once before a message is sent, and once before a Bash or PowerShell command runs) |
 | npm global command `engram` | Lets you type `engram` in an ordinary terminal; add `--no-cli` during installation if you don't want it |
-| Windows Task Scheduler `\Engram\Agent` | Starts Engram in the background at sign-in and syncs every 10 minutes |
+| Windows Task Scheduler `\Engram\Agent` | Starts Engram in the background at sign-in: syncs every 10 minutes, runs the environment check and automatic updates every day, and packs the vault every week |
 | Project folders bound during import | `.claude\settings.local.json` gets one `autoMemoryDirectory` line; folders that aren't git repos also get a `.claude\engram.json` marker |
 | `~/.claude/settings.json` and the memory folder | Only when the default permission mode is auto or bypassPermissions: the original memory folder is backed up and replaced with a link, and the link's path is added to `additionalDirectories` |
+| Other settings in `~/.claude/settings.json` | Apart from the "allow reading" settings (the memory link in the previous row, and the folder used by conversation review), Engram doesn't change this file on its own. It changes the file only when you apply environment sync on this computer, or when you turn on autopilot and no conversation retention period is set yet (it is then set to 60 days). A backup is made before any change, you can undo it, and uninstalling restores it too |
 
 Every item is recorded in the installation record. `engram uninstall` first lists the removal plan, then reverts each item one by one after you approve, and keeps your vault by default.
 
@@ -114,5 +131,5 @@ Every item is recorded in the installation record. `engram uninstall` first list
 
 ## Next steps
 
-- [User guide](user-guide.md): Tidy-up (Claude suggests, you decide each item), autopilot, inbox, conflicts, colliding folders, pausing and removing
+- [User guide](user-guide.md): Tidy-up (Claude suggests, you decide each item), autopilot and the holding area, context recall, guardrails, the environment steward, inbox, conflicts, colliding folders, pausing and removing
 - [FAQ](faq.md): common questions about installing and using Engram, and troubleshooting

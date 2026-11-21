@@ -8,6 +8,7 @@ import { localTime, readJson, sleep, writeJsonAtomic } from '../fsutil.mjs';
 import { createLogger } from '../log.mjs';
 import { SYNC_LABEL } from '../output.mjs';
 import { localPaths } from '../paths.mjs';
+import { confirmSource } from '../source.mjs';
 import { isLocked, summarizeSync, syncFailure } from '../syncresult.mjs';
 import { redactText } from './safe.mjs';
 
@@ -40,12 +41,15 @@ export async function cmdStatus(ctx) {
   // 同步錯誤的訊息可能帶出 git 輸出（例如含權杖的網址）：一律遮蔽，連同英文版與細節
   const s = report.sync?.error ? { ...report.sync, error: redactDeep(report.sync.error) } : report.sync;
   const f = inbox?.findings ?? {};
+  const compat = report.indexCompat;
   const lines = [
     `Engram 憶跡 · ${m.label || m.id}（${m.id}）`,
     `vault：${v.path}（${v.remote ?? '尚未設定遠端，只在本機運作'}）`,
     `同步：${SYNC_LABEL[s.state] ?? s.state} · 上次成功 ${localTime(s.lastSuccessAt)}${s.ahead || s.behind ? ` · 領先 ${s.ahead}／落後 ${s.behind}` : ''}`,
     s.error ? `　　　${s.error.message}${s.error.hint ? `（${s.error.hint}）` : ''}` : null,
     `記憶：全域 ${c.global} · 專案 ${c.projectMemories}（${c.projects} 個專案）· 單機 ${c.machine} · 共 ${c.total} 筆`,
+    // 相容模式：還有舊版電腦在用，共用的索引暫時照舊版的方式產生；那幾台更新之後自動切換
+    compat?.active ? `索引：相容模式（${compat.machines.map((m) => `${m.label}（${m.version ?? '版本不明'}）`).join('、')} 還是舊版，共用的索引暫時照舊版的方式產生；那幾台更新之後會自動切換）` : null,
     `收件匣：衝突 ${inbox?.conflicts ?? 0} · 健康檢查 高 ${f.high ?? 0}／中 ${f.medium ?? 0}／低 ${f.low ?? 0}`,
     `目前資料夾：${describeHere(here)}`,
     `常駐程式：${agent.running ? `執行中（pid ${agent.pid}，http://127.0.0.1:${agent.port}/）` : '沒有在執行（engram ui 會自動啟動）'}`,
@@ -183,7 +187,7 @@ export async function cmdImport(ctx) {
   }
   if (sub === 'apply') {
     if (!ctx.opts.yes) throw new CliError('E_USAGE', '匯入會把既有記憶複製進 vault 並建立綁定，請先執行 engram import plan 確認計畫', '確認後加上 --yes 再執行。');
-    const res = await (await migrateFn('applyImport'))(eg, {});
+    const res = await (await migrateFn('applyImport'))(eg, {}, { by: confirmSource(ctx) });
     const deferred = res?.deferred ?? [];
     const why = { 'changed-since-plan': '產生計畫後又有變更，請重新執行 engram import plan 再套用', 'active-session': '正有對話在使用，結束後常駐程式會自動接上', busy: '檔案被占用，常駐程式稍後會重試' };
     ctx.out.result(res, [

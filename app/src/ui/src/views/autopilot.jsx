@@ -6,12 +6,14 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../api.js';
 import { Banner, ConfirmDialog, Empty, ErrorBanner, Meter, ReviewLine, ScopeLabel, Skeleton, useAction, useApp, useData } from '../components.jsx';
 import { t, N_, local, locale } from '../i18n.js';
-import { IconAutopilot, IconChevronRight, IconPlay, IconUndo } from '../icons.jsx';
-import { parseScopeKey, relTime, untilTime, RISK_LABEL } from '../util.js';
+import { IconAutopilot, IconCheck, IconChevronRight, IconPlay, IconUndo } from '../icons.jsx';
+import { latestStop, parseScopeKey, relTime, untilTime, RISK_LABEL, TYPE_LABEL } from '../util.js';
 
-// 顯示順序：整理、對話回顧、收件匣、同步衝突、金鑰、待你確認
-const TASKS = ['curate', 'dream', 'cards', 'conflicts', 'secrets', 'review'];
-const TASK = { curate: N_('整理'), dream: N_('對話回顧'), cards: N_('收件匣'), conflicts: N_('同步衝突'), secrets: N_('金鑰'), review: N_('待你確認') };
+// 顯示順序：整理、對話回顧、記憶畢業、保留區重審、收件匣、同步衝突、金鑰、待你確認
+const TASKS = ['curate', 'dream', 'graduate', 'holding', 'cards', 'conflicts', 'secrets', 'review'];
+const TASK = { curate: N_('整理'), dream: N_('對話回顧'), graduate: N_('記憶畢業'), cards: N_('收件匣'), conflicts: N_('同步衝突'), secrets: N_('金鑰'), review: N_('待你確認'), holding: N_('保留區重審'), other: N_('ap::其他') };
+// 記憶畢業的去向（2.0.0 WP9）：原記憶內文不動，只記下去向
+export const GRADUATE_TO = { core: N_('成為核心準則的一行'), guardrail: N_('成為一條護欄規則'), env: N_('成為環境設定'), archive: N_('一次性的進度，已封存') };
 const REASON = { schedule: N_('自動執行'), coalesced: N_('自動執行'), manual: N_('手動執行'), enable: N_('剛開啟時') };
 const RUN_STATUS = { running: N_('執行中'), done: N_('已完成'), failed: N_('失敗'), interrupted: N_('中斷') };
 const RUN_TONE = { running: 'brand live', done: 'ok', failed: 'danger', interrupted: 'warn' };
@@ -19,9 +21,9 @@ const RUN_TONE = { running: 'brand live', done: 'ok', failed: 'danger', interrup
 const PRESET_CAPS = [50, 100, 200, 500];
 // 整理項目的動作（與記憶整理頁相同的詞）與其他種類的處理
 const ACTION = { update: N_('改寫'), move: N_('搬移'), archive: N_('封存'), merge: N_('合併'), create: N_('新增'), split: N_('拆分'), promote: N_('升為全域'), verify: N_('確認仍正確'), keep: N_('保留') };
-const KIND = { card: N_('處理卡片'), rename: N_('資料夾改名'), conflict: N_('同步衝突'), vault: N_('金鑰移到保管區'), 'not-secret': N_('標記不是金鑰'), confirm: N_('代你確認'), revert: N_('退回'), dismiss: N_('不處理') };
-// 被復原次數統計用的類別（暫停與你復原過的項目）
-const CATEGORY = { ...ACTION, core: N_('核心準則'), 'dream-create': N_('對話回顧新增'), 'dream-update': N_('對話回顧改寫'), confirm: N_('代你確認'), revert: N_('退回'), vault: N_('金鑰移到保管區'), 'not-secret': N_('標記不是金鑰'), rename: N_('撞名資料夾改名') };
+const KIND = { card: N_('處理卡片'), rename: N_('資料夾改名'), conflict: N_('同步衝突'), vault: N_('金鑰移到保管區'), 'not-secret': N_('標記不是金鑰'), confirm: N_('代你確認'), revert: N_('退回'), dismiss: N_('不處理'), graduate: N_('記憶畢業') };
+// 被復原次數統計用的類別（暫停與你復原過的項目；與 app/src/autopilot/run.mjs 的 CATEGORY_LABEL 對應）
+const CATEGORY = { ...ACTION, core: N_('核心準則'), 'dream-create': N_('對話回顧新增'), 'dream-update': N_('對話回顧改寫'), confirm: N_('代你確認'), revert: N_('退回'), vault: N_('金鑰移到保管區'), 'not-secret': N_('標記不是金鑰'), rename: N_('撞名資料夾改名'), guardrail: N_('畢業成護欄規則'), env: N_('畢業成環境設定') };
 const HOW = [N_('每天一次，電腦閒置時開始'), N_('AI 整理記憶、處理收件匣、回顧對話'), N_('每項變更先備份，再由審核員檢查'), N_('你在這裡看結果，逐項復原')];
 
 const categoryLabel = (c) => {
@@ -33,7 +35,7 @@ const categoryLabel = (c) => {
 const taskLabel = (k) => (TASK[k] ? t(TASK[k]) : k === 'run' ? t('這一輪') : String(k));
 const usd = (n) => (n > 0 && n < 0.01 ? '<0.01' : Number(n || 0).toFixed(2));
 // 與 app/src/autopilot/run.mjs 的 undoable 相同
-const undoable = (a) => a.status === 'done' && !a.undone && (a.kind === 'tidy' || a.undo?.length > 0 || (a.kind === 'rename' && !!a.renameId) || (a.kind === 'not-secret' && a.allowHashes?.length > 0) || (a.kind === 'vault' && a.vaultNames?.length > 0));
+const undoable = (a) => a.status === 'done' && !a.undone && (a.kind === 'tidy' || a.undo?.length > 0 || (a.kind === 'rename' && !!a.renameId) || (a.kind === 'not-secret' && a.allowHashes?.length > 0) || (a.kind === 'vault' && a.vaultNames?.length > 0) || (a.kind === 'graduate' && !!a.graduate?.to));
 const scopeOf = (x) => (x.scope ? parseScopeKey(x.scope) : x.pid ? { kind: 'project', pid: x.pid } : null);
 const whenText = (at) => new Date(at).toLocaleString(locale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -43,8 +45,40 @@ function countParts(s) {
   if (s.changes) parts.push(t('處理 {n} 項', { n: s.changes }));
   if (s.dismissed) parts.push(t('{n} 張卡片判斷不用處理', { n: s.dismissed }));
   if (s.rejected) parts.push(t('{n} 項建議沒有執行', { n: s.rejected }));
+  if (s.held) parts.push(t('{n} 項存進保留區', { n: s.held }));
   if (s.failed) parts.push(t('{n} 項失敗', { n: s.failed }));
   return parts;
+}
+
+/**
+ * 頁面上方的提示：用量上限還沒重置（GET /api/autopilot 的 limit，任何一台電腦撞到都算）時說明幾點之後自動繼續；
+ * 否則看最近一輪是不是因為登入到期或 Claude 暫時忙碌而提前停止（登入到期要說清楚怎麼重新登入）
+ */
+function StopBanner({ stop, limit, labelOf }) {
+  let limitBanner = null;
+  if (limit?.resetAt) {
+    const at = new Date(limit.resetAt);
+    const time = at.toLocaleString(locale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const who = labelOf(limit.machine);
+    limitBanner = (
+      <Banner tone="warn" title={t('碰到 Claude 的用量上限，{time} 之後自動繼續', { time })}>
+        {t('{who}的自動駕駛用完了 Claude 訂閱的用量額度（例如 5 小時的上限）。重置之前，每台電腦的自動駕駛都不會自動開始；到了 {time} 會自動繼續，你不需要做任何事。', { who: who ? t('「{label}」', { label: who }) : t('其中一台電腦'), time })}
+      </Banner>
+    );
+  }
+  const when = stop ? relTime(stop.run.startedAt) : '';
+  // 登入到期要使用者處理：用量上限的橫幅在時也照樣顯示；暫時忙碌不用處理，用量上限的橫幅在時不另外顯示
+  const stopBanner = stop?.reason === 'auth' ? (
+    <Banner tone="bad" title={t('自動駕駛停下來了：Claude Code 的登入已到期')}>
+      {t('最近一輪（{when}）沒辦法讓 AI 判斷，所以提前停止，沒有改任何記憶。請重新登入：在終端機執行 {cli}，或在 Claude Code 裡輸入 {slash}。登入之後，下一輪會接著處理，也可以直接按「立即執行」。', { when, cli: <code>claude auth login</code>, slash: <code>/login</code> })}
+    </Banner>
+  ) : stop?.reason === 'busy' && !limitBanner ? (
+    <Banner tone="info" title={t('最近一輪因為 Claude 暫時忙碌而提前停止')}>
+      {t('最近一輪（{when}）遇到 Claude 過載或速率限制，先停下來，之後會自動再試，你不需要做任何事。', { when })}
+    </Banner>
+  ) : null;
+  if (!limitBanner && !stopBanner) return null;
+  return <>{limitBanner}{stopBanner}</>;
 }
 
 /** 清單裡一句話說明這一輪的結果 */
@@ -90,7 +124,7 @@ export function AutopilotSwitch({ tog, id }) {
 // ───────── 頁面 ─────────
 
 export function Autopilot({ params, go }) {
-  const { toast, reportError, refresh } = useApp();
+  const { toast, reportError, refresh, status } = useApp();
   const ap = useData(() => api.autopilot(), []);
   const agent = useData(() => api.agent(), []);
   const act = useAction();
@@ -101,7 +135,6 @@ export function Autopilot({ params, go }) {
   const [custom, setCustom] = useState(null);
   const runningId = ap.data?.running?.id;
   useEffect(() => { if (runningId) setStarting(false); }, [runningId]);
-
   if (!ap.data) return <div class="page"><ErrorBanner error={ap.error} onRetry={ap.reload} /><div class="panel"><Skeleton rows={6} /></div></div>;
   const d = ap.data;
   const on = tog.on;
@@ -143,6 +176,7 @@ export function Autopilot({ params, go }) {
   return (
     <div class="page">
       <ErrorBanner error={ap.error} onRetry={ap.reload} />
+      {!running && <StopBanner stop={latestStop(runs)} limit={d.limit} labelOf={(mid) => d.machines?.find((x) => x.mid === mid)?.label ?? status?.devices?.find((x) => x.id === mid)?.label} />}
       {d.paused.length > 0 && (
         <Banner tone="warn" title={t('有 {n} 類處理暫停中', { n: d.paused.length })}>
           {t('這些類別在 60 天內被你復原過 2 次以上，自動駕駛只會記錄建議、不會執行：{list}', { list: d.paused.map((c, i) => <span key={c}>{i > 0 && t('、')}<b>{categoryLabel(c)}</b></span>) })}
@@ -255,6 +289,8 @@ export function Autopilot({ params, go }) {
         </div>
       )}
 
+      <PreferencesPanel focus={params?.focus === 'prefs'} />
+
       {d.feedback.length > 0 && (
         <details class="panel ap-fold">
           <summary>{t('你復原過的項目（{n}）', { n: d.feedback.length })}</summary>
@@ -272,6 +308,143 @@ export function Autopilot({ params, go }) {
       {tog.dialog}
     </div>
   );
+}
+
+// ───────── 自動駕駛遵守的偏好 ─────────
+
+// 偏好的確認來源（GET /api/autopilot/preferences）：used 是採用的、pending 是還沒採用的
+const USED_SOURCE = {
+  user: N_('你確認過'), baseline: N_('安裝時的起點'), off: N_('確認寫入已關閉，直接採用'), 'no-baseline': N_('還沒有起點，直接採用目前的內容'),
+};
+const PENDING_SOURCE = {
+  claude: N_('Claude 在對話裡寫入時標成已確認，但不是你本人確認的'), request: N_('對話裡找到你的要求，但還沒有你本人的確認'),
+  autopilot: N_('只有自動駕駛代為確認過'), none: N_('還沒有人確認過'),
+};
+const TYPE_TEXT = { core: N_('核心準則'), feedback: N_('回饋'), user: N_('使用者') };
+// 記憶畢業判斷適合、正在等你確認的去向（graduation）：core＝核心準則的一行、guardrail＝一條護欄規則（只提醒，不擋下）
+const GRAD_CHIP = { core: N_('可寫進核心準則'), guardrail: N_('可成為護欄規則') };
+const GRAD_HINT = { core: N_('記憶畢業判斷這筆適合寫進核心準則，正在等你確認'), guardrail: N_('記憶畢業判斷這筆適合成為一條護欄規則（只在送出相關指令時提醒，不會擋下），正在等你確認') };
+function GraduationChip({ g }) {
+  return GRAD_CHIP[g] ? <span class="chip brand env-self" title={t(GRAD_HINT[g])}>{t(GRAD_CHIP[g])}</span> : null;
+}
+
+/**
+ * 自動駕駛判斷時會遵守的偏好（核心準則與你確認過的全域回饋、使用者記憶），以及還沒採用的項目。
+ * 只有你本人確認過的內容與安裝時的起點會被當成規則；其餘的按「這是我的偏好」（走待你確認的確認）。
+ */
+function PreferencesPanel({ focus }) {
+  const p = useData(() => api.autopilotPreferences(), []);
+  // 從每週摘要的「還沒採用的偏好」過來：偏好載入後捲到這一區（等上方的執行紀錄也排好版）
+  const ready = p.data !== undefined;
+  useEffect(() => {
+    if (!focus || !ready) return undefined;
+    const timer = setTimeout(() => document.getElementById('ap-prefs')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 500);
+    return () => clearTimeout(timer);
+  }, [focus, ready]);
+  const act = useAction();
+  const [err, setErr] = useState(null);
+  const [done, setDone] = useState(() => new Set());
+  // 要看全文的候選（ref）
+  const [open, setOpen] = useState(() => new Set());
+  const toggle = (ref) => setOpen((s) => { const n = new Set(s); if (n.has(ref)) n.delete(ref); else n.add(ref); return n; });
+  // 候選只是確認內容，不是採用成偏好：提示文字分開
+  const confirm = async (items, { candidates = false } = {}) => {
+    setErr(null);
+    try {
+      const r = await act(() => api.reviewConfirm(items.map((x) => ({ ref: x.ref, sha: x.sha }))), (res) => (res?.confirmed?.length ? (candidates ? t('已確認 {n} 筆', { n: res.confirmed.length }) : t('已採用 {n} 筆偏好', { n: res.confirmed.length })) : null), { rethrow: true });
+      setDone((s) => new Set([...s, ...(r?.confirmed || [])]));
+      if (r?.stale?.length) setErr({ message: t('{n} 筆在你看過之後又被修改，請重新看過', { n: r.stale.length }) });
+    } catch (e) { setErr(e); }
+  };
+  const head = (sub, end) => <div class="panel-head"><h2>{t('自動駕駛遵守的偏好')}</h2>{sub && <span class="sub">{sub}</span>}{end && <div class="end">{end}</div>}</div>;
+  if (p.data === undefined) {
+    return <section class="panel" id="ap-prefs">{head()}<div class="panel-body">{p.error ? <ErrorBanner error={p.error} onRetry={p.reload} /> : <Skeleton rows={2} />}</div></section>;
+  }
+  if (p.data === null) {
+    return (
+      <section class="panel" id="ap-prefs">{head()}
+        <div class="panel-body"><p class="faint">{t('這個版本的常駐程式還不能列出自動駕駛遵守的偏好。更新 Engram 之後，這裡會列出它判斷時會遵守的規則，以及還沒採用的項目。')}</p></div>
+      </section>
+    );
+  }
+  const used = p.data.used || [];
+  const pending = (p.data.pending || []).filter((x) => !done.has(x.ref));
+  const cands = (p.data.candidates || []).filter((x) => !done.has(x.ref));
+  return (
+    <section class="panel ap-prefs" id="ap-prefs">
+      {head(t('遵守 {a} 筆、還沒採用 {b} 筆', { a: used.length, b: pending.length }), pending.length > 1 ? <button class="btn sm primary" onClick={() => confirm(pending)}><IconCheck />{t('全部確認（{n}）', { n: pending.length })}</button> : null)}
+      <div class="panel-body ap-prefs-body">
+        <p class="faint ap-fold-note">{t('自動駕駛判斷時會遵守核心準則，以及全域的「回饋」與「使用者」記憶，但只採用你本人確認過的內容與安裝時的起點。Claude 在對話裡寫的、自動駕駛代為確認的，都不會被當成你的規則，所以列在「還沒採用」；確實是你的偏好就按「這是我的偏好」。')}</p>
+        <ErrorBanner error={err} onDismiss={err ? () => setErr(null) : undefined} />
+        {pending.length > 0 && (
+          <div class="ap-prefs-group">
+            <b>{t('還沒採用')}</b>
+            <ul class="env-list">
+              {pending.map((x) => (
+                <li key={x.ref} class="env-wait-item">
+                  <span>
+                    <b>{x.name}</b>{TYPE_TEXT[x.type] && <span class="chip env-self">{t(TYPE_TEXT[x.type])}</span>}<GraduationChip g={x.graduation} />{x.description && <span class="muted">　{local(x, 'description')}</span>}
+                    {PENDING_SOURCE[x.source] && <span class="faint ap-pref-src">{t(PENDING_SOURCE[x.source])}</span>}
+                  </span>
+                  <button class="btn sm" onClick={() => confirm([x])} aria-label={t('這是我的偏好：{name}', { name: x.name })}><IconCheck />{t('這是我的偏好')}</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {cands.length > 0 && (
+          <div class="ap-prefs-group" id="ap-cands">
+            <div class="ap-cands-head">
+              <b>{t('常用、但還沒由你確認的記憶')}</b>
+              {cands.length > 1 && <button class="btn sm" onClick={() => confirm(cands, { candidates: true })}><IconCheck />{t('全部確認（{n}）', { n: cands.length })}</button>}
+            </div>
+            <p class="faint ap-fold-note">{t('這些記憶近 90 天常被讀到，但目前的內容還沒由你本人確認。確認之後，自動駕駛的「記憶畢業」才有可能把它寫進核心準則或成為護欄規則；確認不會改動記憶的內容。')}</p>
+            <p class="faint ap-fold-note">{t('標了「可寫進核心準則」或「可成為護欄規則」的，是記憶畢業已經判斷適合、正在等你確認；確認之後，下一次記憶畢業會重新判斷。')}</p>
+            <ul class="env-list">
+              {cands.map((x) => (
+                <li key={x.ref} class="env-wait-item">
+                  <span>
+                    <b>{x.name}</b><span class="chip env-self">{TYPE_LABEL[x.type] ? t(TYPE_LABEL[x.type]) : x.type}</span><span class="chip env-self">{x.scope === 'machine' ? t('單機') : t('全域')}</span><GraduationChip g={x.graduation} />{x.description && <span class="muted">　{local(x, 'description')}</span>}
+                    <span class="faint ap-pref-src">{PENDING_SOURCE[x.source] ? t(PENDING_SOURCE[x.source]) : x.source}</span>
+                    <span class="faint ap-pref-src">{t('近 90 天讀取 {a} 次、情境召回帶出 {b} 次', { a: x.reads ?? 0, b: x.recalled ?? 0 })}</span>
+                  </span>
+                  <span class="ap-cand-act">
+                    <button class="btn sm ghost" aria-expanded={open.has(x.ref) ? 'true' : 'false'} onClick={() => toggle(x.ref)}>{open.has(x.ref) ? t('收合全文') : t('看全文')}</button>
+                    <button class="btn sm" onClick={() => confirm([x], { candidates: true })} aria-label={t('確認：{name}', { name: x.name })}><IconCheck />{t('確認')}</button>
+                  </span>
+                  {open.has(x.ref) && <CandidateFull target={x.ref} />}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div class="ap-prefs-group">
+          <b>{t('判斷時會遵守')}</b>
+          {used.length === 0 ? <p class="faint">{t('還沒有確認過的偏好。')}</p> : (
+            <ul class="env-list">
+              {used.map((x) => (
+                <li key={x.ref || x.name}>
+                  <b>{x.name}</b>{TYPE_TEXT[x.type] && <span class="chip env-self">{t(TYPE_TEXT[x.type])}</span>}{x.description && <span class="muted">　{local(x, 'description')}</span>}
+                  <span class="faint ap-pref-src">
+                    {USED_SOURCE[x.source] ? t(USED_SOURCE[x.source]) : x.source}
+                    {x.version === 'previous' && t('；採用的是你上次確認的版本，目前的內容還沒確認')}
+                    {x.omitted && t('；放不進偏好區塊（超過字數上限），這次沒有帶給自動駕駛')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** 候選記憶的全文（點「看全文」才讀取） */
+function CandidateFull({ target }) {
+  const m = useData(() => api.memory(target), [target]);
+  if (!m.data) return <div class="ap-cand-full">{m.error ? <ErrorBanner error={m.error} onRetry={m.reload} /> : <Skeleton rows={3} />}</div>;
+  return <div class="ap-cand-full"><pre class="diff">{m.data.raw ?? m.data.body}</pre></div>;
 }
 
 // ───────── 一輪的詳情 ─────────
@@ -297,7 +470,7 @@ function RunDetail({ id, go }) {
   const made = (k) => shown.filter(({ a }) => a.task === k && a.status === 'done').length;
   const sum = {
     changes: shown.filter(({ a }) => a.status === 'done').length, dismissed: dismissed.length, rejected: r.rejected.length,
-    failed: acts.filter(({ a }) => a.status === 'failed').length,
+    failed: acts.filter(({ a }) => a.status === 'failed').length, held: r.summary?.held ?? r.held?.length ?? 0,
   };
   const line = countParts(sum).join(t('、'));
   const undoableN = acts.filter(({ a }) => undoable(a)).length;
@@ -329,12 +502,21 @@ function RunDetail({ id, go }) {
           {r.status === 'interrupted' && <Banner tone="warn" title={t('這一輪被中斷')}>{t('常駐程式在這一輪還沒結束時被關閉。已經完成的變更仍然有效，也可以復原；其餘的下一輪會再處理。')}</Banner>}
           {r.status === 'running' && <Banner tone="info" title={t('這一輪正在執行')}>{t('結果會陸續出現在這裡。')}</Banner>}
           {line ? <p class="ap-summary">{line}</p> : r.status === 'done' ? <p class="ap-summary">{t('這一輪沒有改動任何記憶')}</p> : null}
+          {sum.held > 0 && (
+            <p class="ap-held">
+              <span>{t('沒有執行的建議連同內容與證據存進了保留區，你可以看過之後決定要不要採用。')}</span>
+              <button class="btn sm" onClick={() => go('holding')}>{t('到保留區看')}<IconChevronRight /></button>
+            </p>
+          )}
           {TASKS.some((k) => made(k) > 0) && (
             <div class="ap-chips" role="group" aria-label={t('各項工作處理的數量')}>
               {TASKS.filter((k) => made(k) > 0).map((k) => <span class="chip" key={k}>{t(TASK[k])} <b>{made(k)}</b></span>)}
             </div>
           )}
           {r.calls.length > 0 && <p class="faint ap-cost">{t('呼叫 Claude {n} 次，用量約當 US$ {cost}', { n: r.calls.length, cost: usd(cost) })}</p>}
+          {r.summary?.callsByTask && Object.keys(r.summary.callsByTask).length > 1 && (
+            <p class="faint ap-cost">{Object.entries(r.summary.callsByTask).map(([k, v]) => t('{task} {n} 次（US$ {cost}）', { task: taskLabel(k), n: v.calls, cost: usd(v.costUsd) })).join(t('、'))}</p>
+          )}
           {(r.notes?.length > 0 || r.skipped?.length > 0) && (
             <div class="ap-notes faint">
               <span class="ap-label">{t('備註')}</span>
@@ -380,9 +562,12 @@ function RunDetail({ id, go }) {
                     {scope && <ScopeLabel scope={scope} />}
                     {x.risk && <span class={`sev-chip ${x.risk}`}>{t(RISK_LABEL[x.risk])}</span>}
                     {x.deferred && <span class="chip warn">{t('下一輪再處理')}</span>}
+                    {x.dismissed && <span class="chip">{t('你標成不需要過')}</span>}
+                    {x.grounded && <span class="chip ok">{t('核心事實有依據')}</span>}
                   </div>
                   <b>{local(x, 'title')}</b>
-                  <p class="why">{local(x, 'why')}</p>
+                  <p class="why">{x.dismissed ? t('你之前在保留區把同一個提案標成「不需要」（90 天內），所以這次直接略過，沒有再送審。') : local(x, 'why')}</p>
+                  {x.grounded && x.keep?.length > 0 && <p class="faint">{t('有依據的部分：{list}', { list: x.keep.join(t('；')) })}</p>}
                   {x.reason && <p class="faint">{t('AI 原本的理由：{reason}', { reason: local(x, 'reason') })}</p>}
                 </div>
               );
@@ -403,6 +588,29 @@ function RunDetail({ id, go }) {
   );
 }
 
+/**
+ * 記憶畢業寫進去的內容（執行紀錄的 graduate 與保留區項目的 graduate 共用）：核心準則的那一行、護欄規則（ruleId 或完整規則）、環境設定的鍵與值。
+ * 原記憶內文不動，只在 frontmatter 記下去向。
+ */
+export function GraduateWhat({ g }) {
+  const rule = g.rule;
+  return (
+    <dl class="kv ap-grad">
+      <dt>{t('原本的記憶')}</dt><dd><code>{g.ref}</code><span class="faint">　{t('（內文不動，只記下畢業的去向）')}</span></dd>
+      {g.to === 'core' && g.line && <><dt>{t('加進核心準則的一行')}</dt><dd>{g.line}</dd></>}
+      {g.to === 'guardrail' && rule && (
+        <>
+          <dt>{t('比對樣式')}</dt><dd><code class="env-val">{rule.pattern}</code>{rule.tool ? <span class="faint">　{rule.tool === '*' ? 'Bash / PowerShell' : rule.tool}</span> : null}</dd>
+          {rule.unless && <><dt>{t('例外')}</dt><dd><code class="env-val">{rule.unless}</code></dd></>}
+          <dt>{t('提醒 Claude 的訊息')}</dt><dd>{rule.message}</dd>
+        </>
+      )}
+      {g.to === 'guardrail' && !rule && g.ruleId && <><dt>{t('護欄規則')}</dt><dd><code>{g.ruleId}</code><span class="faint">　{t('（只提醒，不擋下）')}</span></dd></>}
+      {g.to === 'env' && g.env && <><dt>{g.env.area === 'setting' ? t('envarea::設定') : t('envarea::環境變數')}</dt><dd><code>{g.env.key}</code> = <code class="env-val">{String(g.env.value)}</code><span class="faint">　{t('（每台電腦核可之後才會套用）')}</span></dd></>}
+    </dl>
+  );
+}
+
 function ActionCard({ a, go, onUndo }) {
   const scope = scopeOf(a);
   const canUndo = undoable(a);
@@ -419,11 +627,21 @@ function ActionCard({ a, go, onUndo }) {
         {a.status === 'failed' && <span class="chip danger">{t('失敗')}</span>}
         {a.undone && <span class="chip">{t('已復原 · {when}', { when: relTime(a.undone) })}</span>}
       </header>
+      {(a.confirmed || a.matchedRequest || a.disputed || (a.kind === 'graduate' && a.to)) && (
+        <div class="hd-chips">
+          {a.kind === 'graduate' && GRADUATE_TO[a.to] && <span class="chip brand">{t(GRADUATE_TO[a.to])}</span>}
+          {a.confirmed && <span class="chip ok" title={t('寫進每次都會載入的範圍、審核員也同意，所以直接記為確認過，不會再出現在「待你確認」。')}>{t('已記為確認過')}</span>}
+          {a.matchedRequest && <span class="chip ok" title={t('Claude 寫入的內容和你在那場對話裡的要求相符，所以不需要再審一次。')}>{t('和你在對話裡的要求相符')}</span>}
+          {a.disputed && <span class="chip warn" title={t('判斷的 AI 認為內容和你在對話裡的要求不符，審核員也同意，所以退回。')}>{t('和你的要求不符')}</span>}
+        </div>
+      )}
       {reason && <p class="ap-reason-text">{reason}</p>}
+      {a.kind === 'graduate' && a.graduate && <GraduateWhat g={a.graduate} />}
       <ReviewLine review={a.review} />
       {message && <p class="ap-msg">{message}</p>}
-      {(canUndo || (a.kind === 'tidy' && a.record) || (a.status === 'done' && !a.undone && !canUndo)) && (
+      {(canUndo || (a.kind === 'tidy' && a.record) || a.holding || (a.status === 'done' && !a.undone && !canUndo)) && (
         <footer>
+          {a.holding && <button class="btn sm" onClick={() => go('holding')}>{t('到保留區看')}<IconChevronRight /></button>}
           {a.kind === 'tidy' && a.record && (
             <a class="btn sm" href={`#/tidy?id=${a.record}`} onClick={(e) => { if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey) { e.preventDefault(); go('tidy', { id: a.record }); } }}>
               {t('看完整差異')}<IconChevronRight />

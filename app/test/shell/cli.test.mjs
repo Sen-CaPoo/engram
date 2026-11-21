@@ -9,6 +9,7 @@ import { COMMANDS, extraArgs, main } from '../../src/cli/main.mjs';
 import { capture, mkTmp, rmTmp, stdinFrom, useHomes } from './helpers.mjs';
 import { createFakeEngine } from './fake-engine.mjs';
 
+const PKG_VERSION = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
 let root;
 let paths;
 before(() => {
@@ -112,9 +113,10 @@ describe('分派與錯誤格式', () => {
   test('version', async () => {
     const r = await engram(['version']);
     assert.equal(r.code, 0);
-    assert.match(r.out, /^engram 1\.6\.0（Node v\d+/);
+    // 版本號的單一來源是 app/package.json（S6）：測試不寫死版本，改版本時不必動這裡
+    assert.ok(r.out.startsWith(`engram ${PKG_VERSION}（Node v`), r.out);
     const j = await engram(['version', '--json']);
-    assert.equal(JSON.parse(j.out).version, '1.6.0');
+    assert.equal(JSON.parse(j.out).version, PKG_VERSION);
   });
 
   test('沒有這個指令 → exit 2，印出錯誤與建議', async () => {
@@ -213,6 +215,19 @@ describe('同步、綁定與專案', () => {
     assert.equal(j.machine.id, 'office-7k2q');
     assert.equal(j.here.pid, 'acme-gateway-3fa9k');
     assert.equal(j.agentProcess.running, false);
+  });
+
+  test('status：索引是相容模式時多一行（哪幾台還是舊版、更新後自動切換），--json 帶 indexCompat；不是相容模式沒有這一行', async () => {
+    const eg = createFakeEngine({ home: paths.home });
+    const base = await eg.status();
+    assert.doesNotMatch((await engram(['status'], { eg })).out, /索引：相容模式/);
+    const compat = { active: true, since: '2.0.0', machines: [{ mid: 'old-1', label: '舊筆電', version: '1.6.0', lastActiveAt: '2026-11-20T00:00:00.000Z' }, { mid: 'old-2', label: '門市桌機', version: null, lastActiveAt: null }], message: 'm', en: { message: 'm' } };
+    eg.status = async () => ({ ...base, indexCompat: compat });
+    const r = await engram(['status'], { eg });
+    assert.match(r.out, /索引：相容模式（舊筆電（1\.6\.0）、門市桌機（版本不明） 還是舊版，共用的索引暫時照舊版的方式產生；那幾台更新之後會自動切換）/);
+    assert.deepEqual(JSON.parse((await engram(['status', '--json'], { eg })).out).indexCompat, compat);
+    eg.status = async () => ({ ...base, indexCompat: { active: false, since: '2.0.0', machines: [] } });
+    assert.doesNotMatch((await engram(['status'], { eg })).out, /索引：相容模式/);
   });
 
   test('sync --local 只做本機存檔', async () => {
@@ -363,5 +378,216 @@ describe('系統指令', () => {
     const logs = fs.readdirSync(paths.logs).filter((n) => n.startsWith('agent-'));
     assert.equal(logs.length, 1);
     assert.match(fs.readFileSync(path.join(paths.logs, logs[0]), 'utf8'), /"level":"error".*啟動失敗/);
+  });
+});
+
+describe('環境健檢（2.0.0 R1、R5）', () => {
+  test('env：預設是 status，列出環境指紋重點與發現；可修的附 engram env fix 指令', async () => {
+    const r = await engram(['env']);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /環境健檢：開啟/);
+    assert.match(r.out, /Claude Code 2\.1\.329 · Engram 2\.0\.0（a1b2c3d）/);
+    assert.match(r.out, /外掛 1、技能 0/);
+    assert.match(r.out, /tele@mkt PostToolUse 中位數 1200 毫秒（12 次）/);
+    assert.match(r.out, /來源不明 SessionStart 中位數 700 毫秒（8 次，無法確認是否同步）/);
+    assert.doesNotMatch(r.out, /quiet@mkt/, '背景執行的 hook 不列');
+    assert.match(r.out, /\[低\] H32 沒有設定對話紀錄的保留天數（H32:abc1234567）/);
+    assert.match(r.out, /engram env fix H32:abc1234567（設成 60 天）/);
+    const j = JSON.parse((await engram(['env', 'status', '--json'])).out);
+    assert.deepEqual(Object.keys(j).sort(), ['envHealth', 'findings', 'fingerprint']);
+    const refreshed = await engram(['env', 'status', '--refresh']);
+    assert.deepEqual(refreshed.eg.calls.find((c) => c.name === 'env.fingerprint').args, [{ refresh: true }]);
+  });
+
+  test('env diff：哪裡不一樣、哪一邊比較新；env fix <id> 修正並說明備份位置', async () => {
+    const d = await engram(['env', 'diff']);
+    assert.match(d.out, /有環境指紋的電腦：公司電腦（這台） 2026-11-20、家裡電腦 2026-11-19/);
+    assert.match(d.out, /• 「Claude Code」版本不同.*公司電腦 比較新/);
+    const f = await engram(['env', 'fix', 'H32:abc1234567']);
+    assert.equal(f.code, 0, f.err);
+    assert.deepEqual(f.eg.calls.find((c) => c.name === 'env.fix').args, ['H32:abc1234567']);
+    assert.match(f.out, /已把 cleanupPeriodDays 設成 60 天。修改前的備份：C:\\fake\\env-backup/);
+  });
+
+  test('env 的用法錯誤：沒有 id、不認得的子指令、多餘的參數 → exit 2', async () => {
+    assert.equal((await engram(['env', 'fix'])).code, 2);
+    assert.equal((await engram(['env', 'bogus'])).code, 2);
+    assert.equal((await engram(['env', 'diff', 'x'])).code, 2);
+    assert.equal((await engram(['env', 'fix', 'a', 'b'])).code, 2);
+    assert.match((await engram(['env', '--help'])).out, /用法：engram env \[status \[--refresh\]\] \| diff \| fix/);
+    assert.match((await engram(['help'])).out, /^ {2}env \[status \[--refresh\]\] \| diff \| fix <卡片 id> \| set <鍵>=<值> \| approve \[項目\] \| unset <鍵> \| remove-skill <名稱> \| remove-plugin <外掛> \| skip <項目> \| unskip <項目> \| export \[--skill <名稱>\]\.\.\. \[--force\] \| plan \| apply \| undo \| disable-plugin <外掛> \| enable-plugin <外掛>$/m);
+  });
+});
+
+describe('環境設定同步與瘦身（2.0.0 WP8）', () => {
+  const call = (r, name) => r.eg.calls.find((c) => c.name === name);
+  // 使用者自己的終端機：沒有 CLAUDECODE（測試本身可能就跑在 Claude Code 裡，process.env 會帶著它）
+  const terminal = (argv, o = {}) => engram(argv, { env: {}, ...o });
+
+  test('env set <鍵>=<值>：以第一個 = 切開（值可以含 =）；沒有 = 或沒有鍵 → exit 2', async () => {
+    const r = await terminal(['env', 'set', 'MY_FLAG=a=b']);
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(call(r, 'env.set').args, ['MY_FLAG', 'a=b', { approve: true }], '使用者自己的終端機：寫出的內容視為這台已核可');
+    assert.match(r.out, /已把環境變數 MY_FLAG 寫進環境設定檔/);
+    assert.doesNotMatch(r.out, /需要在終端機或管理介面核可/);
+    assert.equal((await terminal(['env', 'set', 'NOEQUALS'])).code, 2);
+    assert.equal((await terminal(['env', 'set', '=x'])).code, 2);
+    assert.equal((await terminal(['env', 'set'])).code, 2);
+  });
+
+  test('env unset／remove-skill／remove-plugin／skip／unskip：轉給引擎、說明已套用的值不會馬上動；缺名稱或多餘參數 → exit 2', async () => {
+    const u = await engram(['env', 'unset', 'MY_FLAG']);
+    assert.equal(u.code, 0, u.err);
+    assert.deepEqual(call(u, 'env.unset').args, ['MY_FLAG']);
+    assert.match(u.out, /已從環境設定檔移除環境變數 MY_FLAG/);
+    assert.match(u.out, /這台多出來/);
+    const us = await engram(['env', 'unset', 'setting:theme']);
+    assert.deepEqual(call(us, 'env.unset').args, ['setting:theme']);
+    assert.match(us.out, /已從環境設定檔移除設定 theme/);
+    const rs = await engram(['env', 'remove-skill', 'alpha-skill']);
+    assert.deepEqual(call(rs, 'env.removeSkill').args, ['alpha-skill']);
+    assert.match(rs.out, /已從環境設定檔移除技能 alpha-skill，並刪掉記憶庫裡的 env\/skills 副本/);
+    assert.match(rs.out, /已經安裝的技能不會被動/);
+    const rp = await engram(['env', 'remove-plugin', 'alpha']);
+    assert.deepEqual(call(rp, 'env.removePlugin').args, ['alpha']);
+    assert.match(rp.out, /已從環境設定檔的外掛清單移除 alpha@mkt/);
+    const sk = await engram(['env', 'skip', 'setting:theme']);
+    assert.deepEqual(call(sk, 'env.skip').args, ['setting:theme']);
+    assert.match(sk.out, /這台電腦之後會略過 setting:theme/);
+    const un = await engram(['env', 'unskip', 'setting:theme']);
+    assert.deepEqual(call(un, 'env.unskip').args, ['setting:theme']);
+    assert.match(un.out, /這台電腦不再略過 setting:theme/);
+    const j = JSON.parse((await engram(['env', 'skip', 'model', '--json'])).out);
+    assert.deepEqual([j.ok, j.item, j.skip], [true, 'model', true]);
+    for (const sub of ['unset', 'remove-skill', 'remove-plugin', 'skip', 'unskip']) {
+      assert.equal((await engram(['env', sub])).code, 2, `${sub} 沒有名稱`);
+      assert.equal((await engram(['env', sub, 'a', 'b'])).code, 2, `${sub} 多餘的參數`);
+    }
+  });
+
+  test('env approve [項目]：不給項目就是全部，印出每一項完整的值；沒有等待核可的 → 說明；多餘的參數 → exit 2', async () => {
+    const all = await terminal(['env', 'approve']);
+    assert.equal(all.code, 0, all.err);
+    assert.deepEqual(call(all, 'env.approve').args, []);
+    assert.match(all.out, /已核可 1 項（只記在這台電腦，不會同步）/);
+    assert.match(all.out, /• 環境變數「GONE_MODE」：新增 1/);
+    assert.match(all.out, /engram env apply/);
+    const one = await terminal(['env', 'approve', 'env:GONE_MODE']);
+    assert.deepEqual(call(one, 'env.approve').args, ['env:GONE_MODE']);
+    const none = createFakeEngine({ home: paths.home });
+    none.env.approve = async () => ({ ok: true, count: 0, approved: [] });
+    assert.match((await terminal(['env', 'approve'], { eg: none })).out, /沒有等待核可的項目/);
+    assert.equal((await terminal(['env', 'approve', 'a', 'b'])).code, 2);
+  });
+
+  test('env approve 是使用者本人的確認：在 Claude Code 裡（CLAUDECODE、CLAUDE_CODE_ENTRYPOINT，空字串也算）一律拒絕、不呼叫引擎、不寫核可紀錄', async () => {
+    for (const env of [{ CLAUDECODE: '1' }, { CLAUDECODE: '' }, { CLAUDE_CODE_ENTRYPOINT: 'cli' }]) {
+      for (const argv of [['env', 'approve'], ['env', 'approve', 'env:GONE_MODE']]) {
+        const r = await engram(argv, { env });
+        assert.equal(r.code, 1, JSON.stringify(env));
+        assert.match(r.err, /E_CONFIRM/);
+        assert.match(r.err, /要由你本人確認，不能在 Claude Code 裡執行/);
+        assert.match(r.err, /你自己的終端機（不是 Claude Code 的對話或 ! 指令）執行 engram env approve|管理介面（engram ui）/);
+        assert.equal(call(r, 'env.approve'), undefined, '沒有呼叫引擎：不寫核可紀錄');
+      }
+    }
+    assert.equal((await terminal(['env', 'approve'])).code, 0, '使用者自己的終端機可以');
+    assert.equal((await engram(['env', 'plan'], { env: { CLAUDECODE: '1' } })).code, 0, '其他子指令不受影響');
+    assert.equal((await engram(['env', 'apply'], { env: { CLAUDECODE: '1' } })).code, 0, 'apply 只套用已核可的，不需要擋');
+  });
+
+  test('env set、export 在 Claude Code 裡執行：寫出的內容不自動視為已核可（approve: false），並說明需要在終端機或管理介面核可', async () => {
+    for (const env of [{ CLAUDECODE: '1' }, { CLAUDE_CODE_ENTRYPOINT: 'cli' }]) {
+      const s = await engram(['env', 'set', 'MY_FLAG=on'], { env });
+      assert.equal(s.code, 0, s.err);
+      assert.deepEqual(call(s, 'env.set').args, ['MY_FLAG', 'on', { approve: false }]);
+      assert.match(s.out, /需要在終端機或管理介面核可/);
+      assert.match(s.out, /engram env approve/);
+      const x = await engram(['env', 'export', '--skill', 'alpha-skill'], { env });
+      assert.equal(x.code, 0, x.err);
+      assert.deepEqual(call(x, 'env.export').args, [{ skills: ['alpha-skill'], force: false, approve: false }]);
+      assert.match(x.out, /需要在終端機或管理介面核可/);
+    }
+  });
+
+  test('env plan 與 apply：等待這台核可的項目另列（完整的值），apply 回報有幾項沒套用', async () => {
+    const plan = await engram(['env', 'plan']);
+    assert.match(plan.out, /等待這台核可的 1 項.*不會被套用.*engram env approve/);
+    assert.match(plan.out, /• 環境變數「NEW_MODE」：新增 a-very-long-value-that-is-shown-in-full（等待這台核可）/);
+    assert.match(plan.out, /套用後這台電腦會改 1 項/, '等待核可的不算在「會改」裡');
+    const eg = createFakeEngine({ home: paths.home });
+    eg.env.apply = async () => ({ ok: true, applied: 0, pending: 2, items: [] });
+    const a = await engram(['env', 'apply'], { eg });
+    assert.match(a.out, /沒有需要套用的變更/);
+    assert.match(a.out, /有 2 項還在等這台核可，沒有套用.*engram env approve/);
+  });
+
+  test('env plan：環境設定檔移除後留在這台的項目列在「會改」裡（restore）', async () => {
+    const eg = createFakeEngine({ home: paths.home });
+    eg.env.plan = async () => ({
+      v: 1, at: '2026-11-21T00:00:00.000Z', envSync: 'report', profile: { present: true, updatedAt: null, by: null }, overrides: {}, settingsFormat: 'ok',
+      items: [{ area: 'env', key: 'GONE_MODE', action: 'restore', from: '1', to: null, summary: '環境變數「GONE_MODE」：環境設定檔已經沒有這項，這台多出來；apply 會還原成套用之前的樣子（沒有這項）', en: { summary: 'x' } }],
+      blocked: [], unused: { known: false, windowDays: 30, plugins: [] }, changes: 1,
+    });
+    const r = await engram(['env', 'plan'], { eg });
+    assert.match(r.out, /套用後這台電腦會改 1 項/);
+    assert.match(r.out, /這台多出來/);
+  });
+
+  test('env export：--skill 可以重複；列出匯出的設定、技能與被擋下的原因（不帶值）', async () => {
+    const r = await terminal(['env', 'export', '--skill', 'alpha-skill', '--skill', 'leaky']);
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(call(r, 'env.export').args, [{ skills: ['alpha-skill', 'leaky'], force: false, approve: true }]);
+    assert.match(r.out, /技能 twin 沒有覆蓋：記憶庫裡的版本不是這台上次匯出或核可的那一版.*--force/);
+    assert.deepEqual(call(await terminal(['env', 'export', '--skill', 'twin', '--force']), 'env.export').args, [{ skills: ['twin'], force: true, approve: true }]);
+    assert.match(r.out, /設定：theme；啟用中的外掛 1 個/);
+    assert.match(r.out, /技能：alpha-skill（2 個檔案）/);
+    assert.match(r.out, /技能 alpha-skill 略過：big\.bin（超過 1 MB）/);
+    assert.match(r.out, /技能 leaky 沒有同步：內容疑似含有金鑰（notes\.txt：anthropic-api-key）/);
+    assert.match(r.out, /設定 statusLine 沒有匯出：.*家目錄路徑/);
+    assert.deepEqual(call(await terminal(['env', 'export']), 'env.export').args, [{ skills: [], force: false, approve: true }]);
+  });
+
+  test('env plan：列出會改的項目、外掛差異、被拒絕的項目、近 30 天沒用過的外掛；--json 是 plan 本身', async () => {
+    const r = await engram(['env', 'plan']);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /環境設定同步（設定 envSync）：只報告/);
+    assert.match(r.out, /套用後這台電腦會改 1 項/);
+    assert.match(r.out, /• 設定「theme」：light → dark/);
+    assert.match(r.out, /• 外掛「beta@mkt」：這台沒有安裝/);
+    assert.match(r.out, /不套用 env MY_API_KEY：名稱含 KEY/);
+    assert.match(r.out, /近 30 天沒用過的外掛.*engram env disable-plugin <名稱>/);
+    assert.match(r.out, /• idle-one@mkt/);
+    assert.match(r.out, /engram env apply/);
+    const j = JSON.parse((await engram(['env', 'plan', '--json'])).out);
+    assert.equal(j.changes, 1);
+    assert.equal(j.unused.plugins[0].key, 'idle-one@mkt');
+  });
+
+  test('env apply、undo：說明套用了什麼、備份位置、保留了哪些', async () => {
+    const a = await engram(['env', 'apply']);
+    assert.equal(a.code, 0, a.err);
+    assert.ok(call(a, 'env.apply'));
+    assert.match(a.out, /已套用 1 項：/);
+    assert.match(a.out, /修改前的備份：C:\\fake\\env-backup\\apply/);
+    const u = await engram(['env', 'undo']);
+    assert.match(u.out, /已還原最近一次套用（1 項）/);
+    assert.match(u.out, /保留 setting:model：套用之後被改過/);
+    const none = createFakeEngine({ home: paths.home });
+    none.env.apply = async () => ({ ok: true, applied: 0, items: [] });
+    assert.match((await engram(['env', 'apply'], { eg: none })).out, /沒有需要套用的變更/);
+  });
+
+  test('env disable-plugin／enable-plugin <外掛>：轉給引擎；沒有名稱 → exit 2', async () => {
+    const d = await engram(['env', 'disable-plugin', 'idle-one']);
+    assert.equal(d.code, 0, d.err);
+    assert.deepEqual(call(d, 'env.setPlugin').args, ['idle-one', false]);
+    assert.match(d.out, /已停用外掛 idle-one@mkt/);
+    const e = await engram(['env', 'enable-plugin', 'idle-one']);
+    assert.deepEqual(call(e, 'env.setPlugin').args, ['idle-one', true]);
+    assert.match(e.out, /已啟用外掛 idle-one@mkt/);
+    assert.equal((await engram(['env', 'disable-plugin'])).code, 2);
+    assert.equal((await engram(['env', 'apply', 'x'])).code, 2);
+    assert.equal((await engram(['env', 'undo', 'x'])).code, 2);
   });
 });

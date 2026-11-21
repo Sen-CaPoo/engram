@@ -4,6 +4,7 @@ import { allowEntries, loadAllow } from '../../core/secretallow.mjs';
 import { parsePositiveInt } from '../args.mjs';
 import { CliError } from '../errors.mjs';
 import { SEVERITY_LABEL } from '../output.mjs';
+import { confirmSource } from '../source.mjs';
 import { readContent } from './memory.mjs';
 import { assertNoNewRedaction, checkMemoryText, heldNote, isMemoryRef, readSafe, redactText, undoHint } from './safe.mjs';
 
@@ -22,6 +23,7 @@ export const FIX_INFO = {
   'rename-collisions': '依命名規則在資料夾原名後加 4 碼代號並重新綁定，記憶裡的舊路徑一併更新；可以用 engram collisions undo 整批還原。改名前的對話不會出現在 /resume 清單，改名中的資料夾不能有進行中的 Claude Code 對話。',
   'restore-deletions': '把被刪除的記憶從歷史中還原到目前的版本。',
   'confirm-deletions': '確認這些刪除是你要的，之後不再提醒；檔案仍可從歷史還原。',
+  'env-fix': '修正環境健檢的發現（H26 移除 Engram 加的失效路徑、H32 新增 cleanupPeriodDays；H28 的 ~/.claude.json 失效專案條目只報告，不會自動清除）；修改前先備份到 ~/.engram/local/env/backups/，也可以用 engram env fix <id>。',
   'forget-binding': '移除這台電腦上已失效的綁定紀錄，並拆掉舊位置的記憶連結；記憶本身不受影響，舊資料夾留下的對話紀錄仍可以用 /engram:dream 回顧。',
 };
 const SCOPE_WORDS = { global: '全域（所有專案都會讀到）', project: '專案', machine: '單機（只有那台電腦會讀到）' };
@@ -102,12 +104,29 @@ async function findItem(eg, id) {
 /** 衝突的內容與摘要遮蔽疑似金鑰；套用該檔案的「不是金鑰」清單，Claude 寫回時才不會被當成新的遮蔽標記擋下 */
 function conflictView(c, allow = {}) {
   const ok = allowEntries(allow, c.ref);
-  return { id: c.id, ref: c.ref, kind: c.kind, createdAt: c.createdAt, summary: redactText(c.summary), ours: redactText(c.ours, ok), theirs: redactText(c.theirs, ok), base: redactText(c.base, ok) };
+  // 第四輪審查 F-01：環境設定檔與護欄規則檔的紀錄已經依這台的觀點對調，另外帶兩邊是哪台與選項的說法
+  const view = c.choices ? { choices: c.choices, view: c.view, sides: c.sides, choiceLabels: c.choiceLabels, ...(c.otherMachine ? { otherMachine: c.otherMachine } : {}) } : {};
+  return { id: c.id, ref: c.ref, kind: c.kind, createdAt: c.createdAt, summary: redactText(c.summary), ours: redactText(c.ours, ok), theirs: redactText(c.theirs, ok), base: redactText(c.base, ok), ...view };
 }
 
 function conflictLines(c, allow) {
   const v = conflictView(c, allow);
   const part = (title, t) => [`── ${title}`, t === null ? '（沒有這個版本：表示這一邊刪除了它）' : t.replace(/\n$/, '')];
+  if (v.choiceLabels) {
+    const name = (s, fallback) => (s?.label ? s.label : fallback);
+    const how = v.choices.map((k) => `${k}＝${v.choiceLabels[k]}`).join('、');
+    const titles = v.view === 'third'
+      ? [`${name(v.sides.ours, '記下紀錄的電腦')} 的版本（ours）`, `${name(v.sides.theirs, '另一台電腦')} 的版本（theirs）`]
+      : [`這台（${name(v.sides.ours, '這台')}）的版本（ours）`, `另一台（${name(v.sides.theirs, '另一台')}）的版本（theirs）`];
+    return [
+      `[衝突] ${v.id}  ${v.ref}`,
+      `  ${v.summary}`,
+      `  處理方式：${how}${v.view === 'legacy' ? '（這筆舊紀錄沒有記下是哪台記的，不會改任何值）' : ''}。`,
+      ...part(titles[0], v.ours),
+      ...part(titles[1], v.theirs),
+      ...(v.base !== null ? part('兩邊修改前的共同版本（base）', v.base) : []),
+    ];
+  }
   return [
     `[衝突] ${v.id}  ${v.ref ?? '（未知檔案）'}`,
     `  ${v.summary}`,
@@ -206,7 +225,7 @@ async function applyItem(ctx, eg, id) {
   if (!NO_CONFIRM.has(fix.action) && !ctx.opts.yes) {
     throw new CliError('E_CONFIRM', `「${fix.label}」：${describeFix(fix)}`, `確認後加上 --yes 再執行：engram inbox apply ${f.id}${n > 1 ? ` --fix ${n}` : ''} --yes`);
   }
-  const r = await eg.apply(fix);
+  const r = await eg.apply(fix, { by: confirmSource(ctx) });
   if (r?.needsUi) throw new CliError('E_NEEDS_CONTENT', `「${fix.label}」需要先寫好內容，不能直接套用`, contentStep(f, fix));
   ctx.out.result(r ?? { ok: true }, [`已${fix.label}（${f.id}）。`, restoreHint(fix.action, r)]);
 }
@@ -241,6 +260,10 @@ async function resolveItem(ctx, eg, id) {
   const choice = ctx.opts.choice;
   if (!['ours', 'theirs', 'both', 'manual'].includes(choice)) throw new CliError('E_USAGE', '請用 --choice 指定處理方式：ours、theirs、both 或 manual');
   const { conflict } = await findItem(eg, id);
+  // 第三輪審查 R4：環境設定檔與護欄規則檔的紀錄只有 theirs、ours 適用（在讀取手動合併的內容之前就回報）
+  if (Array.isArray(conflict.choices) && !conflict.choices.includes(choice)) {
+    throw new CliError('E_USAGE', `這筆衝突（${conflict.ref}）只能用 --choice ${conflict.choices.join(' 或 --choice ')}`, 'theirs：每個兩邊都改了的值改成對方版本的值；ours：改成（或維持）這台版本的值');
+  }
   let body;
   let done = async () => {};
   if (choice === 'manual') {
@@ -248,9 +271,11 @@ async function resolveItem(ctx, eg, id) {
     if (isMemoryRef(conflict.ref)) checkMemoryText(body);
     assertNoNewRedaction(body, [conflict.ours, conflict.theirs, conflict.base]);
   }
-  const r = await eg.conflicts.resolve(id, { choice, body });
+  // 第三輪審查 A：在 Claude Code 裡處理的結果記為 claude（不算使用者本人確認）
+  const r = await eg.conflicts.resolve(id, { choice, body, reviewed: confirmSource(ctx) });
   await done();
   const held = choice === 'manual' && conflict.ref ? await heldNote(eg, conflict.ref, body) : null;
   const label = { ours: '保留這台的版本', theirs: '改用對方的版本', both: '兩個版本都保留', manual: '寫入合併後的內容' }[choice];
-  ctx.out.result(r, [`已處理衝突 ${id}：${label}${r?.ref ? `（${r.ref}）` : ''}。`, held, held ? null : undoHint(r)]);
+  // 引擎回報了實際做了什麼（環境設定檔與護欄規則檔）就照它說
+  ctx.out.result(r, [r?.message ? `已處理衝突 ${id}：${r.message}` : `已處理衝突 ${id}：${label}${r?.ref ? `（${r.ref}）` : ''}。`, held, held ? null : undoHint(r)]);
 }

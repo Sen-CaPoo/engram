@@ -9,7 +9,7 @@
 > **For you, the user**: open Claude Code and paste in the message below, all of it. Claude will follow this manual and install Engram for you. The whole thing takes about 10 minutes, and Claude asks you before every step that changes your computer.
 >
 > ```text
-> Please install Engram (the memory sync tool for Claude Code) for me.
+> Please install Engram (the memory and environment steward for Claude Code) for me.
 > Install guide: https://raw.githubusercontent.com/Sen-CaPoo/engram/main/INSTALL-WITH-AI.md
 > Read the entire guide before you start and follow its steps. Before any step that changes my computer, explain it to me in plain language and get my approval.
 > ```
@@ -23,7 +23,7 @@ Everything below is the installation manual for the AI assistant.
 
 ## Your task
 
-Install **Engram** on this Windows computer for the user. Engram stores Claude Code's memory in the user's own private GitHub repo and syncs it automatically across their computers. The installation is complete when:
+Install **Engram** on this Windows computer for the user. Engram is the memory and environment steward for Claude Code. It stores Claude Code's memory in the user's own private GitHub repo and syncs it automatically across their computers, and it also looks after the whole Claude Code environment (guardrails, the environment check, environment sync, and automatic updates). The installation is complete when:
 
 1. `engram status` shows this computer's name and the vault location;
 2. `engram doctor` shows no unexpected ✗;
@@ -118,6 +118,7 @@ git clone https://github.com/Sen-CaPoo/engram.git "$HOME/engram"
 - If the folder already exists and contains `app/bin/engram.mjs`: run `git -C "$HOME/engram" pull` instead to get the latest version.
 - If the folder already exists but isn't Engram: ask the user to choose a different location, and don't overwrite it.
 - If the user chose a different location: replace `$HOME/engram` with that location in every command from here on.
+- Always use `git clone`; don't switch to downloading a ZIP. Automatic updates (new in 2.0: when another computer updates, this one catches up on its own) work only with a git clone, and a computer installed from a ZIP has to be updated by hand. If the user has already installed from a ZIP, don't reinstall; just tell them they will need to update it themselves from now on.
 
 ## Step 6: Preview the install plan (changes nothing, safe to run right away)
 
@@ -173,7 +174,7 @@ node "$HOME/.engram/app/current/bin/engram.mjs" import plan
 Summarize the result for the user: how many folders, how many memories, how many of each will be copied or skipped (duplicates or older versions), and which are recommended for global or machine scope. Then let the user choose:
 
 - **Review in the dashboard (recommended for first-time use)**: run `node "$HOME/.engram/app/current/bin/engram.mjs" ui`, and the browser opens `http://127.0.0.1:4777`. Ask the user to go to **Import memories**: review each item, then click **Start rehearsal** (it runs a complete import, verification, and restore on a copy, without touching any real files), and once all four checks pass, click **Apply plan**. Wait for the user to finish. (The dashboard is available in English and Traditional Chinese: the language switch is in the top bar or in Settings.)
-- **You apply it directly**: after the user explicitly approves, run `node "$HOME/.engram/app/current/bin/engram.mjs" import apply --yes`. Tell the user the **restore point** (the value after `還原點：` in the output); if needed, they can restore with `engram import undo <restore point>`. If the output contains `延後：…正有對話在使用` ("Deferred: … a conversation is using it"), that folder is in the middle of a conversation (usually including this one), and the agent connects it automatically once the conversation ends; until then, it's normal for `doctor` to show ✗ for that folder's link.
+- **You apply it directly**: after the user explicitly approves, run `node "$HOME/.engram/app/current/bin/engram.mjs" import apply --yes`. Because you run this inside a Claude Code conversation, the imported content is recorded as "confirmed on your behalf by Claude", not as confirmed by the user, and autopilot won't treat it as the user's preferences; for it to count as the user's own confirmation, have the user use the import wizard in the dashboard above, or run the same command in a terminal they opened themselves (not this conversation), and tell the user about this difference first. Tell the user the **restore point** (the value after `還原點：` in the output); if needed, they can restore with `engram import undo <restore point>`. If the output contains `延後：…正有對話在使用` ("Deferred: … a conversation is using it"), that folder is in the middle of a conversation (usually including this one), and the agent connects it automatically once the conversation ends; until then, it's normal for `doctor` to show ✗ for that folder's link.
 
 Original memory files are always kept and never deleted. A brand-new user with only one computer, or a second computer with no old memories, can skip this step.
 
@@ -192,11 +193,12 @@ Report back in this format:
   2. Memory pane: type /engram-memories in Claude Code (or select "◆ Engram" at the bottom) to see which memories this conversation read
   3. Dashboard: type engram ui in a terminal (Edge is recommended; from its menu choose "Apps › Install this site as an app")
   4. Tidy-up: under Tidy-up in the dashboard, pick a scope and paste the copied command into Claude Code; after Claude makes suggestions, you decide each item on the page. To skip deciding item by item, turn on Autopilot and let AI tidy up every day on its own (you can undo anything afterwards)
-  5. Second computer: paste the same message into Claude Code on that computer and give it a different name
-  6. Please keep <Engram folder>; you'll need it for updates
+  5. Defaults after installation: context recall, guardrails (set to block), the environment check, and automatic updates are on; environment sync only reports (it never changes settings by itself); autopilot is off. All of them can be changed under Settings in the dashboard
+  6. Second computer: paste the same message into Claude Code on that computer and give it a different name
+  7. Please keep <Engram folder>; you'll need it for updates (automatic updates need it to be a git clone, too)
 ```
 
-Also remind them: in a Claude Code conversation that is already open, run `/reload-plugins` or start a new conversation before commands such as `/engram:inbox` appear. (The instructions inside these commands are in Traditional Chinese for now; Claude normally replies in the language you write in.)
+Also remind them: in a Claude Code conversation that is already open, run `/reload-plugins` or start a new conversation before commands such as `/engram:inbox` appear, and before context recall and guardrails are loaded. (The instructions inside these commands are in Traditional Chinese for now; Claude normally replies in the language you write in.)
 
 ## Already installed (update, repair, or remove)
 
@@ -204,7 +206,8 @@ If Step 1 finds Engram already installed, first ask the user what they want to d
 
 | What they want | How |
 | --- | --- |
-| Update to the latest version | Confirm where the Engram folder is, run `git -C "<Engram folder>" pull`, then run `engram update`. For a ZIP install, have the user download the new version's ZIP over the old folder, then run `engram update` (ZIPs are told apart by version number, so unpacking the same version again doesn't update anything) |
+| Update to the latest version | Confirm where the Engram folder is, run `git -C "<Engram folder>" pull`, then run `engram update`. For a ZIP install, have the user download the new version's ZIP over the old folder, then run `engram update` (ZIPs are told apart by version number, so unpacking the same version again doesn't update anything). With several computers, from 2.0 on you only need to update one: the others (installed with git and already on 2.0.0 or later) catch up on their own at 11:00 every day. 1.x has no automatic updates, so every computer still on 1.x must be updated by hand once (`git pull`, then `engram update`) for the first upgrade; only after that does it catch up on its own |
+| Just upgraded to 2.0 | Tell the user what happens the first time after the upgrade: context recall, guardrails, the environment check, and automatic updates are on by default (autopilot keeps whatever it was set to); when every computer is on 2.0.0, the indexes are rebuilt by the new rules at the next sync; packing the vault now happens once a week, done in the background by the agent; the first environment check reads the last 30 days of conversation files and may take a few seconds; and when autopilot is on and no conversation retention period is set yet, it is set to 60 days. The new index rules start only once every computer is updated to 2.0.0, so ask the user to update each one: with only one updated, nothing is lost, but the shared indexes are temporarily written the old way (compatibility mode; `engram status` gets an extra line about it, and it switches by itself once the older computers are updated), the older computer has to be updated by hand with `git pull` and `engram update`, and while versions are mixed, nobody should edit by hand `settings.json`, `release.json`, or the files under `env/`, `guardrails/`, and `holding/` in the vault. Index layers can be switched to On only after every computer is on 2.0.0. For details, see the "Updating" section of the user guide |
 | Check that it's healthy | `engram doctor`, then check the results against Troubleshooting |
 | Add this computer's old memories | Step 9 |
 | Remove | First run `engram uninstall --dry-run` to list the removal plan and explain it; after the user approves, run `engram uninstall --yes`. By default the **vault is kept**; add `--purge` only if the user explicitly asks to delete the local vault too, and confirm once more (the repo on GitHub isn't affected) |
@@ -230,11 +233,12 @@ If Step 1 finds Engram already installed, first ask the user what they want to d
 | --- | --- |
 | `$HOME/.engram/` | The vault, the program itself, local state, and backups |
 | `$HOME/.claude/CLAUDE.md` | Adds a two-line Engram block at the end of the file and leaves the existing content alone; backed up before the change |
-| Claude Code plugin `engram` | Hooks at the start and end of conversations, the `/engram:` commands, and the memory pane (watches which memory files the conversation loads and reads, and adds a **◆ Engram** button at the bottom of Claude Code and the `/engram-memories` command) |
+| Claude Code plugin `engram` | Hooks at the start and end of conversations, the `/engram:` commands, and the memory pane (watches which memory files the conversation loads and reads, and adds a **◆ Engram** button at the bottom of Claude Code and the `/engram-memories` command), and context recall and guardrails (they check once before a message is sent, and once before a Bash or PowerShell command runs) |
 | npm global command `engram` | Lets you type `engram` in an ordinary terminal (add `--no-cli` during installation to skip it) |
-| Windows Task Scheduler `\Engram\Agent` | Starts Engram in the background at sign-in and syncs every 10 minutes |
+| Windows Task Scheduler `\Engram\Agent` | Starts Engram in the background at sign-in: syncs every 10 minutes, runs the environment check and automatic updates every day, and packs the vault every week |
 | Project folders bound during import | `.claude\settings.local.json` gets one line pointing to the memory location; folders that aren't git repos also get a `.claude\engram.json` marker |
 | `$HOME/.claude/settings.json` and the memory folder | Only when the default permission mode is auto or bypassPermissions: the original memory folder is backed up and replaced with a link, and Claude is allowed to read that link |
+| Other settings in `$HOME/.claude/settings.json` | Apart from the "allow reading" settings (the memory link in the previous row, and the folder used by conversation review), Engram doesn't change this file on its own. It changes the file only when the user applies environment sync on this computer, or turns on autopilot while no conversation retention period is set yet (it is then set to 60 days). A backup is made before any change, it can be undone, and uninstalling restores it too |
 
 Every item is recorded in the installation record, and `engram uninstall` reverts them one by one.
 

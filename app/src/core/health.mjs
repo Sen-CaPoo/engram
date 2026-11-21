@@ -9,11 +9,14 @@ import { exists, readJson, readText, sha1 } from './fsx.mjs';
 import { CANDIDATE_REASON, CANDIDATE_REASON_EN, readSweepLog } from './sweep.mjs';
 import { JUNCTION_MODES, junctionState, resolveIdentity } from './identity.mjs';
 import { defaultPermissionMode, isJunctionReadAllowed } from './claudesettings.mjs';
-import { indexStats, PROJECT_INDEX, SCOPE_INDEX } from './normalize.mjs';
+import { INDEX_COMPAT_WITHIN_MS, olderMachines } from './indexcompat.mjs';
+import { alwaysListed, computeIndexBudget, INDEX_COMPACT_AT, indexStats, PROJECT_INDEX, SCOPE_INDEX, scopeSlots } from './normalize.mjs';
 import { brokenLinks } from './links.mjs';
 import { coverageDays, loadUsage } from './usage.mjs';
 import { needsBaseline, pendingReviews } from './review.mjs';
 import { dreamStatus } from './dream.mjs';
+import { cachedEnvFindings } from './envhealth.mjs';
+import { dormantProjects, mergeCandidates } from './lifecycle.mjs';
 import { suggestionsFor } from './coresuggest.mjs';
 import { uncheckedDays, volatility } from './volatile.mjs';
 import { loadAllow, scanWithAllow } from './secretallow.mjs';
@@ -22,7 +25,7 @@ import { scanAll, sessionIndex } from './transcripts.mjs';
 import { allBindingViews, listMachineIds, listProjectIds, machineDir, memoryOwners, projectMemoryDir, readBindings, readProject, readState } from './vault.mjs';
 
 const DAY = 86_400_000;
-const LIMITS = { indexLines: 200, indexBytes: 25 * 1024, indexWarn: 150, fileWarn: 8 * 1024, fileHigh: 20 * 1024, coreLines: 200, coreBytes: 25 * 1024, coreBytesWarn: 20 * 1024 };
+const LIMITS = { indexLines: 200, indexBytes: 25 * 1024, indexWarn: INDEX_COMPACT_AT.lines, indexBytesWarn: INDEX_COMPACT_AT.bytes, fileWarn: 8 * 1024, fileHigh: 20 * 1024, coreLines: 200, coreBytes: 25 * 1024, coreBytesWarn: 20 * 1024 };
 
 function fid(code, refs) {
   return `${code}:${createHash('sha1').update(refs.join('|')).digest('hex').slice(0, 10)}`;
@@ -34,6 +37,17 @@ function fid(code, refs) {
  */
 function finding(code, severity, title, detail, { refs = [], pid, fix, fixes, key, en } = {}) {
   return { id: fid(code, key ? [key] : refs.length ? refs : [title]), code, severity, title, detail, refs, ...(pid ? { pid } : {}), ...(fix ? { fix } : {}), ...(fixes?.length ? { fixes } : {}), ...(en ? { en } : {}) };
+}
+
+/** H13：記憶檔疑似含有金鑰（一般專案與休眠專案的記憶共用） */
+function secretCard(m, pid, secrets) {
+  return finding('H13', 'high', `「${m.name}」疑似含有金鑰或密碼`, `${secrets.map((s) => `第 ${s.line} 行 ${s.kind}（${s.preview}）`).join('；')}。此檔案不會同步，也不會列在索引裡（之後的對話看不到它），直到改成記錄「存放位置」。`, {
+    refs: [m.ref], pid, fix: { action: 'edit', args: { ref: m.ref, lines: secrets.map((s) => s.line) }, label: '移除金鑰', en: { label: 'Remove secret' } },
+    en: {
+      title: `"${m.name}" may contain a secret or password`,
+      detail: `${secrets.map((s) => `line ${s.line} ${s.kind} (${s.preview})`).join('; ')}. This file will not sync and is left out of the index (later conversations cannot see it) until you record where the secret is stored instead.`,
+    },
+  });
 }
 
 /**
@@ -86,7 +100,7 @@ const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
  * @param {object} ctx  引擎內部 context
  * @param {{ memories: object[], now?: number }} input  memories 為 scanAllMemories 的結果（含 _parsed）
  */
-export async function runHealth(ctx, { memories, now = Date.now() }) {
+export async function runHealth(ctx, { memories: allMemories, now = Date.now() }) {
   const out = [];
   const projects = new Map();
   for (const pid of await listProjectIds(ctx.vault)) projects.set(pid, await readProject(ctx.vault, pid));
@@ -115,8 +129,17 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
   const scans = await scanAll(ctx.homes.claudeHome);
   const scanByEnc = new Map(scans.map((s) => [s.encoded.toLowerCase(), s]));
 
+  // S4：休眠的專案（任何電腦都沒有綁定、最近 90 天沒有對話）不參與整理類的檢查（索引容量、重複、檔案大小、過時、連結…）；
+  // 記憶完整保留。金鑰（H13）、衝突、大量刪除、同步這些安全類的檢查照常做，所以休眠專案的記憶只留給下面的金鑰檢查
+  const bindingsByMid = Object.fromEntries(await Promise.all(mids.map(async (mid) => [mid, mid === ctx.mid ? bindings : await readBindings(ctx.vault, mid)])));
+  const dormant = await dormantProjects(ctx, { now, projects, bindingsByMid });
+  const sleeping = allMemories.filter((m) => m.scope?.kind === 'project' && dormant.has(m.scope.pid));
+  const asleep = new Set(sleeping);
+  const memories = asleep.size ? allMemories.filter((m) => !asleep.has(m)) : allMemories;
+
   // H01：專案索引超過載入上限
   for (const [pid, p] of projects) {
+    if (dormant.has(pid)) continue;
     const st = await indexStats(path.join(projectMemoryDir(ctx.vault, pid), PROJECT_INDEX));
     const ref = `projects/${pid}/memory/${PROJECT_INDEX}`;
     if (st.lines > LIMITS.indexLines || st.bytes > LIMITS.indexBytes) {
@@ -129,16 +152,45 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
             detail: `MEMORY.md has ${st.lines} lines and ${(st.bytes / 1024).toFixed(1)}KB. Claude Code loads only the first 200 lines or 25KB, so memories after that are not seen. Consider merging or archiving some.`,
           },
         }));
-    } else if (st.lines >= LIMITS.indexWarn) {
-      out.push(finding('H01', 'low', `「${p?.name ?? pid}」的記憶索引接近上限`, `MEMORY.md 已有 ${st.lines} 行（上限 200 行）。`, {
+    } else if (st.lines >= LIMITS.indexWarn || st.bytes >= LIMITS.indexBytesWarn) {
+      // 預警門檻和精簡門檻一致（行數 160、位元組 20KB）：Engram 會自動把索引的說明縮成一句，縮完還放不下才依排名省略，
+      // 省略之後會穩定在門檻以下，所以「接近上限」只會出現在 Engram 處理不了的情況（例如手寫的內容太多）
+      const kb = (st.bytes / 1024).toFixed(1);
+      out.push(finding('H01', 'low', `「${p?.name ?? pid}」的記憶索引接近上限`, `MEMORY.md 已有 ${st.lines} 行、${kb}KB（上限 200 行或 25KB）。`, {
         refs: [ref], pid,
-        en: { title: `The memory index for "${p?.name ?? pid}" is close to the limit`, detail: `MEMORY.md already has ${st.lines} lines (limit: 200).` },
+        en: { title: `The memory index for "${p?.name ?? pid}" is close to the limit`, detail: `MEMORY.md already has ${st.lines} lines and ${kb}KB (limit: 200 lines or 25KB).` },
       }));
     }
   }
 
-  // H02／H03：索引與檔案不一致（正規化會自動修好）
-  const unindexed = memories.filter((m) => !m.indexed);
+  // H35：全域或單機索引被「永遠列出」的記憶（釘選、feedback／user）占滿，其他類型（包括剛寫的）一筆都列不進去。
+  // 只提醒使用者檢視；不是自動駕駛的整理對象（不能自動取消釘選、封存或合併）
+  const indexBudget = await computeIndexBudget(ctx.vault);
+  // 相容模式（有舊版電腦還在用）：全域索引照 1.6.0 的規則產生，沒有「永遠列出」，全域的這張卡片不出；單機索引只有這台自己寫，照新規則
+  const legacyGlobal = (await olderMachines(ctx.vault, { withinMs: INDEX_COMPAT_WITHIN_MS, selfMid: ctx.mid })).length > 0;
+  for (const s of [
+    { kind: 'global', ref: 'global/INDEX.md', zh: '全域記憶', en: 'global memory', pick: (m) => m.scope?.kind === 'global' },
+    { kind: 'machine', ref: `machines/${ctx.mid}/INDEX.md`, zh: '這台電腦的單機記憶', en: "this computer's machine memory", pick: (m) => m.scope?.kind === 'machine' && m.scope.mid === ctx.mid },
+  ]) {
+    if (s.kind === 'global' && legacyGlobal) continue;
+    const inScope = memories.filter(s.pick);
+    const slots = scopeSlots(inScope.length, indexBudget[s.kind]); // 與 renderScopeIndex 同一個算法
+    const entries = s.kind === 'machine' ? inScope.filter((m) => !m.project) : inScope; // 單機記憶裡標了專案的不列在單機索引
+    const always = entries.filter(alwaysListed).length;
+    if (always < slots || entries.length === always) continue;
+    out.push(finding('H35', 'medium', `${s.zh}的索引被永遠列出的記憶占滿`,
+      `${s.zh}索引的預算是 ${slots} 筆，目前有 ${always} 筆永遠列出（釘選，或類型是 feedback／user），預算已經用完，其他類型的記憶（包括剛寫的）一筆都列不進索引。建議檢視其中哪些可以取消釘選或封存。`,
+      {
+        refs: [s.ref],
+        en: {
+          title: `The index for ${s.en} is full of always-listed memories`,
+          detail: `The index budget for ${s.en} is ${slots} memories, and ${always} memories are always listed (pinned, or of type feedback/user). The budget is used up, so no memory of any other type (including newly written ones) fits in the index. Review which of them can be unpinned or archived.`,
+        },
+      }));
+  }
+
+  // H02／H03：索引與檔案不一致（正規化會自動修好）。被刻意省略的（omitted）不算漏掉
+  const unindexed = memories.filter((m) => !m.listed && !m.omitted);
   if (unindexed.length) {
     out.push(finding('H03', 'auto', `${unindexed.length} 筆記憶不在索引裡`, '下次同步時會自動補上。', {
       refs: unindexed.map((m) => m.ref), fix: { action: 'normalize', args: {}, label: '立即整理索引', en: { label: 'Tidy index now' } },
@@ -176,9 +228,12 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
     if (b.method === 'junction' && b.state !== 'pending') {
       const j = junctionState(ctx.homes, b.encoded, b.pid);
       if (j.state !== 'ok') {
+        // 連結指向這個記憶庫裡別的專案（例如另一台電腦還原了專案合併，這台的連結還指著合併的目標）：綁定紀錄說這個資料夾屬於 b.pid，
+        // 同一個編碼只會有一筆 junction 綁定，所以改指回 b.pid 是安全的；不帶 force 會因為「已綁定到別的專案」被擋下、永遠修不好
+        const toOtherProject = j.state === 'wrong-target' && j.target && `${path.resolve(j.target).toLowerCase()}${path.sep}`.startsWith(`${path.resolve(ctx.vault, 'projects').toLowerCase()}${path.sep}`);
         out.push(finding('H17', 'high', `「${name}」的記憶連結失效`, `Claude Code 的記憶資料夾狀態為 ${j.state}，新寫入的記憶可能沒有進入 Engram。`,
           {
-            refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:broken`, fix: { action: 'rebind', args: { dir: b.path }, label: '重新建立連結', en: { label: 'Recreate link' } },
+            refs: [`machines/${ctx.mid}/bindings.json`], pid: b.pid, key: `${b.key}:broken`, fix: { action: 'rebind', args: { dir: b.path, ...(toOtherProject ? { force: true } : {}) }, label: '重新建立連結', en: { label: 'Recreate link' } },
             en: {
               title: `The memory link for "${name}" is broken`,
               detail: `The status of Claude Code's memory folder is ${j.state}. Newly written memories may not have reached Engram.`,
@@ -391,15 +446,16 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
         en: { title: `"${m.name}" may apply to all projects`, detail: `Its type is ${m.type}, which usually means a preference or practice that holds across projects.` },
       }));
     }
+    // 2.0.0：使用者的決定是不拆分、不為了縮短而刪減記憶，說明維持中性（只提醒佔用的上下文）
     if (m.size > LIMITS.fileHigh) {
-      out.push(finding('H10', 'medium', `「${m.name}」檔案過大`, `${(m.size / 1024).toFixed(1)}KB；被讀取時會佔用大量上下文。建議請 Claude 拆分或精簡。`, {
+      out.push(finding('H10', 'medium', `「${m.name}」檔案比較大`, `${(m.size / 1024).toFixed(1)}KB；這筆記憶比較大，每次被讀取會佔用較多上下文。可以釘選或保持原樣，不建議拆分。`, {
         refs: [m.ref], pid,
-        en: { title: `"${m.name}" is too large`, detail: `${(m.size / 1024).toFixed(1)}KB. Reading it uses a lot of context. Ask Claude to split or trim it.` },
+        en: { title: `"${m.name}" is large`, detail: `${(m.size / 1024).toFixed(1)}KB. This memory is large, so each time it is read it takes up more context. You can pin it or leave it as is; splitting it is not recommended.` },
       }));
     } else if (m.size > LIMITS.fileWarn) {
-      out.push(finding('H10', 'low', `「${m.name}」檔案偏大`, `${(m.size / 1024).toFixed(1)}KB（建議 8KB 以內）。`, {
+      out.push(finding('H10', 'low', `「${m.name}」檔案偏大`, `${(m.size / 1024).toFixed(1)}KB；每次被讀取會佔用稍多的上下文。保持原樣即可，不建議拆分。`, {
         refs: [m.ref], pid,
-        en: { title: `"${m.name}" is fairly large`, detail: `${(m.size / 1024).toFixed(1)}KB (8KB or less is recommended).` },
+        en: { title: `"${m.name}" is fairly large`, detail: `${(m.size / 1024).toFixed(1)}KB. Each time it is read it takes up a little more context. Leaving it as is is fine; splitting it is not recommended.` },
       }));
     }
     const updated = Date.parse(m.updatedAt ?? '') || 0;
@@ -427,15 +483,12 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
       }));
     }
     const secrets = scanWithAllow(text, m.ref, allow);
-    if (secrets.length) {
-      out.push(finding('H13', 'high', `「${m.name}」疑似含有金鑰或密碼`, `${secrets.map((s) => `第 ${s.line} 行 ${s.kind}（${s.preview}）`).join('；')}。此檔案不會同步，也不會列在索引裡（之後的對話看不到它），直到改成記錄「存放位置」。`, {
-        refs: [m.ref], pid, fix: { action: 'edit', args: { ref: m.ref, lines: secrets.map((s) => s.line) }, label: '移除金鑰', en: { label: 'Remove secret' } },
-        en: {
-          title: `"${m.name}" may contain a secret or password`,
-          detail: `${secrets.map((s) => `line ${s.line} ${s.kind} (${s.preview})`).join('; ')}. This file will not sync and is left out of the index (later conversations cannot see it) until you record where the secret is stored instead.`,
-        },
-      }));
-    }
+    if (secrets.length) out.push(secretCard(m, pid, secrets));
+  }
+  // S4：休眠專案的記憶只做金鑰檢查（含金鑰的檔案不會同步，使用者一定要知道）
+  for (const m of sleeping) {
+    const secrets = scanWithAllow(await readText(path.join(ctx.vault, ...m.ref.split('/'))) ?? '', m.ref, allow);
+    if (secrets.length) out.push(secretCard(m, m.scope.pid, secrets));
   }
 
   // H20：建議回顧對話（1.4.0）。這台電腦綁定的專案有還沒回顧的對話，而且最早的那個 7 天內會被 Claude Code 清除，
@@ -638,6 +691,37 @@ export async function runHealth(ctx, { memories, now = Date.now() }) {
       }
     }
   }
+
+  // H34：疑似同一個專案的多個代號（S4）。只是建議，只留給使用者在收件匣決定（自動駕駛不處理：合併是無法只靠 commit 完整還原的結構性操作）。
+  // 同一個樣板、fork、刻意分開的兩份 clone 也會符合條件，所以卡片列出兩個專案各自的名稱、路徑、記憶筆數與判斷依據。
+  // 修正交給 eg.apply 的 link-projects（也就是 eg.projects.link）。只有遠端完全相同（reason 'remote'）是 medium，其餘很可能是不同的專案、降成 low
+  const H34_WHY = {
+    remote: ['兩個專案記錄的 git 遠端完全相同（刻意分開的兩份 clone 也會這樣）', 'Both projects record exactly the same git remotes (two clones kept apart on purpose look like this too)'],
+    'shared-remote': ['兩個專案共用某個 git 遠端，但各自還有不同的遠端（像 fork：origin 是自己的 fork、upstream 是原專案），很可能是不同的專案', 'The two projects share a git remote but each has other remotes too (like a fork: origin is your own fork, upstream is the original project), so they are probably different projects'],
+    'root-commit': ['只有 git 根 commit 相同、遠端不同（同一個樣板或 fork 出來的專案都會這樣），很可能是不同的專案', 'Only the git root commit is the same and the remotes differ (projects made from the same template or fork look like this), so they are probably different projects'],
+  };
+  const where = (paths, elsewhere) => `${paths.length ? `這台的資料夾 ${paths.join('、')}` : '這台沒有綁定'}${elsewhere ? `、其他電腦 ${elsewhere} 台有綁定` : ''}`;
+  const whereEn = (paths, elsewhere) => `${paths.length ? `folder on this computer: ${paths.join(', ')}` : 'not bound on this computer'}${elsewhere ? `; bound on ${elsewhere} other ${elsewhere === 1 ? 'computer' : 'computers'}` : ''}`;
+  for (const c of await mergeCandidates(ctx, { projects: new Map([...projects].filter(([, p]) => p)), bindingsByMid })) {
+    const [why, whyEn] = H34_WHY[c.reason];
+    out.push(finding('H34', c.reason === 'remote' ? 'medium' : 'low', `「${c.fromName}」可能和「${c.toName}」是同一個專案`,
+      `依據：${why}。「${c.fromName}」：${where(c.paths.from, c.elsewhere.from)}，${c.memories.from} 筆記憶。「${c.toName}」：${where(c.paths.to, c.elsewhere.to)}，${c.memories.to} 筆記憶。`
+      + `風險：同一個樣板或 fork 出來的專案也會符合這個條件；合併會把「${c.fromName}」的記憶搬進「${c.toName}」，這台電腦上「${c.fromName}」的資料夾之後寫的記憶也會進「${c.toName}」，兩個其實不同的專案就混在一起了。`
+      + '可以還原，但還原只會復原記憶庫與這台電腦的綁定、記憶連結，其他電腦要各自檢查；不確定是同一個專案就不要合併。',
+      {
+        refs: [`projects/${c.from}`, `projects/${c.to}`], pid: c.from,
+        fix: { action: 'link-projects', args: { from: c.from, to: c.to }, label: `合併到「${c.toName}」`, en: { label: `Merge into "${c.toName}"` } },
+        en: {
+          title: `"${c.fromName}" may be the same project as "${c.toName}"`,
+          detail: `Basis: ${whyEn}. "${c.fromName}": ${whereEn(c.paths.from, c.elsewhere.from)}; ${count(c.memories.from, 'memory', 'memories')}. "${c.toName}": ${whereEn(c.paths.to, c.elsewhere.to)}; ${count(c.memories.to, 'memory', 'memories')}. `
+            + `Risk: projects made from the same template or fork also match this; merging moves the memories of "${c.fromName}" into "${c.toName}", and memories written later in the folder of "${c.fromName}" on this computer go into "${c.toName}" too, so two projects that are really different get mixed together. `
+            + 'It can be undone, but the undo restores only the vault and this computer\'s bindings and memory links; check the other computers yourself. If you are not sure they are the same project, do not merge them.',
+        },
+      }));
+  }
+
+  // H25–H33：環境健檢（2.0.0）。發現由每日的 env 工作與 engram env 算好放在 local/cache（要掃對話紀錄，這裡不即時算），這裡只讀快取；設定 envHealth: off 時不併入
+  if (engineSettings.envHealth !== 'off') out.push(...await cachedEnvFindings(ctx, now));
 
   const rank = { high: 0, medium: 1, low: 2, auto: 3 };
   out.sort((a, b) => rank[a.severity] - rank[b.severity] || a.code.localeCompare(b.code));

@@ -43,13 +43,17 @@ export async function sessionStart(input, deps) {
   let memoryIndex = null;
   let pid = null;
   try {
-    const eg = await deps.loadEngine();
-    const ctx = await eg.sessionContext({
-      cwd: input.cwd,
-      event: input.source ?? 'startup',
-      transcriptPath: input.transcript_path,
-      sessionId: input.session_id,
-    });
+    // 2.0.0 S5：先試快速路徑（常駐程式預先寫好的快取，不載入整個引擎）；不能用時才載入引擎走完整路徑，兩者輸出一字不差
+    let ctx = await fastContext(input, deps);
+    if (!ctx) {
+      const eg = await deps.loadEngine();
+      ctx = await eg.sessionContext({
+        cwd: input.cwd,
+        event: input.source ?? 'startup',
+        transcriptPath: input.transcript_path,
+        sessionId: input.session_id,
+      });
+    }
     memoryIndex = ctx.memoryIndex ?? null;
     pid = ctx.binding?.pid ?? null;
     const notice = deps.failures?.count >= FAILURE_NOTICE_AT ? failureNotice(deps.failures) : '';
@@ -61,6 +65,19 @@ export async function sessionStart(input, deps) {
       await kickAgent(deps, 'session-start');
     };
     if (deps.defer) deps.defer(later); else await later();
+  }
+}
+
+/** 快速路徑（core/sessioncache.mjs，用到時才載入）；任何問題都回傳 null，交給完整路徑 */
+async function fastContext(input, deps) {
+  try {
+    const [{ fastSessionContext }, { resolveHomes }] = await Promise.all([import('../core/sessioncache.mjs'), import('../core/paths.mjs')]);
+    // 和 loadEngine 開引擎時一樣的路徑；hook 的 local 資料夾以 deps.paths 為準（測試會換掉）
+    const homes = { ...resolveHomes({ home: deps.paths.home, claudeHome: process.env.CLAUDE_HOME }), local: deps.paths.local, vault: deps.paths.vault };
+    return await fastSessionContext({ homes, cwd: input.cwd, sessionId: input.session_id, now: deps.now() });
+  } catch (err) {
+    deps.log.debug('session-start', err);
+    return null;
   }
 }
 

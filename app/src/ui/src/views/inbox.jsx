@@ -3,7 +3,7 @@
 import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api } from '../api.js';
-import { useData, Empty, Skeleton, Dialog, ConfirmDialog, ErrorBanner, useAction, ScopeLabel, Markdown, SevChip, useDirty, Banner } from '../components.jsx';
+import { useApp, useData, Empty, Skeleton, Dialog, ConfirmDialog, ErrorBanner, useAction, ScopeLabel, Markdown, SevChip, useDirty, Banner } from '../components.jsx';
 import { Merge } from '../lazy-editor.jsx';
 import { relTime } from '../util.js';
 import { IconCheckCircle, IconMerge, IconChevronRight, IconShield, IconCheck, IconUndo, IconEdit } from '../icons.jsx';
@@ -19,7 +19,8 @@ const GROUPS = [
   { key: 'low', label: N_('tab::建議') },
 ];
 // 規則只能找出候選、要讀內容才能判斷的卡片：提供「交給 Claude」（/engram:inbox <id>）
-const AI_CODES = new Set(['H01', 'H07', 'H08', 'H09', 'H10', 'H11', 'H12', 'H16', 'H19', 'H22']);
+// H10（檔案比較大）只是說明：使用者的決定是不拆分、不精簡記憶，所以不提供交給 Claude 改寫
+const AI_CODES = new Set(['H01', 'H07', 'H08', 'H09', 'H11', 'H12', 'H16', 'H19', 'H22']);
 
 // 執行前需要確認的動作（會改內容、設定或綁定）；值是中文原文，顯示時經過 t()
 const CONFIRM = {
@@ -32,8 +33,24 @@ const CONFIRM = {
   relink: N_('把這筆記憶內文裡指向舊名稱的 [[連結]] 改成指向合併後的記憶；其他內容不變，可以復原。'),
   unlink: N_('拿掉這筆記憶內文裡指向已封存記憶的 [[連結]] 括號，只留下文字；可以復原。'),
   'reconcile-bindings': N_('依這台電腦目前的權限模式重新設定資料夾綁定：auto 模式補上 junction，其他模式改用專案根目錄的設定檔，避免讀寫記憶時跳出權限詢問。記憶本身不受影響。'),
+  'link-projects': N_('把前一個專案的記憶搬進後一個專案，之後兩個專案共用同一份記憶；這台電腦原本綁在前一個專案的資料夾也改接到後一個。不確定是同一個專案就不要合併。合併後可以按「復原」：會還原記憶庫與這台電腦的綁定、記憶連結，其他電腦要各自檢查。'),
   'rename-collisions': N_('依命名規則在資料夾原名後面加 4 碼代號（例如「照片優化-66ca」），讓它們在 Claude Code 裡不再共用同一份紀錄。改名後重新綁定，這台電腦寫的記憶裡的舊路徑一併更新；已收編完的共用舊記憶資料夾移到備份。改名前的對話不會出現在 /resume 清單。完成後可以按「復原」整批還原。'),
 };
+
+// 環境設定檔與護欄規則檔的衝突紀錄（choices: ['theirs', 'ours']）：只能選其中一邊的值
+const CHOICE_NOTE = N_('這是設定檔，只能選其中一邊的值，所以沒有「兩者都保留」、手動合併和交給 Claude 合併。');
+// 看不出是哪台電腦記下的舊紀錄（view: 'legacy'，choices 只有 ours）
+const LEGACY_NOTE = N_('這是舊版留下的紀錄，看不出兩邊各是哪一台電腦，所以只能維持目前的值、移除紀錄；沒有「兩者都保留」、手動合併和交給 Claude 合併。');
+// 按鈕與兩欄標題的說法由後端依「現在看的這台」給（choiceLabels，附 en.choiceLabels）；沒有時（舊版常駐程式）用通用的說法
+const choiceLabel = (c, k) => local({ ...c.choiceLabels, en: c.en?.choiceLabels }, k);
+// 比對畫面兩欄的標題：ours 一欄是這台（recorder、other：後端已經依觀點對調）或 sides 的電腦（third），有名稱時帶出電腦
+function sideTitle(c, k) {
+  const name = c.sides?.[k]?.label;
+  if (c.view === 'third') return t('{name} 的版本', { name: name || t('另一台電腦') });
+  if (c.view === 'legacy') return k === 'ours' ? t('conflict::版本 A') : t('conflict::版本 B');
+  const who = k === 'ours' ? t('conflict::這台的版本') : t('conflict::另一台的版本');
+  return name ? t('{who}（{name}）', { who, name }) : who;
+}
 
 export function Inbox({ params, go }) {
   const data = useData(() => Promise.all([api.conflicts(), api.findings()]), []);
@@ -53,6 +70,8 @@ export function Inbox({ params, go }) {
       }
     }
   }, [params.focus, data.data]);
+  // 從保留區的提示過來（review=1）：直接打開「待你確認」
+  useEffect(() => { if (params.review && data.data) setOpen({ kind: 'review' }); }, [params.review, !!data.data]);
 
   if (!data.data) return <div class="page"><ErrorBanner error={data.error} onRetry={data.reload} /><Skeleton rows={6} /></div>;
   const [conflicts, findings] = data.data;
@@ -65,7 +84,6 @@ export function Inbox({ params, go }) {
   const UI_ACTIONS = {
     merge: (f) => setOpen({ kind: 'merge', item: f }),
     edit: (f) => (f.code === 'H13' ? setOpen({ kind: 'secret', item: f })
-      : f.code === 'H10' ? setOpen({ kind: 'guide', item: f, guide: 'split' })
       : go('library', { ref: f.fix.args?.ref || f.refs?.[0], edit: '1' })),
     'open-conflict': (f) => { const c = conflicts.find((x) => x.id === f.fix.args?.id); if (c) setOpen({ kind: 'conflict', item: c }); },
     'open-core': (f) => go('core', f.fix?.args?.suggestions ? { suggestions: '1' } : {}),
@@ -101,7 +119,7 @@ export function Inbox({ params, go }) {
                 label: t('自動處理'),
                 command: t('/engram:inbox 自動'),
                 auto: true,
-                note: t('Claude 列出計畫表後直接處理有把握的項目（升級全域、搬到單機、合併重複、修正格式、精簡、忽略）；疑似金鑰、資料夾改名與綁定、大量刪除、封存、同步衝突與沒有把握的項目一律留給你決定。每一項都附復原指令。'),
+                note: t('Claude 列出計畫表後直接處理有把握的項目（升級全域、搬到單機、合併重複、修正格式、忽略）；疑似金鑰、資料夾改名與綁定、大量刪除、封存、同步衝突與沒有把握的項目一律留給你決定。每一項都附復原指令。'),
               },
             ]} />
         )}
@@ -118,11 +136,17 @@ export function Inbox({ params, go }) {
               <span class="faint" style={{ fontSize: 12 }}>{relTime(c.createdAt)}</span>
             </header>
             <p>{local(c, 'summary')}</p>
-            <p class="faint" style={{ fontSize: 12 }}>{t('目前檔案保留這台的版本，對方的版本暫存在衝突區，Claude 不會讀到衝突標記。')}</p>
+            {c.choices
+              ? <p class="faint" style={{ fontSize: 12 }}>{t(c.view === 'legacy' ? LEGACY_NOTE : CHOICE_NOTE)}</p>
+              : c.by === 'heal'
+                ? <p class="faint" style={{ fontSize: 12 }}>{t('這筆是同步自動修復時留下的：這台的版本疑似含有金鑰，所以沒有同步；這裡保存的是另一台電腦的版本（這台的版本顯示時已遮蔽金鑰，原檔仍在這台電腦）。')}</p>
+                : <p class="faint" style={{ fontSize: 12 }}>{t('目前檔案保留這台的版本，對方的版本暫存在衝突區，Claude 不會讀到衝突標記。')}</p>}
             <footer>
               <button class="btn primary sm" onClick={() => setOpen({ kind: 'conflict', item: c })}><IconMerge />{t('比對並決定')}</button>
-              <AskClaudeButton cls="btn sm ghost" label={t('交給 Claude 合併')} title={t('交給 Claude 合併：{name}', { name: (c.ref || c.id).split('/').pop() })} command={`/engram:inbox ${c.id}`}
-                intro={t('Claude 會比對兩台電腦的版本與修改前的共同版本，說明兩邊各改了什麼，提出合併後的內容讓你確認。')} />
+              {c.by !== 'heal' && !c.choices && (
+                <AskClaudeButton cls="btn sm ghost" label={t('交給 Claude 合併')} title={t('交給 Claude 合併：{name}', { name: (c.ref || c.id).split('/').pop() })} command={`/engram:inbox ${c.id}`}
+                  intro={t('Claude 會比對兩台電腦的版本與修改前的共同版本，說明兩邊各改了什麼，提出合併後的內容讓你確認。')} />
+              )}
             </footer>
           </article>
         ))}
@@ -156,7 +180,7 @@ export function Inbox({ params, go }) {
       {open?.kind === 'merge' && <MergeDialog f={open.item} onClose={() => setOpen(null)} />}
       {open?.kind === 'secret' && <SecretDialog f={open.item} onClose={() => setOpen(null)} />}
       {open?.kind === 'guide' && <GuideDialog f={open.item} guide={open.guide} onClose={() => setOpen(null)} />}
-      {open?.kind === 'review' && <ReviewDialog go={go} onClose={() => { setOpen(null); data.reload(); }} />}
+      {open?.kind === 'review' && <ReviewDialog go={go} onClose={() => { setOpen(null); data.reload(); if (params.review) go('inbox', {}, true); }} />}
 
       {open?.kind === 'confirm' && (
         <ConfirmDialog title={t('{label}？', { label: local(open.fix, 'label') })} desc={t(CONFIRM[open.fix.action])} confirmLabel={local(open.fix, 'label')}
@@ -177,13 +201,22 @@ function ConflictDialog({ c, onClose }) {
   const edited = body !== c.ours;
   useDirty(edited, t('衝突的合併結果'));
   const name = (c.ref || c.id).split('/').pop();
+  const { status } = useApp();
+  // 覆蓋這台的原檔之前，後端先把它備份到 local/ 底下（回傳相對於 local/ 的位置）：換成完整路徑顯示
+  const backupPath = (rel) => {
+    const vault = status?.vault?.path || '';
+    const sep = vault.includes('\\') ? '\\' : '/';
+    return vault ? `${vault.replace(/[\\/]vault$/i, '')}${sep}local${sep}${String(rel).split('/').join(sep)}` : `local/${rel}`;
+  };
   const resolve = async (choice) => {
     try {
       const label = { ours: t('已保留這台的版本'), theirs: t('已改用對方的版本'), both: t('兩個版本都已保留'), manual: t('已儲存合併結果') }[choice];
-      await act(() => api.resolveConflict(c.id, choice, choice === 'manual' ? body : undefined), label, { rethrow: true });
+      // 設定檔的衝突：後端說明實際改了什麼（沒改也會說明），照目前的語言顯示
+      await act(() => api.resolveConflict(c.id, choice, choice === 'manual' ? body : undefined), (res) => (res?.message ? local(res, 'message') : res?.backup ? t('{label}；這台原本的檔案備份在 {path}', { label, path: backupPath(res.backup) }) : label), { rethrow: true });
       onClose();
     } catch (e) { setErr(e); }
   };
+  const healNote = c.by === 'heal' && <Banner tone="info" title={t('同步自動修復留下的衝突')}>{t('這台的版本疑似含有金鑰，所以沒有同步；另一台電腦也改了這個檔案，這裡保存的是它的版本。畫面上這台的版本已遮蔽金鑰，原檔仍在這台電腦；改用對方的版本之前，原檔會先備份。')}</Banner>;
   const other = c.otherMachine || t('另一台');
   if (c.kind === 'modify-delete') {
     return (
@@ -192,6 +225,7 @@ function ConflictDialog({ c, onClose }) {
         <button class="btn primary" onClick={() => resolve('ours')}>{t('保留這筆記憶')}</button>
       </>}>
         <ErrorBanner error={err} />
+        {healNote}
         <p class="muted" style={{ fontSize: 13 }}>{t('一台電腦修改了這筆記憶，另一台把它刪除了。Engram 先保留了修改後的版本：')}</p>
         <Markdown text={c.ours || c.theirs || ''} />
       </Dialog>
@@ -208,6 +242,23 @@ function ConflictDialog({ c, onClose }) {
       </Dialog>
     );
   }
+  if (c.choices) {
+    // 設定檔：只能選其中一邊的值，不能編輯、不能兩個都留（後端也會拒絕）
+    return (
+      <Dialog wide title={t('同步衝突：{name}', { name })} desc={local(c, 'summary')} onClose={onClose}
+        footer={<>
+          <span class="faint" style={{ fontSize: 12, flex: '1 1 260px', alignSelf: 'center' }}>{t(c.view === 'legacy' ? LEGACY_NOTE : CHOICE_NOTE)}</span>
+          {c.choices.includes('theirs') && <button class="btn" onClick={() => resolve('theirs')}>{choiceLabel(c, 'theirs') || t('改用{other}的版本', { other })}</button>}
+          {c.choices.includes('ours') && <button class="btn" onClick={() => resolve('ours')}>{choiceLabel(c, 'ours') || t('保留這台的版本')}</button>}
+        </>}>
+        <ErrorBanner error={err} />
+        <div>
+          <div class="merge-cols"><span>{sideTitle(c, 'ours')}</span><span>{sideTitle(c, 'theirs')}</span></div>
+          <Merge readOnly ours={c.ours} theirs={c.theirs} />
+        </div>
+      </Dialog>
+    );
+  }
   return (
     <Dialog wide dirty={edited} title={t('同步衝突：{name}', { name })} desc={local(c, 'summary')} onClose={onClose}
       footer={<>
@@ -218,6 +269,7 @@ function ConflictDialog({ c, onClose }) {
         <button class="btn primary" disabled={!edited} onClick={() => resolve('manual')}>{t('儲存左邊的合併結果')}</button>
       </>}>
       <ErrorBanner error={err} />
+      {healNote}
       {c.base != null && (
         <div class="seg" role="group" aria-label={t('右邊顯示')}>
           <button aria-pressed={view === 'theirs'} onClick={() => setView('theirs')}>{t('右邊：{other}的版本', { other })}</button>
@@ -374,7 +426,6 @@ function GuideDialog({ f, guide, onClose }) {
   const ref = f.fix?.args?.ref || f.refs?.[0] || '';
   const roots = f.fix?.args?.roots || f.refs || [];
   const prompt = {
-    split: `/engram:inbox ${f.id}`,
     rename: t('請協助把下列中文資料夾改成英文名稱：先確認沒有進行中的 Claude Code 對話，改名後執行 engram bind 重新綁定。資料夾：{roots}', { roots: roots.join(t('、')) }),
   }[guide];
   const [copied, setCopied] = useState(false);

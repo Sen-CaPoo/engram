@@ -19,30 +19,47 @@ import {
 import { computeIndexBudget, indexStats, normalizeProjectIndex } from './normalize.mjs';
 import { resolveHomes } from './paths.mjs';
 import { SearchIndex } from './search.mjs';
-import { sessionContext } from './session.mjs';
+import { sessionContext, writeSessionCache } from './session.mjs';
 import { executeSweep, planSweep, rollbackImport } from './sweep.mjs';
 import { listCollisionRenames, planCollisionRenames, renameCollisions, undoCollisionRenames } from './rename.mjs';
-import { relinkRetired, retireBinding } from './retired.mjs';
-import { confirmDeletions, restoreDeletions, sync } from './sync.mjs';
+import { relinkRetired, rememberLinkRelink, retireBinding } from './retired.mjs';
+import { activeProjects, confirmDeletions, restoreDeletions, sync } from './sync.mjs';
+import { ensureGcConfig, gcStatus, runGc } from './gc.mjs';
 import { listConflicts, resolveConflict } from './conflicts.mjs';
 import { allowJunctionRead, revokeAll, revokeJunctionRead } from './claudesettings.mjs';
 import { addAllow, allowEntries, listAllowed, loadAllow, scanWithAllow } from './secretallow.mjs';
 import { redactSecrets, secretHash } from './secrets.mjs';
 import { guidelines } from './guidelines.mjs';
+import { guardrails } from './guardrails.mjs';
+import { checkRecallSettings, recall, recallSettings, setSharedIndexLayers } from './recall.mjs';
+import { indexCompat } from './indexcompat.mjs';
+import { readSharedSettings } from './sharedsettings.mjs';
 import { parseMemoryFile } from './frontmatter.mjs';
 import { linkGraph, nameIndex, rewriteLinks } from './links.mjs';
-import { loadUsage, localDetail, scanUsage, writeUsageSummary } from './usage.mjs';
-import { baselineRefs, blobSha, blobText, markReviewed, needsBaseline, pendingReviews, pruneReviews, recordBaseline } from './review.mjs';
+import { loadUsage, localDetail, noteSearch, scanUsage, writeUsageSummary } from './usage.mjs';
+import { REVIEW_SOURCES, baselineRefs, blobSha, blobText, markReviewed, needsBaseline, pendingReviews, pruneReviews, recordBaseline, reviewedIndex } from './review.mjs';
 import { cleanupRuns, dreamStatus, ensureReadable, listRuns, markDreamed, prepareDream, readRun, resetDream, runText } from './dream.mjs';
 import { applySuggestions, suggestionsFor } from './coresuggest.mjs';
+import { diffEnv, envFindings, envFingerprint, fixEnv, runEnv } from './envhealth.mjs';
+import { addHolding, adoptHolding, dismissHolding, dismissedFingerprints, getHolding, listHolding, pruneHolding, updateHolding } from './holding.mjs';
+import {
+  applyEnv, approveEnv, cachedEnvPlan, exportEnv, planEnv, readEnvProfile, removeProfilePlugin, removeProfileSkill, runEnvSync, setEnvSkip, setEnvVar, setPluginEnabled, undoAllEnv, undoEnv, unsetEnvVar,
+} from './envsync.mjs';
+import { mergeCandidates, projectLifecycles } from './lifecycle.mjs';
 import {
   allBindingViews, bindingsForPid, commitPaths, ENGINE_VERSION, initVault, listMachineIds, listProjectIds, loadTemplate, machineDir, projectMemoryDir,
-  readBindings, readLocalMachine, readProject, readState, renderTemplate, writeBindings, writeProject,
+  readBindings, readLocalMachine, readProject, readState, renderTemplate, safeMachineLabel, writeBindings, writeProject,
 } from './vault.mjs';
 
 export { E, EngramError, ENGINE_VERSION };
 
 const CORE_RULE_REF = /^core\/rules\/[^/\\:*?"<>|]+\.md$/;
+
+/** 讀取統計裡帶出、列出、命中的次數與「帶出之後被打開」的比例（2.0.0 P6；沒有的欄位視為 0，沒帶出過的比例是 null） */
+function exposureOf(e) {
+  const n = (k) => Number(e?.[k]) || 0;
+  return { recalled: n('recalled'), recallOpened: n('recallOpened'), openRate: n('recalled') ? Math.round((n('recallOpened') / n('recalled')) * 1000) / 1000 : null, searched: n('searched'), guarded: n('guarded') };
+}
 export { mergeDriver } from './mergedriver.mjs';
 
 /**
@@ -106,7 +123,7 @@ export async function open(opts = {}) {
     return out;
   }
 
-  async function projectObject(pid, { bindingsByMid, cache }) {
+  async function projectObject(pid, { bindingsByMid, cache, lifecycles }) {
     const p = await readProject(homes.vault, pid);
     if (!p) return null;
     const memDir = projectMemoryDir(homes.vault, pid);
@@ -126,11 +143,14 @@ export async function open(opts = {}) {
       } catch { /* ignore */ }
     }
     const findings = (cache?.findings ?? []).filter((f) => f.pid === pid).length;
+    // S4：休眠是算出來的狀態（任何電腦都沒有綁定、最近 90 天沒有對話的跡象），不改專案檔；lastActiveAt 只有沒綁定的專案才有
+    const life = lifecycles?.get(pid);
     return {
       pid: p.id, name: p.name, aliases: p.aliases ?? [], remotes: p.remotes ?? [], paths,
       counts: { memories: files.length, findings },
       index: await indexStats(path.join(memDir, 'MEMORY.md')),
       lastActivityAt, archived: !!p.archived, mergedInto: p.mergedInto ?? undefined,
+      dormant: !!life?.dormant, ...(life && life.lastActiveAt !== undefined ? { lastActiveAt: life.lastActiveAt } : {}),
     };
   }
 
@@ -219,6 +239,17 @@ export async function open(opts = {}) {
           // 1.6.0：預設從 US$30 提高到 US$200（品質優先；沒有自己設定過的電腦直接套用新的預設）
           autopilot: s.autopilot === 'on' ? 'on' : 'off',
           autopilotBudget: Number.isFinite(s.autopilotBudget) && s.autopilotBudget > 0 ? s.autopilotBudget : 200,
+          // 2.0.0：環境健檢（每天檢查這台電腦的 Claude Code 環境；on｜off）
+          envHealth: s.envHealth === 'off' ? 'off' : 'on',
+          // 2.0.0 WP4b：護欄。block（預設）：把握高的指令直接擋下、把握低的附提醒；hint：全部只提醒；off：不比對
+          guardrails: ['block', 'hint', 'off'].includes(s.guardrails) ? s.guardrails : 'block',
+          // 2.0.0 WP8：環境設定同步。report（預設）：每天只算出 plan；auto：沒有對話進行中時自動套用；off：不做
+          envSync: ['report', 'auto', 'off'].includes(s.envSync) ? s.envSync : 'report',
+          // 2.0.0 WP7：自動更新。另一台電腦用 engram update 發佈新版（vault/release.json）後，這台的常駐程式每天檢查一次並更新；off：不自動更新
+          autoUpdate: s.autoUpdate === 'off' ? 'off' : 'on',
+          // 2.0.0 WP4a：情境召回（這台；送出訊息時附上相關的記憶；on｜off）與索引分層（所有電腦共用，存在 vault/settings.json；
+          // observe：照舊產生索引、只算出切換後的數字｜on｜off）。索引分層是 on 時情境召回強制開啟（recallForced: true）
+          ...recallSettings(s, await readSharedSettings(homes.vault)),
         };
       },
       async set(patch = {}) {
@@ -227,6 +258,17 @@ export async function open(opts = {}) {
         if (patch.reviewWrites !== undefined) invariant(['on', 'off'].includes(patch.reviewWrites), "reviewWrites 必須是 'on' 或 'off'", undefined, { message: "reviewWrites must be 'on' or 'off'" });
         if (patch.autopilot !== undefined) invariant(['on', 'off'].includes(patch.autopilot), "autopilot 必須是 'on' 或 'off'", undefined, { message: "autopilot must be 'on' or 'off'" });
         if (patch.autopilotBudget !== undefined) invariant(Number.isFinite(patch.autopilotBudget) && patch.autopilotBudget >= 1 && patch.autopilotBudget <= 1000, 'autopilotBudget 必須是 1 到 1000 的數字（美元）', undefined, { message: 'autopilotBudget must be a number from 1 to 1000 (US dollars)' });
+        if (patch.envHealth !== undefined) invariant(['on', 'off'].includes(patch.envHealth), "envHealth 必須是 'on' 或 'off'", undefined, { message: "envHealth must be 'on' or 'off'" });
+        if (patch.guardrails !== undefined) invariant(['block', 'hint', 'off'].includes(patch.guardrails), "guardrails 必須是 'block'、'hint' 或 'off'", undefined, { message: "guardrails must be 'block', 'hint' or 'off'" });
+        if (patch.envSync !== undefined) invariant(['report', 'auto', 'off'].includes(patch.envSync), "envSync 必須是 'report'、'auto' 或 'off'", undefined, { message: "envSync must be 'report', 'auto' or 'off'" });
+        if (patch.autoUpdate !== undefined) invariant(['on', 'off'].includes(patch.autoUpdate), "autoUpdate 必須是 'on' 或 'off'", undefined, { message: "autoUpdate must be 'on' or 'off'" });
+        // 2.0.0 WP4a：情境召回（這台）與索引分層（所有電腦共用）；兩個一起改時先合併再檢查。索引分層寫進記憶庫並立刻重建索引，不寫本機設定
+        if (patch.recall !== undefined || patch.indexLayers !== undefined) await checkRecallSettings(ctx, patch);
+        if (patch.indexLayers !== undefined) {
+          await setSharedIndexLayers(ctx, patch.indexLayers);
+          const { indexLayers: _shared, ...rest } = patch;
+          patch = rest;
+        }
         const p = path.join(homes.local, 'settings.json');
         const next = { ...((await readJson(p, null)) ?? {}), ...patch };
         await writeJson(p, next);
@@ -278,6 +320,8 @@ export async function open(opts = {}) {
         },
         inbox: { conflicts, findings: sev, checkedAt: cache?.at ?? null },
         devices,
+        // 索引是不是相容模式（有舊版電腦還在用，共用的索引暫時照 1.6.0 的方式產生）：active、since、machines（哪幾台）、message／en.message
+        indexCompat: await indexCompat(homes.vault, { selfMid: ctx.mid }),
       };
     },
 
@@ -285,18 +329,21 @@ export async function open(opts = {}) {
     activity: (o) => activity(ctx, o),
 
     projects: {
-      async list({ includeArchived = true } = {}) {
+      /** includeDormant：false 時不含休眠的專案（S4；介面預設收合、自動駕駛不處理） */
+      async list({ includeArchived = true, includeDormant = true } = {}) {
         const bindingsByMid = await allBindings();
         const cache = await healthCache();
+        const lifecycles = await projectLifecycles(ctx, { bindingsByMid });
         const out = [];
         for (const pid of await listProjectIds(homes.vault)) {
-          const p = await projectObject(pid, { bindingsByMid, cache });
-          if (p && !p.mergedInto && (includeArchived || !p.archived)) out.push(p);
+          const p = await projectObject(pid, { bindingsByMid, cache, lifecycles });
+          if (p && !p.mergedInto && (includeArchived || !p.archived) && (includeDormant || !p.dormant)) out.push(p);
         }
         return out.sort((a, b) => String(b.lastActivityAt ?? '').localeCompare(String(a.lastActivityAt ?? '')));
       },
       async get(pid) {
-        const p = await projectObject(pid, { bindingsByMid: await allBindings(), cache: await healthCache() });
+        const bindingsByMid = await allBindings();
+        const p = await projectObject(pid, { bindingsByMid, cache: await healthCache(), lifecycles: await projectLifecycles(ctx, { bindingsByMid, pids: [pid] }) });
         if (!p) throw new EngramError(E.NOT_FOUND, `找不到專案：${pid}`).withEn(`Project not found: ${pid}`);
         return p;
       },
@@ -335,8 +382,10 @@ export async function open(opts = {}) {
           for (const [enc, b] of Object.entries(bindings)) if (b.pid === fromPid) { bindings[enc] = { ...b, pid: toPid }; relink.push(b.path); }
           await writeBindings(homes.vault, ctx.mid, bindings);
           // 1.4.1：已移除的舊綁定（對話回顧用）也改到合併後的專案
-          await relinkRetired(ctx.local, fromPid, toPid);
+          const relinkedRetired = await relinkRetired(ctx.local, fromPid, toPid);
           const commit = await commitPaths(homes.vault, [`projects/${fromPid}`, `projects/${toPid}`, `machines/${ctx.mid}/bindings.json`], `link ${fromPid} → ${toPid}`, { action: 'link', mid: ctx.mid });
+          // 舊綁定不在 git 裡：記下這次改寫了哪幾筆，還原這次合併時才改得回去
+          if (commit) await rememberLinkRelink(ctx.local, commit.sha, { from: fromPid, to: toPid, entries: relinkedRetired });
           for (const p of relink) if (exists(p)) await bind(ctx, p, { pid: toPid }, { mode: 'safe', force: true }).catch(() => {});
           return { ok: true, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
         });
@@ -398,10 +447,10 @@ export async function open(opts = {}) {
       },
       create: (input) => createMemory(ctx, input),
       write: (ref, input) => writeMemory(ctx, ref, input),
-      move: (ref, scope, o) => moveMemory(ctx, ref, scope, { reviewed: !!o?.reviewed }),
-      merge: (refs, o) => mergeMemories(ctx, refs, { into: o?.into, text: o?.text ?? o?.body, reviewed: !!o?.reviewed }),
+      move: (ref, scope, o) => moveMemory(ctx, ref, scope, { reviewed: o?.reviewed || false }),
+      merge: (refs, o) => mergeMemories(ctx, refs, { into: o?.into, text: o?.text ?? o?.body, reviewed: o?.reviewed || false }),
       remove: (ref) => removeMemory(ctx, ref),
-      restore: (ref, o) => restoreMemory(ctx, ref, { rev: o?.rev, reviewed: !!o?.reviewed }),
+      restore: (ref, o) => restoreMemory(ctx, ref, { rev: o?.rev, reviewed: o?.reviewed || false }),
     },
 
     /** 對話回顧（1.4.0，/engram:dream）：挑出還沒回顧的對話、轉成文字；分析由使用者的 Claude Code 進行。 */
@@ -435,7 +484,10 @@ export async function open(opts = {}) {
           return { ...r, written: true, commit: commitInfo ?? undefined };
         });
       },
-      /** 單一記憶：所有電腦合計（近 90 天）與這台電腦每天的次數 */
+      /**
+       * 單一記憶：所有電腦合計（近 90 天）與這台電腦每天的次數。
+       * 2.0.0 P6：recalled（情境召回帶出）、recallOpened（帶出之後被打開）、openRate（比例，沒帶出過是 null）、searched（engram search 列出）、guarded（護欄命中）
+       */
       async get(ref) {
         const u = await loadUsage(homes.vault);
         const e = u.refs.get(ref) ?? null;
@@ -446,9 +498,55 @@ export async function open(opts = {}) {
           last: e?.last ?? null,
           projects: e?.projects ?? {},
           byMachine: e?.byMachine ?? {},
+          ...exposureOf(e),
           daily: await localDetail(ctx, ref),
         };
       },
+      /** 所有記憶、所有電腦合計（近 90 天）的帶出、列出、命中次數與帶出之後被打開的比例（2.0.0 P6） */
+      async totals() {
+        const u = await loadUsage(homes.vault);
+        const sum = { recalled: 0, recallOpened: 0, searched: 0, guarded: 0 };
+        for (const e of u.refs.values()) for (const k of Object.keys(sum)) sum[k] += e[k] ?? 0;
+        return exposureOf(sum);
+      },
+      /** engram search 列出的記憶記在本機（2.0.0 P6）；失敗不影響搜尋 */
+      noteSearch: (refs) => noteSearch(homes.local, refs).catch(() => {}),
+    },
+
+    /**
+     * 環境健檢與兩台差異（2.0.0 R1、R5）：只讀，只取名稱、版本、雜湊、數量與耗時。
+     * fingerprint：這台電腦的環境指紋（快取 36 小時；refresh: true 重新掃描）；findings：單機發現 H25–H33（健康檢查讀的是它的快取）；
+     * diff：所有電腦同步來的指紋比較；fix(id)：修正一張可修的卡片（先備份）；run：每日的 env 工作（掃描、同步指紋、自動修）。
+     */
+    env: {
+      fingerprint: (o) => envFingerprint(ctx, o),
+      findings: (o) => envFindings(ctx, o),
+      diff: () => diffEnv(ctx),
+      fix: (id, o) => fixEnv(ctx, id, o),
+      run: (o) => runEnv(ctx, o),
+
+      // 2.0.0 WP8：環境設定同步與瘦身（vault/env/profile.json 與技能）。
+      // profile：設定檔與這台的覆寫（重新驗證後）；set(key, value)：寫進 profile.env；export({ skills })：把這台白名單內的設定、啟用中的外掛清單與技能寫進 profile；
+      // plan：套用後這台會改什麼（只讀）；apply：合併寫進 ~/.claude（先備份）；undo：還原最近一次；setPlugin(name, enabled)：停用或啟用外掛；
+      // syncRun：每日 env 工作的一步（report 只存 plan 快取，auto 才自動套用）；cachedPlan：每日存下的 plan。
+      profile: () => readEnvProfile(ctx),
+      set: (key, value, o) => setEnvVar(ctx, key, value, o),
+      // 移除（不必手改 JSON）：unset(鍵｜'setting:<鍵>')、removeSkill(名稱)（連 vault/env/skills/<名稱>/ 一起刪，不動已安裝的技能）、removePlugin(名稱)；
+      // skip(項目)、unskip(項目)：寫這台電腦的 env-overrides.json 的 skip。profile 移除後，已套用的值下一次 plan 會列為「這台多出來」，apply 還原
+      unset: (name) => unsetEnvVar(ctx, name),
+      removeSkill: (name) => removeProfileSkill(ctx, name),
+      removePlugin: (name) => removeProfilePlugin(ctx, name),
+      skip: (item) => setEnvSkip(ctx, item, true),
+      unskip: (item) => setEnvSkip(ctx, item, false),
+      export: (o) => exportEnv(ctx, o),
+      plan: (o) => planEnv(ctx, o),
+      apply: (o) => applyEnv(ctx, o),
+      // approve(項目?)：核可 plan 裡等待這台核可的項目（沒給就是全部；項目可以帶 { item, hash } 綁定 plan 顯示的內容）。沒核可過的環境變數、設定與技能不會被套用（auto 與手動都一樣）
+      approve: (items) => approveEnv(ctx, items),
+      undo: () => undoEnv(ctx),
+      setPlugin: (name, enabled) => setPluginEnabled(ctx, name, enabled),
+      cachedPlan: () => cachedEnvPlan(ctx),
+      syncRun: (o) => runEnvSync(ctx, o),
     },
 
     async search(query, { limit = 20 } = {}) {
@@ -465,7 +563,9 @@ export async function open(opts = {}) {
 
     async normalize() {
       return ctx.locked('normalize', async () => {
-        for (const pid of await listProjectIds(homes.vault)) await normalizeProjectIndex(projectMemoryDir(homes.vault, pid), { skipRecentMs: 10_000 });
+        // 比照同步：進行中的對話只附加、不精簡不省略（使用者按「立即整理索引」時通常就開著 Claude Code）
+        const active = await activeProjects(ctx);
+        for (const pid of await listProjectIds(homes.vault)) await normalizeProjectIndex(projectMemoryDir(homes.vault, pid), { appendOnly: active.has(pid), skipRecentMs: 10_000 });
         await refreshIndex(ctx, { kind: 'global' });
         await refreshIndex(ctx, { kind: 'machine', mid: ctx.mid });
         const commit = await commitIndexes('normalize indexes');
@@ -473,9 +573,10 @@ export async function open(opts = {}) {
       });
     },
 
-    sweepLegacy: async ({ dryRun = true, plan, encoded, bindSources } = {}) => {
+    // by：收進全域或單機的記憶記為確認過的來源（執行時必填，第四輪審查 F-02）
+    sweepLegacy: async ({ dryRun = true, plan, encoded, bindSources, by } = {}) => {
       if (dryRun) return planSweep(ctx, { encoded });
-      return executeSweep(ctx, plan ?? await planSweep(ctx, { encoded }), { bindSources });
+      return executeSweep(ctx, plan ?? await planSweep(ctx, { encoded }), { bindSources, by });
     },
     /** 一鍵還原一次匯入（restorePoint 為 sweepLegacy 執行結果中的 tag）。 */
     rollbackImport: (tag) => rollbackImport(ctx, tag),
@@ -483,6 +584,16 @@ export async function open(opts = {}) {
     indexBudget: () => computeIndexBudget(homes.vault, ctx.mid),
 
     sync: (o) => sync(ctx, o),
+
+    /**
+     * 記憶庫打包（S3）：git 的自動打包（gc.auto）關掉，由常駐程式定期執行。run 不持有寫入鎖，可以用 signal 中止。
+     * ensureConfig 給常駐程式啟動時補設既有記憶庫的 gc.auto（不放在 open：hook 的冷啟動路徑要保持輕量）。
+     */
+    gc: {
+      status: () => gcStatus(ctx),
+      run: (o) => runGc(ctx, o),
+      ensureConfig: () => ensureGcConfig(homes.vault),
+    },
 
     /**
      * 待你確認的寫入（1.4.0，H23）：Claude 改了每次都會載入的內容（全域、這台的單機記憶、核心準則），使用者還沒看過。
@@ -494,7 +605,7 @@ export async function open(opts = {}) {
         if (!(await needsBaseline(ctx))) return { ok: true, skipped: true };
         return ctx.locked('review.baseline', async () => {
           if (!(await needsBaseline(ctx))) return { ok: true, skipped: true };
-          const rv = await markReviewed(ctx, await baselineRefs(ctx));
+          const rv = await markReviewed(ctx, await baselineRefs(ctx), { by: 'baseline' });
           const commit = rv.length ? await commitPaths(homes.vault, rv, 'review baseline', { action: 'review', mid: ctx.mid }) : null;
           await recordBaseline(ctx);
           return { ok: true, commit: commit ?? undefined };
@@ -534,9 +645,13 @@ export async function open(opts = {}) {
         }
         return out;
       },
-      /** 確認：items 帶當時看到的 sha，內容剛好又變了的不算（回傳在 stale） */
-      async confirm(items) {
+      /**
+       * 確認：items 帶當時看到的 sha，內容剛好又變了的不算（回傳在 stale）。
+       * by（2.0.0）：確認的來源，預設 user（介面、CLI）；自動駕駛代為確認傳 autopilot，在對話找到使用者的要求而相符的傳 request
+       */
+      async confirm(items, { by = 'user' } = {}) {
         invariant(Array.isArray(items) && items.length, '沒有要確認的項目', undefined, { message: 'Nothing to confirm' });
+        invariant(REVIEW_SOURCES.includes(by), `不認得的確認來源：${String(by).slice(0, 20)}`, undefined, { message: `Unknown review source: ${String(by).slice(0, 20)}` });
         return ctx.locked('review.confirm', async () => {
           const ok = [];
           const stale = [];
@@ -545,7 +660,7 @@ export async function open(opts = {}) {
             const raw = /^(global|machines|core)\//.test(ref) && !ref.split('/').includes('..') ? await readText(path.join(homes.vault, ...ref.split('/'))) : null;
             if (raw !== null && blobSha(raw) === String(it?.sha ?? '')) ok.push(ref); else stale.push(ref);
           }
-          const rv = await markReviewed(ctx, ok);
+          const rv = await markReviewed(ctx, ok, { by });
           const commit = rv.length ? await commitPaths(homes.vault, rv, `review ${ok.length}`, { action: 'review', refs: ok, mid: ctx.mid }) : null;
           return { ok: true, confirmed: ok, stale, commit: commit ?? undefined };
         });
@@ -561,17 +676,38 @@ export async function open(opts = {}) {
         }
         const prev = await blobText(homes.vault, p.previous);
         invariant(prev !== null, '找不到確認過的版本', '請改用編輯或歷史還原', { message: 'The reviewed version could not be found', hint: 'Edit it, or restore it from its history' });
-        if (ref === 'core/CORE.md') return eg.core.write(prev, { reviewed: true });
+        // 退回到的版本原本是誰確認的就延續誰（2.0.0）：只有自動駕駛代為確認過的版本，退回之後也只算自動駕駛確認
+        const by = (await reviewedIndex(homes.vault)).get(ref)?.trusted.has(p.previous) ? 'user' : 'autopilot';
+        if (ref === 'core/CORE.md') return eg.core.write(prev, { reviewed: by });
         if (CORE_RULE_REF.test(ref)) {
           return ctx.locked('review.revert', async () => {
             await safeWrite(path.join(homes.vault, ...ref.split('/')), prev);
-            const rv = await markReviewed(ctx, [ref]);
+            const rv = await markReviewed(ctx, [ref], { by });
             const commit = await commitPaths(homes.vault, [ref, ...rv], `edit ${ref}`, { action: 'edit', refs: [ref], mid: ctx.mid });
             return { ok: true, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
           });
         }
-        return writeMemory(ctx, ref, { text: prev, reviewed: true });
+        return writeMemory(ctx, ref, { text: prev, reviewed: by });
       },
+    },
+
+    /**
+     * 保留區（2.0.0）：自動駕駛沒有執行的提案（審核員不同意、這台這一輪不能處理的範圍、退回的版本），連同完整內容。
+     * 不是記憶：不進索引、搜尋與健康檢查。內容疑似含金鑰的只留在這台電腦（local/autopilot/holding）。
+     */
+    holding: {
+      add: (item) => addHolding(ctx, item),
+      list: (o) => listHolding(ctx, o),
+      get: (id) => getHolding(ctx, id),
+      update: (id, patch) => updateHolding(ctx, id, patch),
+      /** 忽略：不再自動重審，留著當紀錄 */
+      dismiss: (id) => dismissHolding(ctx, id),
+      /** 採用：交給整理計畫流程寫進記憶（可以在記憶整理頁或用 engram undo 復原） */
+      adopt: (id, o) => adoptHolding(eg, ctx, id, o),
+      /** 清理：已採用或已忽略超過 90 天的項目刪掉（自動駕駛每輪開始時呼叫） */
+      prune: (o) => pruneHolding(ctx, o),
+      /** 90 天內使用者標成「不需要」的提案指紋（第二輪審查 R6：自動駕駛遇到同樣的提案直接略過） */
+      dismissedFingerprints: (o) => dismissedFingerprints(ctx, o),
     },
 
     async health({ includeDismissed = false } = {}) {
@@ -668,8 +804,11 @@ export async function open(opts = {}) {
       },
     },
 
-    /** reviewed：目前沒有呼叫端帶 true。收件匣的一鍵動作（管理介面或 /engram:inbox）不代表使用者讀過全文，搬移後的內容不會被記為確認過 */
-    async apply(fix, { reviewed = false } = {}) {
+    /**
+     * reviewed：目前沒有呼叫端帶 true。收件匣的一鍵動作（管理介面或 /engram:inbox）不代表使用者讀過全文，搬移後的內容不會被記為確認過。
+     * by：這次是誰做的（user：管理介面、終端機；claude：在 Claude Code 裡；autopilot），一鍵收編（sweep）交給匯入時要明確帶（第四輪審查 F-02）
+     */
+    async apply(fix, { reviewed = false, by } = {}) {
       invariant(fix && fix.action, '缺少 fix.action', undefined, { message: 'Missing fix.action' });
       const a = fix.args ?? {};
       // R-45：args 可能來自介面的請求，路徑類參數一律對照引擎自己的紀錄，不接受任意路徑
@@ -707,7 +846,7 @@ export async function open(opts = {}) {
             invariant(cand, `「${a.pid}」不是這個資料夾的候選專案`, '重新整理收件匣', { message: `"${a.pid}" is not a candidate project for this folder`, hint: 'Refresh the inbox' });
             src.target = { pid: a.pid, name: cand.name, isNew: false, archived: false };
           }
-          return eg.sweepLegacy({ dryRun: false, plan });
+          return eg.sweepLegacy({ dryRun: false, plan, by }); // 一律在專案範圍，不會留下確認紀錄；by 只是讓來源明確
         }
         case 'allow-read': {
           // 只允許「確實存在的 junction 綁定」的記憶資料夾；可傳 encoded（建議）或舊的 path
@@ -750,6 +889,13 @@ export async function open(opts = {}) {
           const r = rewriteLinks(mem.raw, a.from.trim(), fix.action === 'relink' ? a.to.trim() : null);
           invariant(r.count > 0, `「${a.ref}」裡已經沒有 [[${a.from}]] 連結`, '重新整理收件匣', { message: `"${a.ref}" no longer has a [[${a.from}]] link`, hint: 'Refresh the inbox' });
           return writeMemory(ctx, a.ref, { text: r.text, carryReviewed: true });
+        }
+        case 'env-fix': return eg.env.fix(String(a.id ?? '')); // H25–H33（環境健檢）：id 在 fixEnv 裡對照重新算出的發現
+        case 'link-projects': {
+          // H34（S4）：疑似同一個專案的多個代號。只接受引擎自己算出來的建議（from、to 都要對得上），不接受任意的專案代號
+          const cand = (await mergeCandidates(ctx)).find((c) => c.from === a.from && c.to === a.to);
+          invariant(cand, '這兩個專案目前不需要合併，請重新整理收件匣', undefined, { message: 'These two projects do not need to be merged right now. Refresh the inbox' });
+          return eg.projects.link(cand.from, cand.to);
         }
         case 'restore-deletions': return restoreDeletions(ctx, a.pid);
         case 'confirm-deletions': return confirmDeletions(ctx, a.pid);
@@ -799,7 +945,7 @@ export async function open(opts = {}) {
     },
 
     conflicts: {
-      list: () => listConflicts(homes.vault),
+      list: () => listConflicts(homes.vault, ctx.mid),
       resolve: (id, o) => resolveConflict(ctx, id, o),
     },
 
@@ -833,12 +979,61 @@ export async function open(opts = {}) {
           const allowed = await assertNoNewSecrets(homes.local, 'core/CORE.md', markdown.replace(/\r\n/g, '\n'), { before: await readText(path.join(homes.vault, 'core', 'CORE.md')), allowSecrets, what: '核心準則' });
           const before = await readText(path.join(homes.vault, 'core', 'CORE.md'));
           await safeWrite(path.join(homes.vault, 'core', 'CORE.md'), markdown.replace(/\r\n/g, '\n'));
-          const rv = reviewed ? await markReviewed(ctx, ['core/CORE.md'])
+          const rv = reviewed ? await markReviewed(ctx, ['core/CORE.md'], { by: typeof reviewed === 'string' ? reviewed : 'user' })
             : carryReviewed ? await (await import('./review.mjs')).carryReviewed(ctx, new Map([['core/CORE.md', before]])) : [];
           const commit = await commitPaths(homes.vault, ['core/CORE.md', ...allowed, ...rv], 'edit core/CORE.md', { action: 'edit', refs: ['core/CORE.md'], mid: ctx.mid });
           return { ok: true, commit: commit ?? undefined, undo: commit ? { sha: commit.sha } : undefined };
         });
       },
+    },
+
+    /**
+     * 護欄（2.0.0 WP4b）：把「踩過的坑」編成規則，Claude Code 裡的 mod 在 Bash／PowerShell 指令送出前比對。
+     * list／status：規則（與近 30 天的命中數、誤擋數）；test：測試一個指令；disable／enable：在這台電腦停用或恢復一條規則。
+     */
+    guardrails: guardrails(ctx),
+
+    /**
+     * 情境召回（2.0.0 WP4a）：rebuild 重建 local/cache/recall.json（記憶沒變就不重建，常駐程式在存檔、同步之後呼叫）；
+     * usage 讀近 N 天的帶出紀錄；status 是設定與索引分層的並行觀察數字（GET /api/recall）。
+     * 使用者送出訊息時的計分在 mod（plugin/hooks/recall.ts）與指令型後備裡做。
+     */
+    recall: recall(ctx),
+
+    /**
+     * 開場 hook 的快速路徑用的快取（2.0.0 WP4a S5）：write 寫 local/cache/session/state.json，常駐程式在存檔、同步之後與每隔幾分鐘呼叫。
+     * hook 用 core/sessioncache.mjs 讀它（不載入引擎）；不能用時退回 sessionContext。
+     */
+    sessionCache: { write: (o) => writeSessionCache(ctx, o) },
+
+    // ───────── 2.0.0 WP9：自動駕駛的偏好、記憶畢業與每週摘要（自動駕駛的模組用到時才載入）─────────
+
+    autopilot: {
+      /**
+       * 偏好區塊目前採用與還沒採用的項目：{ used: [{ ref, name, description, type, source, version?, omitted? }], pending: [{ ref, sha, name, description, type, source }] }。
+       * 還沒採用的項目（只有自動駕駛確認過或完全沒確認過）可以用 eg.review.confirm([{ ref, sha }]) 由使用者確認。
+       */
+      preferences: async () => (await import('../autopilot/prompts.mjs')).preferenceItems(eg),
+    },
+
+    /**
+     * 每週摘要（Q8）：local/autopilot/digest/<週一日期>.json，保留最近 12 週。
+     * get(week?)：一週的摘要（省略時是最近一週）加上 previous（更早有摘要的週）；list()：有摘要的週（新的在前）；
+     * refresh({ notifier })：常駐程式每天與每輪自動駕駛結束時呼叫，上一週剛結束時產生摘要，自動駕駛開啟時通知一次。
+     */
+    /**
+     * 記憶畢業用的環境設定檔寫入（P5）：add({ area: 'env'|'setting', key, value }) 走 env set 的同一組檢查但不核可
+     * （每台的 plan 都顯示「等待這台核可」）；remove 只在值還是當初加的那個時拿掉（復原用）。
+     */
+    envEntries: {
+      add: async (entry) => (await import('./envsync.mjs')).addProfileEntry(ctx, entry),
+      remove: async (entry) => (await import('./envsync.mjs')).removeProfileEntry(ctx, entry),
+    },
+
+    digest: {
+      get: async (week, o) => (await import('../autopilot/digest.mjs')).getDigest(eg, week, o),
+      list: async () => (await import('../autopilot/digest.mjs')).listDigests(homes.local),
+      refresh: async (o) => (await import('../autopilot/digest.mjs')).refreshDigest(eg, o),
     },
 
     /** 這台電腦 ~/.claude/CLAUDE.md 要附加的管理區塊（安裝程式使用）。 */
@@ -891,7 +1086,8 @@ export async function open(opts = {}) {
         const lines = [];
         for (const mid of await listMachineIds(homes.vault)) {
           const m = await readJson(path.join(machineDir(homes.vault, mid), 'machine.json'), {});
-          lines.push(`- ${m.label ?? mid}（${mid}）`);
+          // 第四輪審查 F-08：別台的名稱是同步來的，只接受單行、長度與字元有限制的名稱（不會在 CORE.md 變成匯入或標題），否則用電腦代號
+          lines.push(`- ${safeMachineLabel(m.label) ?? mid}（${mid}）`);
         }
         const re = /(<!-- engram:environments:begin -->\n)([\s\S]*?)(<!-- engram:environments:end -->)/;
         if (!re.test(text)) return { ok: false };
@@ -919,9 +1115,20 @@ export async function open(opts = {}) {
       for (const b of Object.values(bindings)) {
         try { await unbind(ctx, b.path); released.push(b.path); } catch { /* 已不存在的資料夾略過 */ }
       }
+      // 2.0.0 WP8：環境設定同步套用過的設定與技能先還原（要在 revokeAll 之前：cleanupPeriodDays 之類 Engram 自己設過的鍵由 revokeAll 收尾）
+      // 例外不吞掉：沒還原的項目與原因（envKept）、出錯（envError）、排版不標準時重寫前的備份（envBackup）都回傳，解除安裝程式要讓使用者看到；revokeAll 照常執行
+      let env = { restored: 0, kept: [] };
+      let envError = null;
+      try { env = await undoAllEnv(ctx); } catch (err) { envError = { code: err?.code ?? 'E_UNKNOWN', message: String(err?.message ?? err).slice(0, 300), ...(err?.en ? { en: err.en } : {}) }; }
       await revokeAll(homes);
-      const after = ((await readJson(path.join(homes.local, 'install-manifest.json'), null))?.additionalDirectories ?? []).length;
-      return { ok: true, released, revokedPaths: before - after };
+      const after =((await readJson(path.join(homes.local, 'install-manifest.json'), null))?.additionalDirectories ?? []).length;
+      return {
+        ok: true, released, revokedPaths: before - after,
+        ...(env.restored ? { envRestored: env.restored } : {}),
+        ...(env.kept.length ? { envKept: env.kept } : {}),
+        ...(env.settingsBackup ? { envBackup: env.settingsBackup } : {}),
+        ...(env.error || envError ? { envError: env.error ?? envError } : {}),
+      };
     },
 
     /** 內部用（測試與常駐程式）。 */

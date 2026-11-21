@@ -49,14 +49,51 @@ function hasTranscripts(claudeHome, encoded) {
   } catch { return true; }
 }
 
-/** 專案合併（projects.link）：退役紀錄跟著改到合併後的專案，舊對話才不會變成沒有專案認領 */
+/**
+ * 專案合併（projects.link）：退役紀錄跟著改到合併後的專案，舊對話才不會變成沒有專案認領。
+ * @returns {Promise<{ key: string, encoded: string, boundAt: string|null, retiredAt: string }[]>} 被改寫的那幾筆（還原合併時用 undoLinkRelink 改回）
+ */
 export async function relinkRetired(local, fromPid, toPid) {
   const list = await readRetired(local);
-  if (!list.some((b) => b.pid === fromPid)) return 0;
-  let n = 0;
-  const next = list.map((b) => (b.pid === fromPid ? (n++, { ...b, pid: toPid }) : b));
-  await writeJson(fileOf(local), { v: 1, bindings: next });
-  return n;
+  const changed = list.filter((b) => b.pid === fromPid);
+  if (!changed.length) return [];
+  await writeJson(fileOf(local), { v: 1, bindings: list.map((b) => (b.pid === fromPid ? { ...b, pid: toPid } : b)) });
+  return changed.map((b) => ({ key: b.key, encoded: b.encoded, boundAt: b.boundAt ?? null, retiredAt: b.retiredAt }));
+}
+
+// 合併（link）改寫的舊綁定記在 local/link-retired.json（link 的 commit sha → 當時改了哪幾筆）：舊綁定不在 git 裡，git revert 還原不了，
+// 還原那次合併時要靠這份紀錄改回原專案。只留最近 50 次合併。
+const linkLogFile = (local) => path.join(local, 'link-retired.json');
+const LINK_LOG_KEEP = 50;
+
+/** 記下這次合併（commit 的 sha）改寫了哪些舊綁定；沒有改寫任何一筆就不記 */
+export async function rememberLinkRelink(local, sha, { from, to, entries }) {
+  if (!sha || !entries?.length) return;
+  const j = (await readJson(linkLogFile(local), null)) ?? {};
+  const links = { ...(j.links ?? {}), [sha]: { from, to, at: new Date().toISOString(), entries } };
+  const kept = Object.entries(links).sort((a, b) => String(b[1].at).localeCompare(String(a[1].at))).slice(0, LINK_LOG_KEEP);
+  await writeJson(linkLogFile(local), { v: 1, links: Object.fromEntries(kept) });
+}
+
+/**
+ * 還原一次合併時，把當時改到目標專案的舊綁定改回原專案。只改「現在還指著目標、而且是當時改的那幾筆」：之後被清掉或又改過的不動。
+ * @returns {Promise<{ restored: number, missing: number } | null>} null：沒有這次合併的紀錄（沒有舊綁定被改寫，或這是更早的版本做的合併）；missing：當時改了、現在找不回來的筆數
+ */
+export async function undoLinkRelink(local, sha) {
+  const j = await readJson(linkLogFile(local), null);
+  const rec = j?.links?.[sha];
+  if (!rec) return null;
+  const same = (e, b) => e.key === b.key && e.encoded === b.encoded && (e.boundAt ?? null) === (b.boundAt ?? null) && e.retiredAt === b.retiredAt;
+  let restored = 0;
+  const next = (await readRetired(local)).map((b) => {
+    if (b.pid !== rec.to || !rec.entries.some((e) => same(e, b))) return b;
+    restored++;
+    return { ...b, pid: rec.from };
+  });
+  if (restored) await writeJson(fileOf(local), { v: 1, bindings: next });
+  const { [sha]: _used, ...rest } = j.links;
+  await writeJson(linkLogFile(local), { v: 1, links: rest }); // 還原過了，這筆紀錄用完就刪
+  return { restored, missing: rec.entries.length - restored };
 }
 
 /**

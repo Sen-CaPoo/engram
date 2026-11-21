@@ -9,7 +9,8 @@ import { readRun, setEnabledState } from '../../autopilot/state.mjs';
 import { checkSecrets, deleteBrokenSecret, getSecret, listSecrets } from '../../core/secretvault.mjs';
 
 const STATUS = { running: '執行中', done: '完成', failed: '失敗', interrupted: '中斷' };
-const TASK = { curate: '整理', dream: '對話回顧', cards: '收件匣', conflicts: '衝突', secrets: '金鑰', review: '待你確認', run: '整體' };
+const TASK = { curate: '整理', dream: '對話回顧', cards: '收件匣', conflicts: '衝突', secrets: '金鑰', review: '待你確認', holding: '保留區', graduate: '記憶畢業', run: '整體' };
+const STOPPED = { limit: '已達 Claude 的用量上限', auth: 'Claude Code 的登入已到期', budget: '本月預算用完' };
 
 /** 常駐程式在跑時回傳心跳（用來把工作交給它在背景執行） */
 async function liveAgent(ctx) {
@@ -20,7 +21,7 @@ async function liveAgent(ctx) {
 
 function summaryLine(s) {
   if (!s) return '';
-  return `處理 ${s.changes} 項、不執行 ${s.rejected} 項${s.failed ? `、失敗 ${s.failed} 項` : ''}；呼叫 ${s.calls} 次，約當 US$${s.costUsd}`;
+  return `處理 ${s.changes} 項、不執行 ${s.rejected} 項${s.failed ? `、失敗 ${s.failed} 項` : ''}${s.held ? `（${s.held} 項存進保留區：engram holding）` : ''}；呼叫 ${s.calls} 次，約當 US$${s.costUsd}${STOPPED[s.stopped] ? `；提前停止：${STOPPED[s.stopped]}` : ''}`;
 }
 
 export async function cmdAutopilot(ctx) {
@@ -109,6 +110,44 @@ export async function cmdAutopilot(ctx) {
     if (!rest[0]) throw new CliError('E_USAGE', '要指定執行紀錄', 'engram autopilot undo <執行編號> [<項目編號>]');
     const r = await undoRun(eg, rest[0], rest[1] === undefined ? undefined : Number(rest[1]));
     return ctx.out.result(r, r.results.map((x) => `${String(x.index).padStart(3)} ${x.ok ? '已復原' : `沒有復原：${x.message}`}`).concat(r.results.length ? [] : ['沒有可以復原的項目']));
+  }
+
+  // ───────── 2.0.0 WP9 ─────────
+
+  if (sub === 'preferences') {
+    const r = await eg.autopilot.preferences();
+    const SRC = { user: '你確認的', request: '對話裡你要求的', baseline: '起點', off: '確認寫入已關閉', 'no-baseline': '還沒建立起點', autopilot: '只有自動駕駛確認過', claude: 'Claude 在對話裡寫入或處理的', none: '還沒確認' };
+    const core = (x) => (x.graduation === 'core' ? '｜記憶畢業想寫進核心準則，要你確認' : x.graduation === 'guardrail' ? '｜記憶畢業想讓它成為護欄規則，要你確認' : '');
+    const cands = r.candidates ?? [];
+    return ctx.out.result(r, [
+      `判斷時遵守的偏好（${r.used.length} 項）：`,
+      ...r.used.map((x) => `  • ${x.ref}｜${SRC[x.source] ?? x.source}${x.version === 'previous' ? '｜用較早確認過的版本' : ''}${x.omitted ? '｜超過字數上限，沒有放進去' : ''}`),
+      ...(r.pending.length ? [`還沒採用（${r.pending.length} 項；在管理介面看過內容並確認之後才會採用）：`, ...r.pending.map((x) => `  • ${x.ref}｜${SRC[x.source] ?? x.source}${core(x)}`)] : ['沒有還沒採用的項目']),
+      // 第三輪審查 B：常用、但還沒由你確認的其他記憶（確認之後記憶畢業才能把它寫進核心準則）
+      ...(cands.length ? [`常用、但還沒由你確認的其他記憶（${cands.length} 項；在管理介面「自動駕駛」頁的偏好區塊確認）：`, ...cands.map((x) => `  • ${x.ref}｜${SRC[x.source] ?? x.source}｜近 90 天讀取 ${x.reads} 次、帶出 ${x.recalled} 次${core(x)}`)] : []),
+    ]);
+  }
+
+  if (sub === 'digest') {
+    const d = await eg.digest.get(rest[0]);
+    const TO = { core: '核心準則', guardrail: '護欄規則', env: '環境設定', archive: '封存' };
+    const STOP = { limit: '用量上限', auth: '登入到期', budget: '預算用完', busy: 'Claude 暫時忙碌' };
+    const g = d.graduation; // 第三輪審查 B（之前存的週沒有這個欄位）
+    const list = (rows) => rows.slice(0, 20).map((x) => `    • ${x.title}（${x.ref}）`).concat(rows.length > 20 ? [`    …另外 ${rows.length - 20} 筆`] : []);
+    return ctx.out.result(d, [
+      `每週摘要：${d.week} 這一週（產生於 ${localTime(d.generatedAt)}）`,
+      `學到：新增 ${d.learned.created.length} 筆、更新 ${d.learned.updated.length} 筆`,
+      ...list(d.learned.created), ...list(d.learned.updated),
+      d.graduated.length ? `畢業：${d.graduated.map((x) => `${x.title} → ${TO[x.to] ?? x.to}`).join('、')}` : null,
+      g && !d.graduated.length ? `記憶畢業：這一週沒有畢業的記憶（下一次可以看的候選 ${g.candidates} 筆${g.unconfirmed ? `；${g.unconfirmed} 筆還沒確認過，確認之前不會看` : ''}）` : null,
+      g?.needsConfirm ? `${g.needsConfirm} 筆常用的記憶要你確認之後才能寫進核心準則或成為護欄規則：到管理介面「自動駕駛」頁的偏好區塊確認（engram autopilot preferences 可以列出）` : null,
+      `保留區：${d.holding.held} 件待你看${d.holding.withCore ? `（其中 ${d.holding.withCore} 件核心事實有依據）` : ''}${d.holding.held ? '：engram holding' : ''}`,
+      `護欄：擋下 ${d.guardrails.blocked} 次、提醒 ${d.guardrails.hinted} 次${d.guardrails.falseBlocks ? `、誤擋 ${d.guardrails.falseBlocks} 次` : ''}`,
+      `情境召回：帶出 ${d.recall.surfaced} 次、其中被打開 ${d.recall.opened} 次`,
+      d.env.findings.length ? `環境健檢的新發現：${d.env.findings.map((f) => `${f.code} ${f.title}`).join('；')}` : null,
+      `自動駕駛：${d.autopilot.runs} 輪，約當 US$${d.autopilot.costUsd}${d.autopilot.stopped.length ? `；提前停止：${d.autopilot.stopped.map((s) => `${localTime(s.at)} ${STOP[s.reason] ?? s.reason}`).join('、')}` : ''}`,
+      d.previous.length ? `更早的摘要：${d.previous.join('、')}（engram autopilot digest <週一日期>）` : null,
+    ].filter(Boolean));
   }
 
   throw new CliError('E_USAGE', `看不懂的子指令：${sub}`, 'engram help autopilot');

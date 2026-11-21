@@ -5,11 +5,13 @@
 //   同一行沒有任何其他判斷、標記時這一行的值與送給 LLM 判斷時完全相同（比對雜湊，不只看行號）。
 //   其餘一律移到保管區（不會遺失任何東西）。標記可以在自動駕駛頁復原（移除「不是金鑰」清單裡的雜湊）。
 // 每台電腦處理自己的：含金鑰的檔案本來就不會同步。
+// 2.0.0：判斷用主要模型（Q7 曾改用較小的模型；第二輪審查 N6：把真的金鑰判成不是金鑰的後果太重，用量又小，改回主要模型）。
 import path from 'node:path';
 import { readJson, writeJsonAtomic } from '../../cli/fsutil.mjs';
 import { loadAllow, scanWithAllow } from '../../core/secretallow.mjs';
 import { secretHash } from '../../core/secrets.mjs';
 import { getSecret, NAME_RE, PLACEHOLDER_NOTE, placeholder, putSecret } from '../../core/secretvault.mjs';
+import { MODELS } from '../llm.mjs';
 import { fence, REVIEW_SCHEMA, SECRET_SCHEMA, secretPrompt } from '../prompts.mjs';
 
 const holdFile = (local) => path.join(local, 'autopilot', 'vault-hold.json');
@@ -97,7 +99,7 @@ export async function secretCards(ctx) {
     items.push({ card: c.id, ref, raw: p.before, seen: hitsByLine(hits, p.before), benign, hits: hits.map((h) => ({ line: h.line, kind: h.kind, preview: safePreview(p.before.slice(h.offset, h.offset + h.length)) })), text: markedText(p.before, hits).slice(0, 20_000) });
   }
   if (!items.length) return;
-  const r = await call('疑似金鑰', { schema: SECRET_SCHEMA, prompt: secretPrompt({ items }) });
+  const r = await call('疑似金鑰', { model: MODELS.main, schema: SECRET_SCHEMA, prompt: secretPrompt({ items }) });
   if (!r.ok) { run.skipped.push({ task: 'secrets', why: r.error?.message ?? '判斷失敗' }); return; }
   const decisions = (Array.isArray(r.data.decisions) ? r.data.decisions : []).filter((d) => items.some((x) => x.card === String(d.card)));
   // 「不是金鑰」的候選：同一行的所有判斷都一致是高信心的 not-secret，而且這一行只有啟發式種類

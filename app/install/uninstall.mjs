@@ -11,6 +11,10 @@ import { removeApp } from './deploy.mjs';
 
 const BEGIN = '<!-- engram:begin';
 const END = '<!-- engram:end -->';
+/** 環境設定同步（2.0.0）沒還原的原因，給解除安裝時印出來的清單用 */
+const ENV_KEPT_REASON = {
+  changed: '套用之後被你改過，沒有動', format: 'settings.json 的排版不是標準格式', invalid: 'settings.json 不是有效的 JSON', link: '路徑是連結，不穿越', 'backup-missing': '找不到備份',
+};
 
 /** 從 CLAUDE.md 移除 Engram 管理區塊。檔案末尾正好是當初附加的內容時逐字移除，確保與安裝前完全相同。 */
 export function stripBlock(text, appended) {
@@ -54,6 +58,7 @@ export async function runUninstall(opts = {}, io) {
   if (!opts.yes && !(await io.confirm('要開始移除嗎？'))) return { ok: false, cancelled: true };
 
   const done = [];
+  const envWarnings = [];
   const env = claudeEnv(claudeHome);
   const has = (kind) => rec.steps.find((s) => s.kind === kind);
 
@@ -96,6 +101,12 @@ export async function runUninstall(opts = {}, io) {
     const r = await eg.releaseMachine();
     io.print(`✓ 已解除 ${r.released.length} 個綁定，撤銷 ${r.revokedPaths?.length ?? 0} 筆 additionalDirectories`);
     done.push('release-machine');
+    // 環境設定同步套用過的設定與技能：沒還原的、出錯的都要讓使用者看到（紀錄與備份在 ~/.engram，--purge 會一起刪掉）
+    if (r.envRestored) io.print(`✓ 已還原 ${r.envRestored} 項環境設定同步套用過的設定與技能`);
+    if (r.envBackup) io.print(`  settings.json 的排版不是標準格式，已整個備份成 ${r.envBackup}，再用 JSON 重寫來移除 Engram 套用的值`);
+    envWarnings.push(...(r.envKept ?? []).map((k) => `${k.key}（${ENV_KEPT_REASON[k.reason] ?? k.reason}）`));
+    if (r.envError) envWarnings.push(`還原環境設定時出錯：${r.envError.message}（${r.envError.code}）`);
+    if (envWarnings.length) io.print(`⚠ 這些環境設定沒有還原，請手動移除或確認：\n${envWarnings.map((w) => `  - ${w}`).join('\n')}`);
   }
 
   // 5. 工作準則若曾同步進 vault（41 號 §11），先逐字放回 ~/.claude/CLAUDE.md，否則它只會留在 vault 裡
@@ -123,7 +134,7 @@ export async function runUninstall(opts = {}, io) {
 
   // 8. 本機紀錄或整個 ~/.engram
   if (opts.purge) {
-    const sure = opts.yes || await io.confirm(`確定要刪除 ${home}（包含記憶庫）嗎？GitHub 上的 engram-vault 不受影響。`);
+    const sure = opts.yes || await io.confirm(`確定要刪除 ${home}（包含記憶庫）嗎？GitHub 上的 engram-vault 不受影響。${envWarnings.length ? `\n注意：上面有 ${envWarnings.length} 項環境設定沒有還原，它們的還原紀錄與備份在這個資料夾裡，刪除後就沒有了。` : ''}`);
     if (sure) { await fsp.rm(home, { recursive: true, force: true, maxRetries: 3 }); done.push('purge'); io.print(`✓ 已刪除 ${home}`); }
   } else {
     await fsp.rm(path.join(home, 'local', 'install.json'), { force: true });
@@ -133,5 +144,5 @@ export async function runUninstall(opts = {}, io) {
     io.print(`記憶庫保留在 ${path.join(home, 'vault')}。`);
   }
   io.print('移除完成。');
-  return { ok: true, done, host: os.hostname() };
+  return { ok: true, done, host: os.hostname(), ...(envWarnings.length ? { envWarnings } : {}) };
 }

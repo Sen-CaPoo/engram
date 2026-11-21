@@ -45,6 +45,13 @@ EOF
 
 `engram memory show <ref> [<ref> ...]` 讀出記憶全文（疑似金鑰已在本機遮蔽），ref 見 `engram search` 或 `engram memory list` 的結果。讀其他專案、全域或單機的記憶時用它，不必用 Read 開 vault 裡的檔案。
 
+## 護欄與環境
+
+- **護欄擋下了指令**：Bash 或 PowerShell 指令被 Engram 護欄擋下時，說明裡會寫原因與正確的寫法，照它改寫後再執行，不要換個寫法繞過。使用者想知道有哪些規則時用 `engram guardrails list`；想知道某個指令會不會被擋時用 `engram guardrails test "<指令>"`。使用者認為某條規則擋錯了，請他到管理介面的護欄頁停用那一條。
+- **環境健檢**：使用者問「我的 Claude Code 環境有沒有問題」「兩台電腦的設定差在哪」時，用 `engram env status`（這台的發現）與 `engram env diff`（各台的差異）。健檢只讀名稱、版本、雜湊與耗時，不讀設定值。要修正或套用（`engram env fix`、`engram env apply`）先說明會改什麼，使用者同意後才執行；修改前會自動備份，`engram env undo` 可以還原最近一次套用。
+- **核可只能由使用者本人做**：同步來的環境設定、技能與護欄的擋下規則，要使用者在管理介面或自己開的終端機核可（`engram env approve`、`engram guardrails approve`），在 Claude Code 裡執行會被拒絕（`E_CONFIRM`）。遇到時把要執行的指令告訴使用者，不要想辦法代為核可。
+- 保留區、自動駕駛遵守的偏好與每週摘要 → `/engram:autopilot`
+
 ## 整理記憶的流程
 
 使用者要整理記憶時，依對應技能的流程做（每個流程都是先提出計畫、使用者同意後才寫入）：

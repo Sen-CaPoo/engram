@@ -8,6 +8,7 @@ import path from 'node:path';
 import { APP_DIR, BIN_PATH, engramHome, claudeHome as defaultClaudeHome, appVersion, localPaths } from '../src/cli/paths.mjs';
 import { run, spawnDetachedNode } from '../src/cli/proc.mjs';
 import { deploy, rollback, activeVersion, appRoot, currentDir } from './deploy.mjs';
+import { publishRelease } from './autoupdate.mjs';
 import { userPermissionMode } from '../src/cli/probe/index.mjs';
 import { agentStartError, waitForAgent } from '../src/agent/wait.mjs';
 
@@ -284,7 +285,8 @@ export async function runInstall(opts = {}, io) {
 /**
  * engram update：把來源（預設是安裝時的工作樹）部署成新版本並切換；--rollback 切回上一版。
  * 切換後重新啟動常駐程式；已開啟的 Claude Code 對話執行 /reload-plugins 即可使用新版。
- * @param {{ home?, from?, rollback?: boolean, restartAgent?: boolean }} opts
+ * rollbackTo：--rollback 時指定要切回的版本資料夾（自動更新退回到更新前的版本）；publish: false：不發佈版本資訊（自動更新用）。
+ * @param {{ home?, from?, rollback?: boolean, rollbackTo?: string, restartAgent?: boolean, publish?: boolean }} opts
  */
 export async function runUpdate(opts = {}, io) {
   const home = opts.home ?? engramHome();
@@ -303,7 +305,7 @@ export async function runUpdate(opts = {}, io) {
     io.print(`✗ 找不到 Engram 程式資料夾：${from}${opts.from ? '' : '（安裝時記錄的位置，資料夾可能搬走了）'}。請用 --from 指定 Engram 程式資料夾裡的 app，例如 engram update --from "<Engram 資料夾>\\app"；更新成功後會記住新的位置。`);
     return { ok: false };
   }
-  const r = opts.rollback ? await rollback(home) : await deploy(home, from);
+  const r = opts.rollback ? await rollback(home, opts.rollbackTo) : await deploy(home, from);
   // --from 部署成功：記住新的原始程式位置，下次直接 engram update 即可（部署的複本在上面已經擋掉）
   const moved = !opts.rollback && opts.from ? { sourceDir: path.resolve(opts.from) } : {};
   await fsp.writeFile(installJson, JSON.stringify({ ...info, ...moved, version: activeVersion(home), updatedAt: new Date().toISOString() }, null, 2));
@@ -319,6 +321,12 @@ export async function runUpdate(opts = {}, io) {
     if (hb?.pid) { try { process.kill(hb.pid); } catch { /* 已經結束 */ } }
     spawnDetachedNode([path.join(info.appDir, 'bin', 'engram.mjs'), 'agent']);
     io.print('✓ 已重新啟動常駐程式');
+  }
+  // 2.0.0 R2：來源是 git 複本、HEAD 剛好是版本標籤時，把版本資訊寫進記憶庫（vault/release.json），另一台電腦的常駐程式會自動更新到同一個版本。
+  // 自動更新自己呼叫時 publish: false（它就是依發佈資訊更新的）；發佈失敗不影響更新
+  if (!opts.rollback && opts.publish !== false) {
+    const p = await publishRelease({ home, sourceDir: moved.sourceDir ?? from });
+    if (p.published) io.print(`✓ 已把 ${p.release.version} 的版本資訊寫進記憶庫（另一台電腦會自動更新到這個版本）`);
   }
   io.print('已開啟的 Claude Code 對話請執行 /reload-plugins；新開的對話會直接使用新版。');
   return { ok: true, ...r };

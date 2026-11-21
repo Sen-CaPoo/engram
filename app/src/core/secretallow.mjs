@@ -57,6 +57,25 @@ export function scanWithAllow(text, ref, allow = {}) {
   return scanSecrets(text).filter((h) => !isAllowedHit(h, ok, text));
 }
 
+/** 這些資料夾不是記憶，但會同步，裡面的 JSON 與其他文字檔（環境設定檔、技能檔案、保留區項目、護欄規則）同樣要在提交前掃描疑似金鑰 */
+export const SCANNED_DIRS = Object.freeze(['env/', 'holding/', 'guardrails/']);
+
+/** 提交前要掃疑似金鑰的路徑（vault 相對路徑，斜線分隔）：所有 Markdown，加上 SCANNED_DIRS 底下的所有檔案（文字檔才掃，見 isBinaryText） */
+export function isSecretScanned(ref) {
+  const r = String(ref).replace(/\\/g, '/');
+  return /\.md$/i.test(r) || SCANNED_DIRS.some((d) => r.startsWith(d));
+}
+
+/** 內容看起來是二進位檔（前 8 KB 有 NUL，和 git 的判斷相同）：不是 Markdown 的二進位檔不掃 */
+export function isBinaryText(text) {
+  return String(text).slice(0, 8192).includes('\0');
+}
+
+/** 這個路徑的內容需要檢查嗎：isSecretScanned，而且不是（Markdown 以外的）二進位檔 */
+export function needsSecretScan(ref, text) {
+  return isSecretScanned(ref) && (/\.md$/i.test(String(ref)) || !isBinaryText(text));
+}
+
 const valueOf = (text, h) => String(text).slice(h.offset, h.offset + h.length);
 // 訊息只列行號與種類，不帶出值的任何片段（H13 的原則；封存、移動的對象不一定是 Claude 寫的內容）
 const describe = (hits) => `第 ${[...new Set(hits.map((h) => h.line))].join('、')} 行，${[...new Set(hits.map((h) => h.kind))].join('、')}`;

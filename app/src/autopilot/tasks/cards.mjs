@@ -1,13 +1,18 @@
 // 自動駕駛：收件匣卡片（1.5.0）。
 // - 規則就能處理的：H06 撞名改名、H17 綁定修正、H14 同步、H24 核心準則建議、H04 舊綁定（資料夾消失超過 14 天才移除）
 // - 要判斷的：H05 收編、H18 大量刪除、H19 可能屬於另一個資料夾 → LLM 決定套用哪個修正、忽略或延後
-// H07～H12、H16、H21、H22 由範圍整理處理；H13、H15、H20、H23 各有自己的任務。
+// H07～H09、H11、H12、H16、H21、H22 由範圍整理處理；H13、H15、H20、H23 各有自己的任務。
+// 2.0.0：H01（索引容量）、H10（檔案過大）與 H35（索引被永遠列出的記憶占滿）不讓自動駕駛處理
+// （不拆分、不為了縮短而刪減記憶，也不替使用者取消釘選），卡片只留給使用者看。
+// 2.0.0：卡片的判斷用主要模型（Q7 曾改用較小的模型；第二輪審查 N6：沒有第二道把關，用量又小，改回主要模型）。
 import path from 'node:path';
 import { readJson, writeJsonAtomic } from '../../cli/fsutil.mjs';
+import { MODELS } from '../llm.mjs';
 import { CARDS_SCHEMA, cardsPrompt } from '../prompts.mjs';
 
 const DAY = 86_400_000;
 const H04_AFTER_MS = 14 * DAY;
+// H34（疑似同一個專案的合併建議）不在這裡：合併是無法只靠 commit 完整還原的結構性操作，樣板 clone、fork、刻意分開的兩份 clone 也都會符合條件，只留給使用者在收件匣決定
 export const JUDGED_CODES = ['H05', 'H18', 'H19'];
 
 const shaOf = (r) => r?.undo?.sha ?? r?.commit?.sha ?? null;
@@ -29,7 +34,7 @@ export async function ruleCards(ctx) {
 
   // H17 只處理引擎能直接修的（重新綁定、允許讀取、對齊綁定方式）；其他的要在介面操作，略過
   for (const f of findings.filter((x) => x.code === 'H17' && !off('card-H17') && ['rebind', 'allow-read', 'reconcile-bindings'].includes(x.fix?.action))) {
-    try { await push(f, `修正綁定：${f.title}`, await eg.apply(f.fix), { reason: f.detail, category: 'card-H17' }); } catch (err) { fail(f, `修正綁定：${f.title}`, err); }
+    try { await push(f, `修正綁定：${f.title}`, await eg.apply(f.fix, { by: 'autopilot' }), { reason: f.detail, category: 'card-H17' }); } catch (err) { fail(f, `修正綁定：${f.title}`, err); }
   }
   // H06：自動駕駛把撞名改名當成「自動」處理，但使用者設為「關閉」、或相容性探測暫停了綁定時不改
   const pausedFile = (await readJson(path.join(eg.paths.local, 'paused.json'), null)) ?? {};
@@ -58,7 +63,7 @@ export async function ruleCards(ctx) {
     live.add(f.id);
     seen[f.id] ??= new Date(now).toISOString();
     if (now - Date.parse(seen[f.id]) < H04_AFTER_MS) continue;
-    try { await push(f, `移除舊綁定：${f.title}`, await eg.apply(f.fix), { reason: `${f.detail}（已經連續 14 天以上找不到這個資料夾）`, category: 'card-H04' }); delete seen[f.id]; } catch (err) { fail(f, `移除舊綁定：${f.title}`, err); }
+    try { await push(f, `移除舊綁定：${f.title}`, await eg.apply(f.fix, { by: 'autopilot' }), { reason: `${f.detail}（已經連續 14 天以上找不到這個資料夾）`, category: 'card-H04' }); delete seen[f.id]; } catch (err) { fail(f, `移除舊綁定：${f.title}`, err); }
   }
   for (const k of Object.keys(seen)) if (!live.has(k)) delete seen[k];
   await writeJsonAtomic(seenFile(eg.paths.local), seen);
@@ -84,7 +89,7 @@ export async function judgedCards(ctx) {
     }
     rows.push({ id: c.id, code: c.code, title: c.title, detail: c.detail, fixes: fixes.map((f) => ({ label: f.label })), context });
   }
-  const r = await call('收件匣卡片', { schema: CARDS_SCHEMA, prompt: cardsPrompt({ cards: rows, feedback: feedback.slice(-20) }) });
+  const r = await call('收件匣卡片', { model: MODELS.main, schema: CARDS_SCHEMA, prompt: cardsPrompt({ cards: rows, feedback: feedback.slice(-20) }) });
   if (!r.ok) { run.skipped.push({ task: 'cards', why: r.error?.message ?? '卡片判斷失敗' }); return; }
   for (const d of r.data.decisions ?? []) {
     const c = cards.find((x) => x.id === String(d.card));
@@ -95,7 +100,7 @@ export async function judgedCards(ctx) {
       const fix = fixes[(Number.isInteger(d.fix) ? d.fix : 1) - 1];
       if (!fix) { run.rejected.push({ task: 'cards', title: c.title, why: `沒有第 ${d.fix} 個修正` }); continue; }
       try {
-        const res = await eg.apply(fix);
+        const res = await eg.apply(fix, { by: 'autopilot' });
         if (res?.needsUi) { run.rejected.push({ task: 'cards', title: c.title, why: '這個修正要在介面操作' }); continue; }
         run.actions.push({ task: 'cards', kind: 'card', card: c.id, code: c.code, title: `${fix.label}：${c.title}`, reason, category: `card-${c.code}`, status: 'done', undo: [await undoableSha(eg, shaOf(res))].filter(Boolean), ...(c.code === 'H05' ? { note: '收編屬於匯入，要從匯入頁整批還原' } : {}) });
       } catch (err) {

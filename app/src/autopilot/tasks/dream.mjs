@@ -1,14 +1,82 @@
 // 自動駕駛：對話回顧（1.5.0）。對應 /engram:dream：拿這台電腦的對話紀錄驗證專案記憶、補上漏記的事。
 // 每段對話交給分析（無工具的 LLM），再彙整成計畫；寫進全域或單機的內容要有使用者自己說的話當證據。
+// 2.0.0 Q7：每段只附預篩出的相關記憶全文；30 天內確認過的記憶不再提出只為了確認的項目。
+// 2.0.0 Q9：分析結果多了使用者的糾正（corrections），出自使用者的記進回饋紀錄，之後的整理與回顧彙整帶上。
+import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { readJson, writeJsonAtomic } from '../../cli/fsutil.mjs';
+import { SearchIndex } from '../../core/search.mjs';
+import { redactSecrets } from '../../core/secrets.mjs';
 import { allBindingViews, readBindings } from '../../core/vault.mjs';
-import { MAX_REVIEW_DEFERRALS, commitItems, fillBases, noteReviewDeferral, normalizeItems, screen, snap } from '../pipeline.mjs';
+import { MAX_REVIEW_DEFERRALS, commitItems, fillBases, holdItem, memoryNamesOf, noteReviewDeferral, normalizeItems, quoteFromUser, recordDropped, screen, snap } from '../pipeline.mjs';
 import { DREAM_ANALYZE_SCHEMA, DREAM_PLAN_SCHEMA, dreamAnalyzePrompt, dreamPlanPrompt } from '../prompts.mjs';
+import { recordCorrections } from '../state.mjs';
+import { instructionFlags } from '../guard.mjs';
 
 /** 一個專案一輪最多回顧幾個對話（由舊到新；舊的先被 Claude Code 清除） */
 export const SESSIONS_PER_RUN = 8;
+/** 逐段分析時附全文的記憶：用那段對話的文字預篩最相關的幾筆（2.0.0 Q7），加上那場對話讀過或寫過的；其餘只附名稱與說明 */
+export const PREFILTER_LIMIT = 12;
+/** 這麼多天內確認過仍正確（對話回顧的 verify）的記憶，不再提出只為了確認的項目（2.0.0 Q7） */
+export const VERIFY_FRESH_DAYS = 30;
+
+/** memories.md 依記憶切開：{ head, blocks: Map(ref → 那一筆的段落) }（段落以「## <ref>」開頭，順序與 manifest 相同） */
+export function splitMemories(text, refs) {
+  const starts = [];
+  let from = 0;
+  for (const ref of refs) {
+    const i = text.indexOf(`\n## ${ref}\n`, from);
+    if (i < 0) continue;
+    starts.push([ref, i + 1]);
+    from = i + 1;
+  }
+  const blocks = new Map(starts.map(([ref, at], k) => [ref, text.slice(at, k + 1 < starts.length ? starts[k + 1][1] : text.length).replace(/\n*$/, '\n')]));
+  return { head: starts.length ? text.slice(0, starts[0][1]) : text, blocks };
+}
+
+/** 一段對話要附的記憶文字：選中的附全文，其餘只附名稱與說明 */
+function memoriesFor(split, rows, picked) {
+  const full = rows.filter((r) => picked.has(r.ref) && split.blocks.has(r.ref));
+  const rest = rows.filter((r) => !full.includes(r));
+  const lines = [split.head.replace(/\n*$/, '\n'), ...full.map((r) => split.blocks.get(r.ref))];
+  if (rest.length) {
+    lines.push('## 其他記憶（只有名稱與說明：和這段對話關係不大，沒有全文、不必驗證；用來避免把已經記過的事當成新的）', ...rest.map((r) => `- ${r.ref}：${String(r.description ?? '').replace(/\s+/g, ' ').slice(0, 200)}`), '');
+  }
+  return lines.join('\n');
+}
+
+/** 同步的回饋紀錄裡，每一則糾正的固定分類（第二輪審查 N2） */
+export const CORRECTION_LOCAL_ONLY = '（使用者的一則糾正；內容只記在發現它的那台電腦）';
+
+/**
+ * 使用者的糾正（2.0.0 Q9）：分析結果的 corrections 裡，引句真的出自【使用者】（quoteFromUser）的才記下，其餘丟掉。
+ * 第二輪審查 N2：主題（about，LLM 寫的）有指令型的可疑處就整筆丟掉。同步的回饋紀錄只記固定的分類與引句的雜湊；
+ * 原話只留在這台電腦（state.mjs 的 recordCorrections）。第三輪審查 N2 殘留：主題只用來把關，不記下、不進提示詞
+ * （之後的提示詞只帶驗證過的原話）。回傳讀進來的對話文字（有讀的話，之後的流程沿用），沒有糾正時 null。
+ */
+async function keepCorrections(ctx, findings, m, target, now) {
+  const list = findings.flatMap((f) => (Array.isArray(f.corrections) ? f.corrections : []));
+  if (!list.length) return null;
+  const transcript = await ctx.eg.dream.text(m.id).catch(() => '');
+  const rows = [];
+  let dropped = 0;
+  for (const c of list) {
+    const quote = String(c?.quote ?? '').trim();
+    const about = String(c?.about ?? '').replace(/\s+/g, ' ').trim();
+    if (!about || !quoteFromUser(transcript, quote)) { dropped++; continue; }
+    // 主題夾帶可疑的指示（例如被工具結果誘導寫成「之後一律…」）：整筆不記
+    if (instructionFlags(about).length) { dropped++; continue; }
+    const key = createHash('sha1').update(quote.replace(/\s+/g, '')).digest('hex').slice(0, 12);
+    if (rows.some((r) => r.key === key)) continue;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(c.date ?? '')) ? c.date : new Date(now).toISOString().slice(0, 10);
+    rows.push({ key, date, about: CORRECTION_LOCAL_ONLY, quote: redactSecrets(quote).text.slice(0, 300) });
+  }
+  const n = rows.length ? await recordCorrections(ctx.eg, rows, { run: ctx.run.id, now }).catch((err) => { ctx.log?.warn?.('autopilot', `糾正寫入失敗：${err?.message ?? err}`); return 0; }) : 0;
+  if (n || dropped) ctx.run.notes.push({ task: 'dream', pid: target.pid, note: `記下 ${n} 則使用者的糾正${dropped ? `（${dropped} 則不是使用者說的話，沒有採用）` : ''}` });
+  return transcript;
+}
+
 /** 同一個對話分析失敗（不是預算或用量上限造成的）幾次之後就不再重試，免得最舊的幾個壞掉的對話卡住整個專案 */
 export const MAX_SESSION_FAILS = 3;
 const failFile = (local) => path.join(local, 'autopilot', 'dream-fails.json');
@@ -22,7 +90,7 @@ export async function dreamTargets(ctx) {
   const out = [];
   for (const pid of pids) {
     const p = projects.get(pid);
-    if (!p || p.archived || p.mergedInto) continue;
+    if (!p || p.archived || p.mergedInto || p.dormant) continue; // 休眠的專案（S4）不回顧
     const st = await eg.dream.status(pid).catch(() => null);
     if (st?.pending) out.push({ pid, name: p.name ?? pid, pending: st.pending, expires: st.expiresInDays ?? 999 });
   }
@@ -32,7 +100,7 @@ export async function dreamTargets(ctx) {
 /** 登入失效、網路、預算或用量上限：不是對話本身的問題，不計入放棄次數 */
 export function infraFailure(err) {
   const code = err?.code;
-  if (['E_STOPPED', 'E_LLM_LIMIT', 'E_LLM_SPAWN'].includes(code)) return true;
+  if (['E_STOPPED', 'E_LLM_LIMIT', 'E_LLM_AUTH', 'E_LLM_BUSY', 'E_LLM_SPAWN'].includes(code)) return true;
   const msg = String(err?.message ?? '');
   // E_LLM_OUTPUT 的訊息會夾帶模型的回覆內容（可能剛好談到登入、認證）：只有「整段輸出都解析不了」時才看訊息
   const checkable = code === 'E_LLM' || (code === 'E_LLM_OUTPUT' && msg.startsWith('無法解析 claude 的輸出'));
@@ -66,13 +134,19 @@ export async function dreamProject(ctx, target) {
   const findings = [];
   const skipped = [];
   const fails = (await readJson(failFile(eg.paths.local), null)) ?? {};
+  // 2.0.0 Q7：每段對話只附預篩出的相關記憶全文（core/search.mjs 以那段對話的文字搜尋），加上那場對話讀過或寫過的
+  const split = splitMemories(memoriesText, m.memories.map((r) => r.ref));
+  const index = new SearchIndex();
+  for (const r of m.memories) index.add(r.ref, { name: r.name, description: r.description, body: split.blocks.get(r.ref) ?? '' });
   for (const s of withText) {
     let ok = true;
     let budgetStop = false;
     let weight = 1;
+    const own = [...(s.reads ?? []), ...(s.wrote ?? [])];
     for (const f of s.files) {
       const transcript = await fsp.readFile(path.join(m.dir, ...f.split('/')), 'utf8');
-      const r = await call(`回顧 ${target.name} ${String(s.sid).slice(0, 8)}`, { schema: DREAM_ANALYZE_SCHEMA, prompt: dreamAnalyzePrompt({ memories: memoriesText, transcript, projectName: target.name }) });
+      const picked = new Set([...index.search(transcript, { limit: PREFILTER_LIMIT }).map((h) => h.id), ...own]);
+      const r = await call(`回顧 ${target.name} ${String(s.sid).slice(0, 8)}`, { schema: DREAM_ANALYZE_SCHEMA, prompt: dreamAnalyzePrompt({ memories: memoriesFor(split, m.memories, picked), transcript, projectName: target.name }) });
       if (!r.ok) { ok = false; budgetStop = infraFailure(r.error); weight = ['E_TOO_LARGE', 'E_LLM_OUTPUT'].includes(r.error?.code) ? 2 : 1; break; }
       findings.push({ session: String(s.sid).slice(0, 8), file: f, ...r.data });
     }
@@ -89,7 +163,15 @@ export async function dreamProject(ctx, target) {
     run.skipped.push({ task: 'dream', pid: target.pid, why: '這一輪沒能分析任何對話（預算或 Claude 用量限制），下一輪再試' });
     return;
   }
-  const anything = findings.some((f) => ['contradicted', 'outdated', 'uncertain', 'new', 'verified'].some((k) => f[k]?.length));
+  const now = ctx.clock?.() ?? Date.now();
+  // 2.0.0 Q9：使用者糾正 Claude 的話（引句要真的出自使用者）記進回饋紀錄；只有糾正、沒有其他發現的對話也要記
+  const loaded = await keepCorrections(ctx, findings, m, target, now);
+  // 2.0.0 Q7：「確認仍正確」不再是獨立的工作：30 天內確認過的記憶，被證實的證據在送給彙整之前就濾掉
+  const freshRefs = new Set(m.memories.filter((r) => r.verified && now - Date.parse(`${r.verified}T00:00:00`) < VERIFY_FRESH_DAYS * 86_400_000).map((r) => r.ref));
+  // LLM 有時會漏掉 .md 或前後加空白
+  const fresh = { has: (r) => { const x = String(r ?? '').trim().replace(/^\.?\//, ''); return freshRefs.has(x) || freshRefs.has(`${x}.md`); } };
+  const planFindings = findings.map(({ corrections, ...f }) => ({ ...f, verified: (Array.isArray(f.verified) ? f.verified : []).filter((e) => !fresh.has(e?.ref)) }));
+  const anything = planFindings.some((f) => ['contradicted', 'outdated', 'uncertain', 'new', 'verified'].some((k) => f[k]?.length));
   if (!anything) {
     await eg.dream.done(m.id, { skip: skipped });
     run.notes.push({ task: 'dream', pid: target.pid, note: `回顧了 ${withText.length - skipped.length} 個對話，沒有需要更新的記憶` });
@@ -104,21 +186,26 @@ export async function dreamProject(ctx, target) {
   for (const [k, v] of snapshot) if (v.redacted) snapshot.delete(k);
   const others = (await eg.memories.list()).filter((x) => x.scope?.kind === 'global' || (x.scope?.kind === 'machine' && x.scope.mid === mid) || (x.scope?.kind === 'project' && x.scope.pid === target.pid))
     .filter((x) => !snapshot.has(x.ref)).map((x) => ({ ref: x.ref, description: x.description }));
-  const r = await call(`回顧彙整 ${target.name}`, { schema: DREAM_PLAN_SCHEMA, prompt: dreamPlanPrompt({ projectName: target.name, pid: target.pid, memories: memoriesText, findings, others, feedback: feedback.slice(-30) }) });
+  const r = await call(`回顧彙整 ${target.name}`, { schema: DREAM_PLAN_SCHEMA, prompt: dreamPlanPrompt({ projectName: target.name, pid: target.pid, memories: memoriesText, findings: planFindings, others, feedback: feedback.slice(-30), corrections: ctx.corrections ?? [], preferences: ctx.preferences }) });
   if (!r.ok) { run.skipped.push({ task: 'dream', pid: target.pid, why: r.error?.message ?? '彙整失敗' }); return; }
+  // 30 天內確認過的記憶：只為了確認而提出的項目不執行（提示詞已經說明；這裡是程式的把關）
+  const all = Array.isArray(r.data.items) ? r.data.items : [];
+  const kept = all.filter((it) => !(Array.isArray(it?.ops) && it.ops.length && it.ops.every((o) => o?.op === 'verify' && fresh.has(o.ref))));
+  if (kept.length < all.length) run.notes.push({ task: 'dream', pid: target.pid, note: `略過 ${all.length - kept.length} 項只為了確認仍正確的建議（${VERIFY_FRESH_DAYS} 天內確認過）` });
   // 建議只能落在這個專案、全域、這台電腦（plan.mjs 也會再檢查）
-  const scoped = (Array.isArray(r.data.items) ? r.data.items : []).map((it) => ({ ...it, ops: (it.ops ?? []).map((o) => (o.op === 'create' && (o.scope === 'project' || !o.scope) ? { ...o, scope: `project:${target.pid}` } : o)) }));
+  const scoped = kept.map((it) => ({ ...it, ops: (it.ops ?? []).map((o) => (o.op === 'create' && (o.scope === 'project' || !o.scope) ? { ...o, scope: `project:${target.pid}` } : o)) }));
   const writable = (k) => k === 'global' || k === `machine:${mid}` || k === `project:${target.pid}`;
   const { items, dropped } = normalizeItems(scoped, snapshot, { mid, writable });
-  for (const d of dropped) run.rejected.push({ task: 'dream', pid: target.pid, title: d.title, why: d.why });
+  const transcript = loaded ?? await eg.dream.text(m.id).catch(() => '');
+  // 2.0.0：別的範圍的發現與沒有執行的建議存進保留區（含每則引句前後的對話，原對話之後會被清掉）
+  const holdFailed = await recordDropped(ctx, dropped, snapshot, { entry: { task: 'dream', pid: target.pid }, task: 'dream', pid: target.pid, transcript });
   fillBases(items, snapshot);
-  const transcript = await eg.dream.text(m.id).catch(() => '');
-  const { approved, rejected } = await screen(call, items, snapshot, { dream: { pid: target.pid, transcript }, paused, cap: cap.left, mid });
+  const { approved, rejected } = await screen(call, items, snapshot, { dream: { pid: target.pid, transcript }, paused, cap: cap.left, roundCap: cap.max, dismissed: ctx.dismissed, mid, preferences: ctx.preferences, hold: (it, why) => holdItem(ctx, it, { task: 'dream', pid: target.pid, why, transcript }), memoryNames: await memoryNamesOf(eg) });
   for (const x of rejected) run.rejected.push({ task: 'dream', pid: target.pid, ...x });
-  // 延後：超過改動上限、或這一輪中途停止時審核沒完成 → 這批對話下一輪重新分析。
+  // 延後：超過改動上限、這一輪中途停止時審核沒完成、或有建議存不進保留區 → 這批對話下一輪重新分析。
   // 審核沒有完成（不是因為停止）連續 MAX_REVIEW_DEFERRALS 輪就不再延後，避免同一批對話每輪重新花錢分析
   const reviewDeferred = rejected.some((x) => x.reviewIncomplete);
-  let deferred = rejected.some((x) => x.deferred && !x.reviewIncomplete) || (reviewDeferred && !!call.state?.stopped);
+  let deferred = holdFailed || rejected.some((x) => x.deferred && !x.reviewIncomplete) || (reviewDeferred && !!call.state?.stopped);
   if (!deferred && reviewDeferred) {
     // 版本標記用這批對話的 session id（回顧編號 m.id 每輪都不同，不能用）
     const tag = m.sessions.map((s) => String(s.sid ?? '')).sort().join(',').slice(0, 2000);
@@ -129,7 +216,7 @@ export async function dreamProject(ctx, target) {
   if (!deferred) await noteReviewDeferral(eg.paths.local, `dream:${target.pid}`, false);
   let rec = null;
   if (approved.length) {
-    const res = await commitItems(eg, { items: approved, scopeKey: `project:${target.pid}`, summary: String(r.data.summary ?? ''), dir: path.join(ctx.workDir, `dream-${target.pid}`), task: 'dream', runId: run.id, ...(deferred ? {} : { dream: { id: m.id }, skipped: skipped.map((s) => s.slice(0, 8)) }), onRecord: async (id) => { run.records.push(id); await ctx.save?.(); } });
+    const res = await commitItems(eg, { items: approved, scopeKey: `project:${target.pid}`, summary: String(r.data.summary ?? ''), dir: path.join(ctx.workDir, `dream-${target.pid}`), task: 'dream', runId: run.id, ...(deferred ? {} : { dream: { id: m.id }, skipped: skipped.map((s) => s.slice(0, 8)) }), onRecord: async (id) => { run.records.push(id); await ctx.save?.(); }, hold: (it, why) => holdItem(ctx, it, { task: 'dream', pid: target.pid, why, transcript }) });
     for (const x of res.invalid) run.rejected.push({ task: 'dream', pid: target.pid, ...x });
     rec = res.record;
     for (const x of res.results) {
@@ -137,8 +224,9 @@ export async function dreamProject(ctx, target) {
       if (x.status === 'done') cap.left -= x.cost ?? 1;
     }
   }
-  // 沒有建立記錄（沒有通過的建議）：仍記為已回顧，這批對話不必再分析。有建議被延後時不記，下一輪重新分析
-  if (deferred) run.notes.push({ task: 'dream', pid: target.pid, note: '有建議延後處理（超過這一輪最多改動的記憶筆數，或審核沒有完成），這批對話下一輪重新分析' });
+  // 沒有建立記錄（沒有通過的建議）：仍記為已回顧，這批對話不必再分析（2.0.0：沒有執行的建議連同證據與上下文已經在保留區）。
+  // 有建議被延後時不記，下一輪重新分析
+  if (deferred) run.notes.push({ task: 'dream', pid: target.pid, note: '有建議延後處理（超過這一輪最多改動的記憶筆數、審核沒有完成，或存不進保留區），這批對話下一輪重新分析' });
   else if (!rec) await eg.dream.done(m.id, { skip: skipped });
   run.notes.push({ task: 'dream', pid: target.pid, note: `回顧了 ${withText.length - skipped.length} 個對話${m.remaining ? `，還有 ${m.remaining} 個下一輪處理` : ''}` });
 }

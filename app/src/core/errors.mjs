@@ -12,6 +12,7 @@ export const E = Object.freeze({
   INVALID: 'E_INVALID',
   NOT_FOUND: 'E_NOT_FOUND',
   GIT: 'E_GIT',
+  GIT_TIMEOUT: 'E_GIT_TIMEOUT',
   SECRET: 'E_SECRET',
 });
 

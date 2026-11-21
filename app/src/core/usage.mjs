@@ -4,9 +4,13 @@
 // - 本機明細 local/usage/reads.json（每天、每個專案的次數，保留 180 天）。
 // - 同步摘要 machines/<mid>/usage.json（近 90 天），每台只寫自己的檔，不會衝突；每天最多寫一次。
 // 「一次」＝同一個對話、同一天讀了這筆記憶（重複讀不重複算）。
+// 2.0.0 P6：除了直接打開（reads），也計入 engram search 列出（searched，local/usage/search/）、情境召回帶出
+// （recalled，local/usage/recall/）、護欄命中（guarded，local/usage/guardrails/，以規則的 source 對應記憶），
+// 以及帶出之後同一場對話有沒有打開（recallOpened）。這些紀錄只在本機，同步的摘要只有數字。舊的摘要沒有這些欄位時視為 0。
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { loadRules } from '../../plugin/hooks/lens/guard.mjs';
 import { classify, normPath, parseCommand } from '../../plugin/hooks/lens/model.mjs';
 import { readJson, readText, writeJson } from './fsx.mjs';
 import { encodeProjectPath, memoryRootFor } from './paths.mjs';
@@ -213,16 +217,88 @@ function pruneReads(reads, now) {
   }
 }
 
-/** 這台電腦的同步摘要內容：近 WINDOW_DAYS 天的次數、天數、最後讀取日與各專案次數（鍵排序，兩次結果一字不差）。 */
+// ───────── 帶出、搜尋列出、護欄命中（2.0.0 P6）─────────
+
+const logDir = (local, kind) => path.join(local, 'usage', kind);
+const EXPOSURE_KEYS = ['recalled', 'recallOpened', 'searched', 'guarded'];
+
+/** engram search 列出的記憶：local/usage/search/<日期>.jsonl，一行一筆 { at, ref }（只在本機） */
+export async function noteSearch(local, refs, now = Date.now()) {
+  const list = [...new Set((Array.isArray(refs) ? refs : []).filter((r) => typeof r === 'string' && r))];
+  if (!list.length) return;
+  const at = new Date(now).toISOString();
+  await fsp.mkdir(logDir(local, 'search'), { recursive: true });
+  await fsp.appendFile(path.join(logDir(local, 'search'), `${localDate(now)}.jsonl`), list.map((ref) => `${JSON.stringify({ at, ref })}\n`).join(''), 'utf8');
+}
+
+/** 一種紀錄（recall、search、guardrails）在 cutMs 之後的每一行（檔名是日期；讀不懂的行略過）。時間欄位接受 at、time、ts */
+async function readLog(local, kind, cutMs) {
+  const dir = logDir(local, kind);
+  const fromDay = new Date(cutMs - DAY).toISOString().slice(0, 10);
+  const rows = [];
+  // 情境召回的 mod 每個程序各寫 <日期>.<程序代號>.jsonl（WP4a）：同一天的檔都要算
+  for (const n of (await fsp.readdir(dir).catch(() => [])).filter((x) => /^\d{4}-\d{2}-\d{2}(?:\.[A-Za-z0-9_-]{1,40})?\.jsonl$/.test(x) && x.slice(0, 10) >= fromDay).sort()) {
+    const text = (await readText(path.join(dir, n)).catch(() => null)) ?? '';
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let o;
+      try { o = JSON.parse(line); } catch { continue; }
+      if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
+      const t = Date.parse(o.at ?? o.time ?? o.ts ?? '');
+      if (Number.isFinite(t) && t >= cutMs) rows.push({ ...o, t });
+    }
+  }
+  return rows;
+}
+
+/**
+ * 近 WINDOW_DAYS 天每筆記憶被帶出、列出、命中的次數：ref → { recalled, recallOpened, searched, guarded }。
+ * - recallOpened：帶出之後，同一場對話在那天或之後打開了這筆記憶（對照讀取明細的「對話＋記憶」紀錄）
+ * - guarded：規則的 source 是記憶的 ref（或唯一對得上的記憶名稱）時算那筆記憶；內建規則沒有對應的記憶。只算擋下與提醒
+ */
+async function exposures(ctx, reads, now) {
+  const exist = await existingRefs(ctx.vault);
+  const canon = (r) => (typeof r === 'string' ? exist.get(r.trim().replace(/^\.?\//, '').toLowerCase()) ?? null : null);
+  const cut = now - WINDOW_DAYS * DAY;
+  const out = new Map();
+  const bump = (ref, k) => { const e = out.get(ref) ?? Object.fromEntries(EXPOSURE_KEYS.map((x) => [x, 0])); e[k]++; out.set(ref, e); };
+  const lastRead = new Map(); // 「對話\0記憶」→ 最後一次打開的日期
+  for (const [day, keys] of Object.entries(reads.seen ?? {})) for (const k of keys) if (!lastRead.has(k) || day > lastRead.get(k)) lastRead.set(k, day);
+  for (const r of await readLog(ctx.local, 'recall', cut)) {
+    const ref = canon(r.ref);
+    if (!ref) continue;
+    bump(ref, 'recalled');
+    const s = r.session ?? r.sessionId ?? r.sid;
+    if (s && (lastRead.get(`${s}\u0000${ref}`) ?? '') >= localDate(r.t)) bump(ref, 'recallOpened');
+  }
+  for (const r of await readLog(ctx.local, 'search', cut)) { const ref = canon(r.ref); if (ref) bump(ref, 'searched'); }
+  const byName = new Map();
+  for (const ref of exist.values()) { const n = path.posix.basename(ref, '.md').toLowerCase(); byName.set(n, byName.has(n) ? null : ref); }
+  const ruleRef = new Map();
+  for (const { rule } of loadRules(await readText(path.join(ctx.vault, 'guardrails', 'rules.json')).catch(() => null)).entries) {
+    const src = String(rule.source ?? '').trim();
+    const ref = canon(src) ?? (byName.get(src.toLowerCase()) || null);
+    if (ref) ruleRef.set(rule.id, ref);
+  }
+  for (const r of await readLog(ctx.local, 'guardrails', cut)) if ((r.kind === 'block' || r.kind === 'hint') && ruleRef.has(r.rule)) bump(ruleRef.get(r.rule), 'guarded');
+  return out;
+}
+
+/**
+ * 這台電腦的同步摘要內容：近 WINDOW_DAYS 天的次數、天數、最後讀取日與各專案次數（鍵排序，兩次結果一字不差）。
+ * 2.0.0 P6：另外有 recalled、recallOpened、searched、guarded（有才寫）；沒有讀取紀錄、但被帶出或列出過的記憶也列。
+ */
 export async function summaryFor(ctx, { now = Date.now() } = {}) {
   const scan = (await readJson(scanPath(ctx.local), null)) ?? {};
   const reads = (await readJson(readsPath(ctx.local), null)) ?? { refs: {} };
   const cut = localDate(now - WINDOW_DAYS * DAY);
+  const extra = await exposures(ctx, reads, now).catch(() => new Map());
   const refs = {};
-  for (const ref of Object.keys(reads.refs ?? {}).sort()) {
-    const e = reads.refs[ref];
+  for (const ref of [...new Set([...Object.keys(reads.refs ?? {}), ...extra.keys()])].sort()) {
+    const e = reads.refs?.[ref] ?? { days: {} };
     const days = Object.keys(e.days ?? {}).filter((d) => d >= cut).sort();
-    if (!days.length) continue;
+    const x = extra.get(ref);
+    if (!days.length && !x) continue;
     let n = 0;
     const per = {};
     for (const d of days) {
@@ -232,7 +308,8 @@ export async function summaryFor(ctx, { now = Date.now() } = {}) {
     }
     const projects = {};
     for (const pid of Object.keys(per).sort()) projects[pid] = per[pid];
-    refs[ref] = { reads: n, days: days.length, last: days[days.length - 1], projects };
+    refs[ref] = { reads: n, days: days.length, last: days[days.length - 1] ?? null, projects };
+    for (const k of EXPOSURE_KEYS) if (x?.[k]) refs[ref][k] = x[k];
   }
   return { v: 1, since: scan.since ?? localDate(now), window: WINDOW_DAYS, refs };
 }
@@ -286,9 +363,11 @@ export async function loadUsage(vaultDir) {
     const list = u.refs && typeof u.refs === 'object' && !Array.isArray(u.refs) ? u.refs : {};
     for (const [ref, e] of Object.entries(list)) {
       if (!e || typeof e !== 'object') continue;
-      const cur = refs.get(ref) ?? { reads: 0, days: 0, last: null, projects: {}, byMachine: {} };
+      const cur = refs.get(ref) ?? { reads: 0, days: 0, last: null, projects: {}, byMachine: {}, recalled: 0, recallOpened: 0, searched: 0, guarded: 0 };
       cur.reads += Number(e.reads) || 0;
       cur.days += Number(e.days) || 0;
+      // 2.0.0 P6（舊的摘要沒有這些欄位：視為 0）
+      for (const k of EXPOSURE_KEYS) cur[k] += Number(e[k]) || 0;
       if (e.last && (!cur.last || e.last > cur.last)) cur.last = e.last;
       for (const [pid, n] of Object.entries(e.projects && typeof e.projects === 'object' ? e.projects : {})) cur.projects[pid] = (cur.projects[pid] ?? 0) + (Number(n) || 0);
       cur.byMachine[mid] = Number(e.reads) || 0;

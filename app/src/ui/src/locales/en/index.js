@@ -13,7 +13,11 @@ import askclaude from './askclaude.js';
 import editor from './editor.js';
 import tidy from './tidy.js';
 import autopilot from './autopilot.js';
+import holding from './holding.js';
+import env from './env.js';
+import guardrails from './guardrails.js';
+import digest from './digest.js';
 
-export const PARTS = { common, overview, library, inbox, projects, devices, core, schedule, import: importView, settings, askclaude, editor, tidy, autopilot };
+export const PARTS = { common, overview, library, inbox, projects, devices, core, schedule, import: importView, settings, askclaude, editor, tidy, autopilot, holding, env, guardrails, digest };
 
 export default Object.assign({}, ...Object.values(PARTS));

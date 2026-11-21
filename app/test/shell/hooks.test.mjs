@@ -155,10 +155,10 @@ describe('Stop、SessionEnd、PostCompact', () => {
     const d = deps();
     let loaded = 0;
     const overrides = { ...d.overrides, loadEngine: async () => { loaded++; throw new Error('Stop 不應載入引擎'); } };
-    const transcript = path.join('C:', 'Users', 'Sen', '.claude', 'projects', 'C--Users-Sen-Desktop-Acme-Gateway', 's-1.jsonl');
+    const transcript = path.join('C:', 'Users', 'you', '.claude', 'projects', 'C--Users-you-Desktop-Acme-Gateway', 's-1.jsonl');
     assert.equal(await runHook('Stop', { session_id: 's-1', cwd: startInput.cwd, transcript_path: transcript }, overrides), null);
     assert.equal(loaded, 0);
-    const flag = JSON.parse(fs.readFileSync(path.join(paths.dirty, 'C--Users-Sen-Desktop-Acme-Gateway'), 'utf8'));
+    const flag = JSON.parse(fs.readFileSync(path.join(paths.dirty, 'C--Users-you-Desktop-Acme-Gateway'), 'utf8'));
     assert.deepEqual(flag, { cwd: startInput.cwd, sessionId: 's-1', at: new Date(NOW).toISOString() });
   });
 
@@ -191,12 +191,12 @@ describe('Stop、SessionEnd、PostCompact', () => {
 
 describe('InstructionsLoaded', () => {
   test('kind 對應', () => {
-    assert.equal(fileKind({ file_path: 'C:\\Users\\Sen\\.claude\\CLAUDE.md', memory_type: 'User' }), 'user');
+    assert.equal(fileKind({ file_path: 'C:\\Users\\you\\.claude\\CLAUDE.md', memory_type: 'User' }), 'user');
     assert.equal(fileKind({ file_path: 'C:\\proj\\CLAUDE.md', memory_type: 'Project' }), 'project');
     assert.equal(fileKind({ file_path: 'C:\\proj\\CLAUDE.local.md', memory_type: 'Local' }), 'local');
     assert.equal(fileKind({ file_path: 'C:\\proj\\.claude\\rules\\style.md', memory_type: 'Project' }), 'rule');
-    assert.equal(fileKind({ file_path: 'C:\\Users\\Sen\\.engram\\vault\\core\\CORE.md', memory_type: 'User', parent_file_path: 'C:\\Users\\Sen\\.claude\\CLAUDE.md' }), 'import');
-    assert.equal(fileKind({ file_path: 'C:\\Users\\Sen\\.claude\\projects\\x\\memory\\MEMORY.md', memory_type: 'Project' }), 'memory-index');
+    assert.equal(fileKind({ file_path: 'C:\\Users\\you\\.engram\\vault\\core\\CORE.md', memory_type: 'User', parent_file_path: 'C:\\Users\\you\\.claude\\CLAUDE.md' }), 'import');
+    assert.equal(fileKind({ file_path: 'C:\\Users\\you\\.claude\\projects\\x\\memory\\MEMORY.md', memory_type: 'Project' }), 'memory-index');
   });
 
   test('附加到 local/loaded/<sessionId>.json，格式照 LoadedFiles', async () => {

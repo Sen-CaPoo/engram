@@ -106,7 +106,8 @@ export async function rehearse({ engine, realClaude, sandbox, machineLabel = '�
   report.plan = { totals: plan.totals, sources: plan.sources };
   step('產生計畫', plan.totals);
 
-  const result = await eg.sweepLegacy({ dryRun: false, plan, bindSources: false });
+  // 演練在沙盒的記憶庫裡執行（不影響真的記憶庫）；來源照管理介面的匯入記為 user
+  const result = await eg.sweepLegacy({ dryRun: false, plan, bindSources: false, by: 'user' });
   report.result = { copied: result.copied, skipped: result.skipped, sources: result.sources, commits: result.commits.length };
   step('套用計畫（不綁定，不碰任何專案資料夾）', report.result);
 

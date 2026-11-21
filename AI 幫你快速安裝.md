@@ -9,7 +9,7 @@
 > **給使用者**：打開 Claude Code，把下面這段話整段貼上，Claude 就會照這份手冊幫你安裝。全程約 10 分鐘，每個會改動電腦的步驟都會先問過你。
 >
 > ```text
-> 請幫我安裝 Engram（Claude Code 記憶同步工具）。
+> 請幫我安裝 Engram（Claude Code 的記憶與環境管家）。
 > 安裝手冊：https://raw.githubusercontent.com/Sen-CaPoo/engram/main/AI%20%E5%B9%AB%E4%BD%A0%E5%BF%AB%E9%80%9F%E5%AE%89%E8%A3%9D.md
 > 請先完整讀完手冊再開始，照步驟進行；任何會改動電腦的步驟，都先用白話跟我說明並取得我的同意。
 > ```
@@ -23,7 +23,7 @@
 
 ## 你的任務
 
-替使用者在這台 Windows 電腦安裝 **Engram 憶跡**：它把 Claude Code 的記憶存進使用者自己的 GitHub 私人 repo，在多台電腦之間自動同步。安裝完成的定義：
+替使用者在這台 Windows 電腦安裝 **Engram 憶跡**：Claude Code 的記憶與環境管家。它把記憶存進使用者自己的 GitHub 私人 repo，在多台電腦之間自動同步，也檢查整個 Claude Code 環境（護欄、環境健檢、環境設定同步、自動更新）。安裝完成的定義：
 
 1. `engram status` 顯示這台電腦的名字與記憶庫位置；
 2. `engram doctor` 沒有非預期的 ✗；
@@ -118,6 +118,7 @@ git clone https://github.com/Sen-CaPoo/engram.git "$HOME/engram"
 - 資料夾已經存在、而且裡面有 `app/bin/engram.mjs`：改執行 `git -C "$HOME/engram" pull` 取得最新版。
 - 資料夾已經存在、但不是 Engram：請使用者換一個位置，不要覆蓋。
 - 使用者指定了其他位置：之後所有指令裡的 `$HOME/engram` 都換成那個位置。
+- 一定要用 `git clone`，不要改成下載 ZIP：2.0 起的自動更新（另一台電腦更新後，這台自己跟上）只支援 git 複本，ZIP 安裝的電腦要手動更新。使用者已經用 ZIP 安裝的話，不必重裝，告訴他之後要自己更新即可。
 
 ## 步驟 6：預覽安裝計畫（不改動任何東西，可以直接執行）
 
@@ -173,7 +174,7 @@ node "$HOME/.engram/app/current/bin/engram.mjs" import plan
 把結果摘要給使用者：幾個資料夾、幾筆記憶、各有多少會複製、略過（重複或較舊版本）、建議放全域或單機。然後讓使用者選：
 
 - **在管理介面檢查（建議第一次使用）**：執行 `node "$HOME/.engram/app/current/bin/engram.mjs" ui`，瀏覽器會開啟 `http://127.0.0.1:4777`。請使用者到「匯入既有記憶」：逐筆檢查 → 按「開始演練」（在複本上完整跑一次匯入、驗證與還原，不碰真實檔案）→ 四項檢查都打勾後按「套用計畫」。等使用者完成。
-- **由你直接套用**：使用者明確同意後執行 `node "$HOME/.engram/app/current/bin/engram.mjs" import apply --yes`。把輸出裡的**還原點**告訴使用者，需要時可用 `engram import undo <還原點>` 還原。輸出若有「延後：…正有對話在使用」，代表那個資料夾正在對話中（通常包含現在這段對話），對話結束後常駐程式會自動接上；在那之前，`doctor` 對這個資料夾的連結顯示 ✗ 是正常的。
+- **由你直接套用**：使用者明確同意後執行 `node "$HOME/.engram/app/current/bin/engram.mjs" import apply --yes`。你是在 Claude Code 的對話裡執行，所以匯入的內容會記成「Claude 代為確認」，不算使用者本人確認，自動駕駛不會把它當成使用者的偏好；要算本人確認，請使用者改用上面的管理介面匯入精靈，或在自己開的終端機（不是這個對話）執行同一個指令，並先告訴使用者這個差別。把輸出裡的**還原點**告訴使用者，需要時可用 `engram import undo <還原點>` 還原。輸出若有「延後：…正有對話在使用」，代表那個資料夾正在對話中（通常包含現在這段對話），對話結束後常駐程式會自動接上；在那之前，`doctor` 對這個資料夾的連結顯示 ✗ 是正常的。
 
 原始記憶檔一律保留，不會刪除。只有一台電腦的新使用者、或第二台電腦沒有舊記憶時，可以略過這一步。
 
@@ -191,11 +192,12 @@ node "$HOME/.engram/app/current/bin/engram.mjs" import plan
   2. 記憶面板：在 Claude Code 輸入 /engram-memories（或點底部的「◆ 憶跡」），看這次對話讀了哪些記憶
   3. 管理介面：在終端機輸入 engram ui（建議用 Edge 開啟，從選單「應用程式 › 將此網站安裝為應用程式」）
   4. 記憶整理：管理介面的「記憶整理」選範圍、複製指令貼給 Claude Code，Claude 提出建議後你在網頁逐項決定；不想逐項決定時，到「自動駕駛」頁開啟，讓 AI 每天自主整理（事後可以復原）
-  5. 第二台電腦：把同一段話貼給那台的 Claude Code，取一個不同的名字即可
-  6. 請保留 <Engram 資料夾>，之後更新會用到
+  5. 安裝後的預設：情境召回、護欄（擋下）、環境健檢與自動更新是開啟的，環境設定同步只報告（不會自動改設定），自動駕駛是關閉的；都可以在管理介面的「設定」調整
+  6. 第二台電腦：把同一段話貼給那台的 Claude Code，取一個不同的名字即可
+  7. 請保留 <Engram 資料夾>，之後更新會用到（自動更新也需要它是 git 複本）
 ```
 
-並提醒：已經開著的 Claude Code 對話，執行 `/reload-plugins` 或開新對話，才會出現 `/engram:inbox` 等指令。
+並提醒：已經開著的 Claude Code 對話，執行 `/reload-plugins` 或開新對話，才會出現 `/engram:inbox` 等指令，情境召回與護欄也才會載入。
 
 ## 已經安裝過（更新、修復或移除）
 
@@ -203,7 +205,8 @@ node "$HOME/.engram/app/current/bin/engram.mjs" import plan
 
 | 想做的事 | 做法 |
 | --- | --- |
-| 更新到最新版 | 確認 Engram 資料夾位置後執行 `git -C "<Engram 資料夾>" pull`，再執行 `engram update`。用 ZIP 安裝的，請使用者下載新版本的 ZIP 覆蓋原資料夾後再執行 `engram update`（ZIP 以版本號區分，同一版本重複解壓不會更新） |
+| 更新到最新版 | 確認 Engram 資料夾位置後執行 `git -C "<Engram 資料夾>" pull`，再執行 `engram update`。用 ZIP 安裝的，請使用者下載新版本的 ZIP 覆蓋原資料夾後再執行 `engram update`（ZIP 以版本號區分，同一版本重複解壓不會更新）。有好幾台電腦時，2.0 起只要在一台更新，其他台（git 安裝、已經是 2.0.0 以上）會在每天 11:00 自己跟上；1.x 沒有自動更新，所以每一台還在 1.x 的電腦，從 1.x 升級的第一次都要手動（`git pull`、`engram update`），更新到 2.0.0 之後才會自動跟上 |
+| 剛升級到 2.0 | 告訴使用者升級後的第一次會發生的事：情境召回、護欄、環境健檢、自動更新預設開啟（自動駕駛維持原本的設定）；所有電腦都是 2.0.0 時，下一次同步索引會依新的規則重建；記憶庫的打包改成每週一次由常駐程式在背景做；環境健檢第一次要讀近 30 天的對話紀錄，可能要幾秒；自動駕駛開啟、而且還沒設定對話紀錄保留天數時，會設成 60 天。新的索引規則要等所有電腦都更新到 2.0.0 之後才啟用，所以請使用者讓每一台都更新：只更新一台時不會遺失資料，但共用的索引會暫時照舊的排法（相容模式，`engram status` 會多一行說明，舊版電腦更新後自動切換），舊版那台要手動 `git pull`、`engram update`，混版期間不要手動編輯記憶庫裡的 `settings.json`、`release.json` 與 `env/`、`guardrails/`、`holding/` 底下的檔案。索引分層要所有電腦都升級到 2.0.0 之後才能切成「開啟」。詳見使用說明的「更新」一節 |
 | 檢查是否正常 | `engram doctor`，依結果對照疑難排解 |
 | 新增這台電腦的舊記憶 | 步驟 9 |
 | 移除 | 先執行 `engram uninstall --dry-run` 列出移除計畫並說明，使用者同意後執行 `engram uninstall --yes`。預設**保留記憶庫**；只有使用者明確要求連本機記憶庫一起刪除時才加 `--purge`，而且要再確認一次（GitHub 上的 repo 不受影響） |
@@ -229,11 +232,12 @@ node "$HOME/.engram/app/current/bin/engram.mjs" import plan
 | --- | --- |
 | `$HOME/.engram/` | 記憶庫、程式本體、本機狀態與備份 |
 | `$HOME/.claude/CLAUDE.md` | 在檔案末尾加一段兩行的 Engram 區塊，原本的內容不動；修改前先備份 |
-| Claude Code 外掛 `engram` | 對話開始與結束時的 hooks、`/engram:` 指令，以及記憶面板（觀察對話載入與讀取了哪些記憶檔，在 Claude Code 底部加一顆「◆ 憶跡」按鈕與 `/engram-memories` 指令） |
+| Claude Code 外掛 `engram` | 對話開始與結束時的 hooks、`/engram:` 指令，記憶面板（觀察對話載入與讀取了哪些記憶檔，在 Claude Code 底部加一顆「◆ 憶跡」按鈕與 `/engram-memories` 指令），以及情境召回與護欄（送出訊息、執行 Bash／PowerShell 指令之前各比對一次） |
 | npm 全域指令 `engram` | 讓一般終端機也能輸入 `engram`（安裝時加 `--no-cli` 可略過） |
-| Windows 工作排程器 `\Engram\Agent` | 登入時在背景啟動 Engram，每 10 分鐘同步一次 |
+| Windows 工作排程器 `\Engram\Agent` | 登入時在背景啟動 Engram：每 10 分鐘同步，每天環境健檢與自動更新，每週打包記憶庫 |
 | 匯入時綁定的專案資料夾 | `.claude\settings.local.json` 寫一行記憶位置；不是 git 的資料夾另寫一個 `.claude\engram.json` 標記 |
 | `$HOME/.claude/settings.json` 與記憶資料夾 | 只在預設權限模式是 auto 或 bypassPermissions 時：原本的記憶資料夾備份後換成連結，並允許 Claude 讀取該連結 |
+| `$HOME/.claude/settings.json` 的其他設定 | 除了「允許讀取」的設定（上一列的記憶連結，與對話回顧用的資料夾），Engram 不會主動改這個檔。只有使用者在這台套用環境設定同步，或開啟自動駕駛而且還沒設定對話紀錄保留天數（會設成 60 天）時才會改；改之前先備份，可以還原，解除安裝時也會還原 |
 
 每一項都記在安裝紀錄裡，`engram uninstall` 會逐項還原。
 

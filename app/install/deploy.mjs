@@ -37,11 +37,14 @@ export function activeVersion(home) {
   try { return path.basename(fs.realpathSync(cur)); } catch { return null; }
 }
 
+// 部署時先複製到「<版本>.tmp-<程序編號>」再改名（deploy）：被中斷（斷電、程序被結束）時會留下半成品，它不是版本
+const TMP_RE = /\.tmp-(\d+)$/;
+
 export function listVersions(home) {
   const root = appRoot(home);
   if (!fs.existsSync(root)) return [];
   return fs.readdirSync(root, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && e.name !== 'current' && !isLink(path.join(root, e.name)))
+    .filter((e) => e.isDirectory() && e.name !== 'current' && !TMP_RE.test(e.name) && !isLink(path.join(root, e.name)))
     .map((e) => ({ name: e.name, mtimeMs: fs.statSync(path.join(root, e.name)).mtimeMs }))
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
@@ -57,10 +60,23 @@ async function pointCurrent(home, target) {
  * 部署 sourceDir 的程式到新的版本資料夾並切換 current。已有同名版本時直接切換（同一個 commit 不重複複製；-dirty 版本一律重新複製）。
  * @returns {{ appDir, versionDir, version, previous }}
  */
+/** 中斷的部署留下的暫存資料夾：持有它的程序已經不在（或就是這個程序、前一次失敗留下的）就刪掉；另一個程序還活著時它可能正在複製，不動 */
+async function sweepTmp(home) {
+  const root = appRoot(home);
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; } };
+  for (const e of await fsp.readdir(root, { withFileTypes: true }).catch(() => [])) {
+    const m = TMP_RE.exec(e.name);
+    if (!e.isDirectory() || !m) continue;
+    if (Number(m[1]) !== process.pid && alive(Number(m[1]))) continue;
+    await fsp.rm(path.join(root, e.name), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function deploy(home, sourceDir) {
   const version = versionTag(sourceDir);
   const dest = path.join(appRoot(home), version);
   const previous = activeVersion(home);
+  await sweepTmp(home);
   if (!fs.existsSync(dest) || version.endsWith('-dirty')) {
     const tmp = `${dest}.tmp-${process.pid}`;
     await fsp.rm(tmp, { recursive: true, force: true });
@@ -73,24 +89,25 @@ export async function deploy(home, sourceDir) {
     await fsp.rename(tmp, dest);
   }
   await pointCurrent(home, dest);
-  await prune(home);
+  await prune(home, previous);
   return { appDir: currentDir(home), versionDir: dest, version, previous };
 }
 
-/** 切回上一個版本（engram update --rollback） */
-export async function rollback(home) {
+/** 切回上一個版本（engram update --rollback）。to：指定要切回的版本資料夾（自動更新用，退回到更新前的那個版本）；沒指定時切回最近部署的另一個版本 */
+export async function rollback(home, to) {
   const active = activeVersion(home);
-  const prev = listVersions(home).find((v) => v.name !== active);
+  const prev = listVersions(home).find((v) => (to ? v.name === to : v.name !== active));
   if (!prev) throw Object.assign(new Error('沒有可以切回的舊版本'), { code: 'E_NOT_FOUND' });
   await pointCurrent(home, path.join(appRoot(home), prev.name));
   return { version: prev.name, previous: active };
 }
 
-/** 只保留最近的幾個版本（使用中的那個一定保留） */
-async function prune(home) {
+/** 只保留最近的幾個版本（使用中的那個一定保留；剛被取代的版本 previous 也一定保留，它是 rollback 的目標，就算它的修改時間很舊） */
+async function prune(home, previous) {
   const active = activeVersion(home);
-  const old = listVersions(home).filter((v) => v.name !== active).slice(KEEP_VERSIONS - 1);
-  for (const v of old) await fsp.rm(path.join(appRoot(home), v.name), { recursive: true, force: true }).catch(() => {});
+  const others = listVersions(home).filter((v) => v.name !== active);
+  const ordered = [...others.filter((v) => v.name === previous), ...others.filter((v) => v.name !== previous)];
+  for (const v of ordered.slice(KEEP_VERSIONS - 1)) await fsp.rm(path.join(appRoot(home), v.name), { recursive: true, force: true }).catch(() => {});
 }
 
 /** 移除整個 ~/.engram/app（解除安裝時） */

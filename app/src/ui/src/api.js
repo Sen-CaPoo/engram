@@ -35,8 +35,8 @@
 //   POST /api/secrets/redact   { ref }                 → ActionResult
 //   POST /api/secrets/allow    { ref, line }           → { ok }      （「這不是金鑰」）
 //   POST /api/apply            { fix }                 → ActionResult（fix.action 例如 'reconcile-bindings'：依權限模式重新對齊綁定，R-52）
-//   GET  /api/conflicts                      → Conflict[]
-//   POST /api/conflicts/resolve { id, choice, body? }  → ActionResult
+//   GET  /api/conflicts                      → Conflict[]（環境設定檔與護欄規則檔的紀錄帶 choices: ['theirs', 'ours']；同步自動修復留下的帶 by: 'heal'）
+//   POST /api/conflicts/resolve { id, choice, body? }  → ActionResult（設定檔的紀錄另有 changed、message、en.message；不適用的選項回 E_INVALID，值又被改過回 E_CONFLICT，紀錄都留著）
 //   GET  /api/history?ref=&limit=            → Commit[]
 //   POST /api/undo             { sha }                 → ActionResult   （資料夾改名的 commit 會整批還原那次改名，SW-4）
 //   GET  /api/collisions                     → { plan: [{ path, encoded, others, binding, to, blocked }], history: [{ id, at, items, retired, undoneAt? }] }
@@ -70,6 +70,33 @@
 //   GET  /api/autopilot/run?id=              → Run（actions、rejected、skipped、notes、calls、summary；見 app/src/autopilot/run.mjs）
 //   POST /api/autopilot/run                  → { started: true }   （進度經由 SSE 的 autopilot 事件）
 //   POST /api/autopilot/undo   { id, index? } → { ok, results: [{ index, ok, message? }] }   （index 省略＝整輪依相反順序復原）
+//   GET  /api/holding?status=                → [HoldingItem]（2.0.0 保留區；疑似金鑰已遮蔽；local: true 只在這台電腦（含疑似金鑰 secret: true，或含對話原文）；見 app/src/core/holding.mjs）
+//   GET  /api/holding/item?id=               → HoldingItem
+//   POST /api/holding/adopt    { id }                  → { ok, id, record, item, undo[] }   （交給整理流程寫進記憶；記憶之後被改過時 E_CONFLICT，項目留著）
+//   POST /api/holding/dismiss  { id }                  → { ok, item }   （不再自動重審）
+//   GET  /api/env                            → { envHealth, fingerprint, findings: Finding[] }（2.0.0 環境健檢；卡片的 fix.action 是 'env-fix'；見 app/src/core/envhealth.mjs）
+//   GET  /api/env/diff                       → { machines: [{ mid, label, self, updated, hasEnv }], compared, items: [{ area, key, kind, values: { mid: 值|null }, newer, summary, en }] }
+//   POST /api/env/fix          { id }                  → { ok, code, … }   （H29 回 { ok: false, delegated: 'gc', note }）
+//   GET  /api/env/profile                    → { present, problem, profile: { env, settings, skills, plugins, updatedAt, by }, overrides, blocked, whitelist }（共用的環境設定檔）
+//   GET  /api/env/plan                       → { envSync, profile, settingsFormat, problem?, items: [{ area, key, action, from, to, hash?, approved?, summary, en }], blocked[], unused: { known, windowDays, plugins[] }, changes, pending }（見 app/src/core/envsync.mjs）
+//   POST /api/env/apply                      → { ok, applied, pending, backup?, items[] }
+//   POST /api/env/undo                       → { ok, id, kind, restored, kept[] }   （還原最近一次套用或外掛開關）
+//   POST /api/env/approve      { name?, hash? }        → { ok, count, approved[] }   （name 是 area:key；hash 是 plan 顯示時附的，內容變了 E_CONFLICT；省略 name＝全部）
+//   POST /api/env/plugin       { name, enabled }       → { ok, changed, key, enabled }
+//   POST /api/env/profile      { action, name }        → { ok, changed, … }   （action：unset、remove-skill、remove-plugin、skip、unskip）
+//   GET  /api/guardrails                     → { mode, source, problem?, rules: [{ id, tool, pattern, unless, action, message, source, silentFailure?, addedAt, by, effective,
+//                                                approval: 'builtin'|'approved'|'pending'|'not-needed', override: { action, reason, at, until? }|null, hits, blocks, hints, falseBlocks, confirmed, slow }], skipped[], days, totals }
+//   POST /api/guardrails/approve { id }               → { ok, id, changed, approval, rule }   （規則檔來的擋下規則在這台核可之後才真的擋下）
+//   POST /api/guardrails/test  { command, tool? }      → { mode, tool, verdict: 'block'|'hint'|'pass', matches: [{ id, action, declared, message }], deny?, hints[] }
+//   POST /api/guardrails/disable { id }                → { ok, id, changed }   （只在這台電腦停用）
+//   POST /api/guardrails/enable  { id }                → { ok, id, changed }   （拿掉這台的覆寫，含誤擋後自動降成提醒的）
+//   GET  /api/recall                         → { recall, recallForced, indexLayers, effectiveLayers, index, observe: { days, scopes: { global|machine: { bytes: { off, on }, reference } }, recalled, opened } }
+//   GET  /api/update                         → { autoUpdate, local, dev, release: { version, commit, … }|null, last: { at, status, code, reason, en: { reason } }|null }
+//   還在實作中的端點（介面先依約定寫好；端點不存在時介面當成「還沒有」）：
+//     每週摘要 GET /api/digest?week=YYYY-MM-DD → { week, generatedAt, learned: { created[], updated[] }, graduated[], graduation?: { candidates, needsConfirm, unconfirmed }, holding: { held, withCore }, preferences?: { used, pending, candidates? }, guardrails: { blocked, hinted, falseBlocks }, recall: { surfaced, opened }, env: { findings[] }, autopilot: { runs, costUsd, stopped: [{ at, reason: limit|auth|budget|busy }] }, previous[] }
+//       （graduation 與 preferences.candidates 之前存的週沒有；404 或 501 → 介面顯示「還沒有摘要」）
+//     自動駕駛遵守的偏好 GET /api/autopilot/preferences → { used: [{ ref, name, description, type, source, en? }], pending: [{ ref, sha, name, description, type, source, graduation?: 'core', en? }], candidates?: [{ ref, sha, name, description, type, scope: 'global'|'machine', source, reads, recalled, graduation?: 'core' }] }
+//       （used：判斷時會遵守的偏好與確認來源；pending：還沒採用、按「這是我的偏好」走 POST /api/review/confirm；candidates：常用、但目前內容還沒由使用者本人確認的其他記憶，同樣用 POST /api/review/confirm 確認；404 或 501 → 介面顯示空狀態）
 //   GET  /api/agent                          → AgentInfo（見下）
 //   POST /api/jobs/run         { id }                  → { started: true }
 //   POST /api/jobs/toggle      { id, enabled }         → AgentInfo
@@ -195,6 +222,33 @@ const httpApi = {
   autopilotStart: () => request('POST', '/api/autopilot/run'),
   autopilotUndo: (id, index) => request('POST', '/api/autopilot/undo', { id, index }),
   autopilotResume: (category) => request('POST', '/api/autopilot/resume', { category }),
+  // 2.0.0：保留區、環境、護欄、情境召回、自動更新、每週摘要
+  holding: (f = {}) => request('GET', `/api/holding${qs(f)}`),
+  holdingAdopt: (id) => request('POST', '/api/holding/adopt', { id }),
+  holdingDismiss: (id) => request('POST', '/api/holding/dismiss', { id }),
+  env: () => request('GET', '/api/env'),
+  envDiff: () => request('GET', '/api/env/diff'),
+  envFix: (id) => request('POST', '/api/env/fix', { id }),
+  envProfile: () => request('GET', '/api/env/profile'),
+  envPlan: () => request('GET', '/api/env/plan'),
+  envApply: () => request('POST', '/api/env/apply', {}),
+  envUndo: () => request('POST', '/api/env/undo', {}),
+  /** name 省略＝核可全部等待中的項目；name 是 area:key，hash 是 plan 顯示時附的（之後內容變了會 E_CONFLICT） */
+  envApprove: (name, hash) => request('POST', '/api/env/approve', name === undefined ? {} : { name, ...(hash ? { hash } : {}) }),
+  envPlugin: (name, enabled) => request('POST', '/api/env/plugin', { name, enabled }),
+  /** action：unset（name 是環境變數，或 setting:<鍵>）、remove-skill、remove-plugin、skip、unskip（這台略過，name 寫成 area:名稱） */
+  envProfileAction: (action, name) => request('POST', '/api/env/profile', { action, name }),
+  guardrails: () => request('GET', '/api/guardrails'),
+  guardrailsTest: (command, tool) => request('POST', '/api/guardrails/test', { command, tool }),
+  guardrailsDisable: (id) => request('POST', '/api/guardrails/disable', { id }),
+  guardrailsEnable: (id) => request('POST', '/api/guardrails/enable', { id }),
+  guardrailsApprove: (id) => request('POST', '/api/guardrails/approve', { id }),
+  // 自動駕駛遵守的偏好：端點還在實作中，不存在（404）或引擎還不支援（501）時回傳 null
+  autopilotPreferences: () => request('GET', '/api/autopilot/preferences').catch((e) => { if (e.status === 404 || e.status === 501) return null; throw e; }),
+  recall: () => request('GET', '/api/recall'),
+  update: () => request('GET', '/api/update'),
+  // 每週摘要：端點不存在（404）或引擎還不支援（501）時回傳 null，介面顯示「還沒有摘要」
+  digest: (week) => request('GET', `/api/digest${qs({ week })}`).catch((e) => { if (e.status === 404 || e.status === 501) return null; throw e; }),
   agent: () => request('GET', '/api/agent'),
   runJob: (id) => request('POST', '/api/jobs/run', { id }),
   toggleJob: (id, enabled) => request('POST', '/api/jobs/toggle', { id, enabled }),

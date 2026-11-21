@@ -10,7 +10,7 @@ import {
 } from '../../src/scheduler/task.mjs';
 import { mkTmp, rmTmp, useHomes } from './helpers.mjs';
 
-const APP = 'C:\\Users\\Sen\\Desktop\\Claude_專案記憶\\app';
+const APP = 'C:\\Users\\you\\Desktop\\Demo_測試資料\\app';
 const NODE = 'C:\\Program Files\\nodejs\\node.exe';
 const base = { userId: 'DEVPC\\Sen', nodePath: NODE, appDir: APP, systemRoot: 'C:\\Windows' };
 const tag = (xml, name) => new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml)?.[1];

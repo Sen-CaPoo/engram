@@ -90,14 +90,19 @@ export async function renameWithRetry(from, to, attempts = 6) {
   }
 }
 
+/** 那個路徑不是檔案（例如同步來的內容把它做成了資料夾）：和「讀不懂」一樣回傳 fallback，不讓呼叫端整個失敗。其他讀取錯誤（被占用、沒有權限）照丟 */
+const notAFile = (err) => err?.code === 'EISDIR' || err?.code === 'ENOTDIR';
+
 export async function readJson(p, fallback = null) {
-  const t = await readText(p);
+  let t;
+  try { t = await readText(p); } catch (err) { if (notAFile(err)) return fallback; throw err; }
   if (t === null) return fallback;
   try { return JSON.parse(t.replace(/^\uFEFF/, '')); } catch { return fallback; }
 }
 
 export function readJsonSync(p, fallback = null) {
-  const t = readTextSync(p);
+  let t;
+  try { t = readTextSync(p); } catch (err) { if (notAFile(err)) return fallback; throw err; }
   if (t === null) return fallback;
   try { return JSON.parse(t.replace(/^\uFEFF/, '')); } catch { return fallback; }
 }

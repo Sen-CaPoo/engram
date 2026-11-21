@@ -52,6 +52,10 @@ export const IconBack = make(<><path d="M15 5 8 12l7 7" /></>);
 export const IconTidy = make(<><rect x="5" y="4.5" width="14" height="16" rx="1.5" /><path d="M9 4.5V3.5h6v1" /><path d="m8.5 12.5 2.2 2.2 4.8-4.8" /></>);
 export const IconAutopilot = make(<><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="2" /><path d="M3.6 12H10M14 12h6.4M12 14v6.4" /></>);
 export const IconArchive = make(<><rect x="3.5" y="4.5" width="17" height="4" rx="1" /><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5" /><path d="M10 12.5h4" /></>);
+// 2.0.0：保留區（托盤裡的兩張暫停的單子）、環境（終端機）、每週摘要（月曆）
+export const IconHolding = make(<><path d="M4 14.5 5.6 5.5a1 1 0 0 1 1-.8h10.8a1 1 0 0 1 1 .8L20 14.5" /><path d="M4 14.5V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4.5h-5a3 3 0 0 1-6 0z" /><path d="M10.5 8v3.5M13.5 8v3.5" /></>);
+export const IconEnv = make(<><rect x="3" y="4.5" width="18" height="15" rx="1.5" /><path d="m7 10 3 2.5L7 15" /><path d="M12.5 15H17" /></>);
+export const IconDigest = make(<><rect x="4" y="5" width="16" height="15" rx="1.5" /><path d="M8 3.5v3M16 3.5v3M4 9.5h16" /><path d="M8 13h3M8 16.5h8" /></>);
 
 // Engram 標誌：一筆畫的 e 跟隨 currentColor，紅點固定使用 --dot
 export function EngramLogo(props) {

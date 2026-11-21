@@ -16,11 +16,26 @@ Currently **Windows 11** only. Background sync uses Windows Task Scheduler, and 
 
 ### Which Claude plan do I need?
 
-Any plan that lets you use Claude Code normally. Day to day, Engram makes no AI calls and uses none of your Claude quota. Your quota is used only when you type an `/engram` command yourself, or for the compatibility probe when Claude Code is updated (which you can turn off).
+Any plan that lets you use Claude Code normally. Day to day, Engram makes no AI calls and uses none of your Claude quota. Your quota is used only when you type an `/engram` command yourself, for the compatibility probe when Claude Code is updated (which you can turn off), and when you turn autopilot on. Context recall, guardrails, the environment check, and automatic updates all run on your computer and use no quota.
 
 ### How is Engram different from Claude Code's built-in memory?
 
-Claude Code's automatic memory lives on one computer and follows the folder path. Engram keeps using the same memory format and adds cross-computer sync, project IDs, three scopes, conflict handling, health checks, and full undo. Engram doesn't modify Claude Code itself, and after you remove it, Claude Code keeps working as usual.
+Claude Code's automatic memory lives on one computer and follows the folder path. Engram keeps using the same memory format and adds cross-computer sync, project IDs, three scopes, conflict handling, health checks, and full undo. From 2.0, Engram also looks after the whole Claude Code environment: it makes important memories show up at the right time, turns pitfalls you've hit into guardrails, checks the environment, and lets several computers share one set of settings. Engram doesn't modify Claude Code itself, and after you remove it, Claude Code keeps working as usual.
+
+### What should I know about upgrading to 2.0?
+
+The upgrade is free. Updating works the same as before (`git pull`, `engram update`). What happens the first time after upgrading, and each feature's default, are in [section 15 of the user guide](user-guide.md#15-updating). 1.x has no automatic updates, so every computer still on 1.x must be updated to 2.0.0 by hand once; versions after 2.0.0 then catch up on their own. The three most important things: the new index rules (corrections and preferences always listed, project indexes shortened automatically, index layers) start only once every computer is on 2.0.0, so please update them all; autopilot no longer splits or condenses memories; and environment settings, skills, and "block" guardrail rules that sync from another computer take effect only after you approve them once on each computer.
+
+### I updated only one computer and the other is still on an older version. What happens?
+
+Nothing is lost and nothing breaks; the new 2.0 index rules just don't apply for now:
+
+- The shared indexes (the global `INDEX.md` and each project's `MEMORY.md`) go into "compatibility mode" and stay laid out the old way, so the computers don't rewrite the same index in turn. The new index rules and index layers start only once every computer is updated.
+- The older computer doesn't update itself (1.x has no such feature); run `git pull` and `engram update` on it by hand.
+- While versions are mixed, don't edit by hand `settings.json`, `release.json`, or the files under `env/`, `guardrails/`, and `holding/` in the vault: the older version doesn't recognize these files and doesn't check them for possible secrets.
+- Once the older computer is updated to 2.0.0, the indexes switch to the new rules by themselves and you don't need to do anything; an older computer that hasn't been active for more than 7 days no longer counts. `engram status` shows whether compatibility mode is on and which computers are still on an older version.
+
+See [section 15 of the user guide](user-guide.md#15-updating).
 
 ### Is Engram affiliated with Anthropic?
 
@@ -30,7 +45,30 @@ No. Engram is an independently developed third-party tool. Claude and Claude Cod
 
 ### Where do my memories get sent?
 
-Only to **your own private GitHub repo**, `engram-vault` (or the repo you specified when you installed). Engram has no server and collects no data. Conversation transcripts are never synced; read statistics sync only how many times each memory was read.
+Only to **your own private GitHub repo**, `engram-vault` (or the repo you specified when you installed). Engram has no server and collects no data. Conversation transcripts are never synced; read statistics sync only how many times each memory was read. The full list is in the next question.
+
+### What syncs to my private vault, and what stays on this computer?
+
+| Synced to your private vault | Stays on this computer |
+| --- | --- |
+| Memory files, indexes, the core rules, and Engram's shared settings (for example index layers) | Conversation transcripts (stored by Claude Code itself; Engram reads them only on this computer) |
+| Each computer's read counts for each memory over the last 90 days, and hashes of which content versions you've confirmed | Holding area items produced by conversation review (they contain conversation text), and holding area items with a possible secret |
+| Environment fingerprints: names, versions, and content hashes only, with no setting values | The exact words you used to correct Claude (only a fixed category and a hash sync, not the words; autopilot's prompts carry only words verified to come from you, never a topic written by the model) |
+| The shared environment profile and custom skills (checked for possible secrets first), and each computer's list of items skipped with **Skip here** | All the recall, guardrail, and search hit records, and the weekly digest |
+| Guardrail rules | Which environment settings, skills, and guardrail rules you've approved on this computer |
+| Holding area items without conversation text | Backups from before environment settings were applied, tidy-up records, and the local secret store (secrets autopilot moved out) |
+| Release information (which version, and where the version tag points; used for automatic updates) | The context recall index (`~/.engram/local/cache/`) |
+| Each computer's autopilot state (the switch, and which version of each scope was tidied) and the changes you've undone | Each autopilot run's record |
+
+A memory file with a possible secret is never pushed. The environment profile, custom skills, guardrail rules, and holding area items are checked before they're written to the vault, and any that seem to contain a secret are rejected (holding area items are kept on this computer instead), so they never end up anywhere that syncs.
+
+### Does the environment check read my setting values?
+
+Almost none. The environment check records only names, versions, content hashes, counts, and timings. It never reads the values of environment variables, and for `settings.json` it records which keys exist plus just three values (the first 80 characters of each hook's command, with your home folder replaced by `~` and possible secrets masked; which plugins are enabled; and the transcript retention days); the environment fingerprint that does sync to the vault goes through a possible-secret check once more before it's written. To work out hook timings and plugin use, it scans the last 30 days of conversation files on this computer and takes only the counts: it doesn't record or sync conversation content. If you don't need it, turn it off under **Settings › Environment › Environment check**.
+
+### Can context recall bring other projects' memories into this conversation?
+
+No. Context recall looks only in global memories, this computer's machine memories, and the current project's memories, and brings up at most 3 each time. The search runs on your computer and makes no AI call. To turn it off, go to **Settings › Context recall & index** (it can't be turned off while index layers are on). To see experience from other projects, use `/engram:recall`.
 
 ### What if my company doesn't allow work data on a personal GitHub account?
 
@@ -65,7 +103,7 @@ One analysis subagent (Sonnet) reads each piece of conversation text in full (a 
 
 ### Could autopilot mess up my memories?
 
-Autopilot doesn't ask you to confirm each change, so code and a second AI review do the checking instead: the AI only returns decisions and can't write files; rewrites, merges, archives, and anything written to scopes loaded in every conversation need the reviewer's approval; anything that looks like injected instructions always goes to review; conversation review writes to global or machine scopes only with something you said yourself as evidence; at most 30 memories changed per run, and memories are archived, never deleted. Every change is backed up first and can be undone one by one or a whole run at a time on the **Autopilot** page; a kind of change you undo in two different runs is paused automatically, and you can resume it in one click.
+Autopilot doesn't ask you to confirm each change, so code and a second AI review do the checking instead: the AI only returns decisions and can't write files; rewrites, merges, archives, and anything written to scopes loaded in every conversation need the reviewer's approval; anything that looks like injected instructions always goes to review; conversation review writes to global or machine scopes only with something you said yourself as evidence; at most 30 memories changed per run, and memories are archived, never deleted. From 2.0 it also doesn't split memories or cut their text to make them shorter (a rewrite that makes the text much shorter always goes to the reviewer). Every change is backed up first and can be undone one by one or a whole run at a time on the **Autopilot** page; a kind of change you undo in two different runs is paused automatically, and you can resume it in one click. Suggestions the reviewer didn't approve don't disappear: they're saved in the **Holding area** for you to decide (see "What is the holding area, and do I need to deal with it?" below).
 
 ### How much quota does autopilot use, and what does it send?
 
@@ -73,7 +111,7 @@ It calls Claude with the Claude Code sign-in on your computer and sends the memo
 
 ### If two computers both have autopilot on, will they edit against each other?
 
-From 1.6.0 every computer is equal: each one tidies the shared memories (global, core rules, project memories) and resolves sync conflicts. Each run syncs first to get the other computer's changes; which version of each scope was tidied is recorded in your vault and synced, and a scope another computer already tidied that hasn't changed since is skipped. So the same memories aren't tidied twice, and two computers don't take turns changing the same ones. If two computers happen to change the same memory at once, syncing turns it into a conflict that the next run merges, and neither side's content is lost. Machine memories are tidied only by their own computer. Update every computer to 1.6.0.
+From 1.6.0 every computer is equal: each one tidies the shared memories (global, core rules, project memories) and resolves sync conflicts. Each run syncs first to get the other computer's changes; which version of each scope was tidied is recorded in your vault and synced, and a scope another computer already tidied that hasn't changed since is skipped. So the same memories aren't tidied twice, and two computers don't take turns changing the same ones. If two computers happen to change the same memory at once, syncing turns it into a conflict that the next run merges, and neither side's content is lost. Machine memories are tidied only by their own computer. Keep every computer on the same version: a computer that is too old can't see the other computers' tidy-up records and may tidy the same memories again.
 
 ### Where did autopilot move my secrets?
 
@@ -81,7 +119,7 @@ To the local secret store on this computer, `~/.engram/local/secrets/`, encrypte
 
 ### Why does "Waiting for your review" appear in the inbox?
 
-Claude wrote to a global memory, a machine memory, or the core rules on its own. These load in every conversation and affect every project, so you're asked to look at the changes and confirm, edit, or go back. Anything you changed in the dashboard, accepted as suggested on the Tidy-up page, or agreed to write with `/engram:save` isn't asked about again; content Claude rewrote for an **Adjust per note** item is still listed for review. If you don't need it, you can turn it off on the Settings page.
+Claude wrote to a global memory, a machine memory, or the core rules on its own. These load in every conversation and affect every project, so you're asked to look at the changes and confirm, edit, or go back. Anything you changed in the dashboard, accepted as suggested on the Tidy-up page, or agreed to write with `/engram:save` isn't asked about again; content Claude rewrote for an **Adjust per note** item is still listed for review. If you don't need it, you can turn it off on the Settings page. Note that "isn't asked about again" doesn't mean "is your preference"; see "Why didn't autopilot follow a preference I saved?" below.
 
 ### How are read statistics calculated?
 
@@ -115,7 +153,7 @@ Yes, for conversations opened from the project root: no mode ever triggers a pro
 
 ### Will lots of memories slow Claude down?
 
-Each time, Claude first reads only a very short index, and reads the full text only when it's needed. Engram keeps the global and machine indexes short, and memories that don't fit are still findable with `engram search`. When a project's index gets close to the 200-line limit, the inbox reminds you to tidy it.
+Each time, Claude first reads only a very short index, and reads the full text only when it's needed. Engram keeps the global and machine indexes short: when there isn't room, pinned memories and your corrections and preferences always stay in the index, and memories that don't fit are still findable with `engram search` and may be brought up by context recall when they're relevant. When a project's index reaches 80% of the load limit, Engram automatically shortens each line, and only if it still doesn't fit does it leave lines out by importance (with a note saying "N more not listed"). These two new rules take effect only once every computer is on 2.0.0.
 
 ### How do I know which memories Claude read this time?
 
@@ -124,6 +162,43 @@ Open the memory pane: select **◆ Engram** at the bottom of Claude Code, or typ
 ### Why do you recommend setting Claude Code's default permission mode to auto?
 
 It works without it: opening Claude Code from the project root is completely normal. When the mode is set to auto (or bypassPermissions), Engram additionally creates a memory link so that opening Claude Code from a subfolder can read and write the same set of memories too.
+
+### Why didn't autopilot follow a preference I saved?
+
+Autopilot follows only the preferences **you confirmed yourself**, plus whatever was there when you installed. It looks at the core rules and at the global `feedback` and `user` memories. Anything written by a command run inside a Claude Code conversation (including `/engram:save`, `/engram:tidy-apply`, handling conflicts with `/engram:inbox`, and `engram remember --reviewed`, `engram holding adopt`, or `engram import apply` run in a conversation) is always recorded as "confirmed on your behalf by Claude", and together with content autopilot confirmed for you, it doesn't automatically become its rules: what's written in a conversation can be steered by instructions slipped into it, so it needs your own nod. The same command counts as confirmed by you only when you run it in a terminal you opened yourself (not a Claude Code conversation).
+
+To make one count: open the **Autopilot** page of the dashboard, find the item under **Not adopted yet** in **Preferences autopilot follows**, and select **This is my preference** (when there are several, you can use **Confirm all**). The **Followed when judging** list shows everything it follows now. You can also run `engram autopilot preferences` in your own terminal. If an item says it didn't fit in the preference block, there are too many preferences and the length limit was exceeded; make the content shorter. The same block also has a list of candidates: other memories that are used often but that you haven't confirmed yourself (for example global reference memories and this computer's machine memories). Confirming them doesn't make them preferences autopilot follows; it lets memory graduation write them into the core rules or turn them into guardrail rules later.
+
+### What is the holding area, and do I need to deal with it?
+
+The holding area keeps suggestions autopilot wanted to make but didn't carry out: the reviewer didn't approve them, they were outside what that run could handle, or they're a version that was sent back. The full content and evidence are kept. You don't need to empty it: the holding area isn't memory, doesn't appear in the index or in searches, and doesn't affect what Claude reads. When you want to look, open the **Holding area** page of the dashboard (or run `engram holding`). After looking, you can **Apply** an item (it's written into memory, backed up first, and undoable) or mark it **Not needed** (the same proposal isn't sent for review again for 90 days). Items the reviewer didn't approve, or that were outside that run's scope, are also reviewed again by autopilot in the next few runs, up to twice (items that synced in from another computer aren't reviewed again by this one; they're left to you). Items applied or marked not needed for more than 90 days are cleared automatically.
+
+### A guardrail blocked a command I wanted to run. What now?
+
+1. **Read the explanation first.** Claude receives a message that starts with `[Engram guardrail]` (in Chinese, `[Engram 護欄]`; the language is the one chosen in the memory pane, then Claude Code's `language` setting, then the system locale, and English when none of them is set) explaining why that way of writing it goes wrong, and the right way to write it. Claude usually rewrites the command and sends it again by itself.
+2. **If you're sure the block was wrong:** ask Claude to send the same command again unchanged, and it will be let through for the rest of that conversation. When the second try succeeds, Engram lowers that rule to "hint only" on this computer, and it comes back automatically after 14 days. (One kind of rule guards against problems that go wrong quietly without any error, so a successful second try doesn't prove the block was wrong; those rules are never lowered automatically, and it's up to you whether to adjust them.)
+3. **If you don't want this rule to block you again:** go to **Environment › Guardrails** and disable that rule on this computer (your other computers aren't affected), or go to **Settings › Guardrails** and change it to **Hint only** or **Off**.
+4. **To find out which rule it was:** use **Try it** under **Environment › Guardrails**. Paste the command and it lists the rules it matches (it only matches and never runs the command).
+
+If guardrails themselves break or time out, the command is sent as usual and nothing gets stuck.
+
+### Why do I have to approve settings that synced from another computer?
+
+Environment settings, custom skills, and "block" guardrail rules take effect directly on this computer once applied, and never ask you again. So anything that synced from another computer applies only after you've read its full content on this computer and pressed **Approve**; if the content changes later, it needs approval again. Approval can only be given in the dashboard (**Environment › Settings sync** and **Environment › Guardrails**) or in your own terminal (`engram env approve`, `engram guardrails approve <rule id>`); running it inside a Claude Code conversation is refused, so the AI can't approve something for you and then apply it itself. Settings you haven't approved are only listed under **Waiting for approval on this computer** and are never applied.
+
+### Could automatic updates install a broken version, and how do I turn them off?
+
+Automatic updates are guarded at every step. They accept only the repository you installed from, with a version tag where the tag points to exactly the release that was published. This computer's Engram folder must be a clean git copy, and only "forward" updates are accepted. It backs up before updating, runs a check afterwards, and confirms that the new version's agent can start; if any step fails, it goes back to the previous version automatically and notifies you, and the same release isn't tried again. An install from a ZIP (not a git copy) or a development install is never updated automatically.
+
+To turn them off, switch off **Settings › Automatic updates** in the dashboard, and from then on update by hand with `git pull` and `engram update` as before. To find out why this computer didn't update, look at **Last check** in the same section, which gives the reason.
+
+### Where did my project go?
+
+It may have gone dormant. A project goes dormant when no computer has a folder bound to it and there has been no sign of any conversation for 90 days. The **Projects** page then shows only **Active** projects by default, and dormant ones are under **Dormant**; autopilot and the tidy-up checks no longer handle it. Its memories are fully kept and still searchable, and it wakes up by itself when you open Claude Code again in that project's folder.
+
+### The inbox says two projects may be the same one. Should I merge them?
+
+Merge them only if you're sure they're the same project. The basis for the suggestion is written on the card: when the git remotes are exactly the same, it's most likely the same project; when only some remotes or only the root commit match, it's most likely a fork or a shared template, not the same project. A merge moves one project's memories into the other. You can undo it from the change history under **Devices & sync**, but undoing restores only the vault and this computer's binding, so check your other computers yourself. Autopilot doesn't handle these suggestions and leaves the decision to you.
 
 ## Troubleshooting
 
@@ -144,7 +219,13 @@ Error messages are shown below as they appear on screen (in Traditional Chinese 
 | You need to sign in to GitHub again | Run `gh auth login` in a terminal to sign in again; if git's credentials aren't handed to GitHub CLI, run `git -C "$HOME/.engram/vault" fetch` in PowerShell and sign in when the browser opens |
 | Permission prompts keep appearing when memories are read or written | First make sure you're opening Claude Code from the project root. If the inbox has a **Reading memory for "…" will trigger a permission prompt** card, press **Allow reading**; if it has a **Reading and writing memory will trigger permission prompts** card, press **Use settings-file links** |
 | `/engram:inbox` and other commands don't appear | Run `/reload-plugins` in the open conversation, or start a new conversation |
-| The memory pane or **◆ Engram** at the bottom doesn't appear | Type `/engram-memories` to open it (it opens by itself only in the fullscreen layout with a terminal at least 144 columns wide). If you just updated Engram, run `/reload-plugins` in the open conversation. If it's still missing, run `claude update`: the pane needs a Claude Code version that supports plugin panes (tested on 2.1.307 through 2.1.309) |
+| The memory pane or **◆ Engram** at the bottom doesn't appear | Type `/engram-memories` to open it (it opens by itself only in the fullscreen layout with a terminal at least 144 columns wide). If you just updated Engram, run `/reload-plugins` in the open conversation. If it's still missing, run `claude update`: the pane needs a Claude Code version that supports plugin panes (tested on 2.1.329 and 2.1.330; earlier versions weren't tested) |
+| Context recall brought up nothing, or guardrails didn't block a command | Both work through the plugin's mod. First run `/reload-plugins` in the open conversation. When your Claude Code version doesn't support plugin panes, context recall is taken over by a fallback command hook (same result), but guardrails can't block commands and only list reminders at the start of the conversation. Also make sure **Context recall** and **Guardrails** haven't been turned off on the Settings page |
+| Automatic update didn't update | **Last check** under **Settings › Automatic updates** gives the reason. Common ones: installed from a ZIP (not a git copy), the Engram folder has uncommitted changes, a conversation is running (it tries again later), or this computer is already on the latest version |
+| **Environment › Differences** says **No computers to compare yet** | At least two computers need to be updated to 2.0.0 and to each complete one environment check (it runs by itself every day at 10:00, or run `engram env`) |
+| Sync is stuck, and you get a `同步已連續失敗` ("sync has failed repeatedly") notification | Open **Devices & sync** in the dashboard to see why. Engram diagnoses it by itself: when a held-back file (a possible secret) blocks a merge, it backs the file up, moves it aside, merges, and puts it back, and the other computer's version goes into the conflicts area; your computer's version is never thrown away. If you see a possible-secret card, redact or remove the secret as the card says and syncing resumes |
+| `engram status` says the indexes are in compatibility mode | The vault has a computer that was used in the last 7 days and runs a version below 2.0.0 (the status lists which ones). Update those computers to 2.0.0 (`git pull`, `engram update`) and the indexes switch back by themselves; nothing else to do. An old computer that is no longer used stops counting after 7 days without activity |
+| Autopilot stopped | The top of the **Autopilot** page gives the reason: the usage limit (it continues by itself), your Claude Code sign-in has expired (run `claude auth login` in a terminal, or type `/login` in Claude Code), or Claude is briefly busy (it tries again by itself) |
 | Clicking **◆ Engram** does nothing | Claude Code's regular screen (with `CLAUDE_CODE_NO_FLICKER=0` set, or inside tmux) doesn't receive mouse clicks. Use `/engram-memories`, or remove that variable and run outside tmux to get the default fullscreen layout |
 | You want the detailed logs | `%USERPROFILE%\.engram\local\logs\` (you can paste it straight into File Explorer's address bar) |
 

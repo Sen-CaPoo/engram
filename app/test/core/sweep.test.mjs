@@ -160,7 +160,7 @@ describe('SW-3：撞名與搬家的來源歸屬、空的封存專案、封存專
       const willArchive = plan.sources.filter((s) => s.target.archived && s.items.some((i) => (i.scope ?? 'project') === 'project')).length;
       assert.equal(plan.totals.archived, willArchive, '封存專案數只算真的會建立的（記憶全進全域的來源不算）');
 
-      const r = await e.sweepLegacy({ dryRun: false, plan });
+      const r = await e.sweepLegacy({ by: 'user', dryRun: false, plan });
       assert.deepEqual(r.deferred, [], '同一個編碼資料夾拆成多個來源時，綁定不會被誤判為規劃後有變更');
       assert.ok(isLink(memDir), '現存的資料夾換成 junction');
       const names = (await e.projects.list()).map((p) => p.name).sort();
@@ -231,7 +231,7 @@ describe('SW-3：撞名與搬家的來源歸屬、空的封存專案、封存專
       const enc = encodeProjectPath(ops);
       // 第一次匯入時資料夾不在、也沒有對話紀錄 → 封存專案「未歸屬（Ops）」
       mem(path.join(mm.claudeHome, 'projects', enc, 'memory'), 'runbook.md', { name: 'runbook', description: '值班手冊' });
-      const first = await e.sweepLegacy({ dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
+      const first = await e.sweepLegacy({ by: 'user', dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
       assert.equal(first.ok, true);
       const archived = (await e.projects.list()).find((p) => p.name === '未歸屬（Ops）');
       assert.ok(archived?.archived);
@@ -244,7 +244,7 @@ describe('SW-3：撞名與搬家的來源歸屬、空的封存專案、封存專
       assert.equal(s.target.isNew, true, '只建議、不自動連結');
       assert.ok(s.suggestions.some((x) => x.kind === 'project' && x.pid === archived.pid), '建議連到同名的封存專案');
       assert.match(s.suggestions.find((x) => x.pid === archived.pid).en.reason, /^Same name as the archived project "未歸屬（Ops）"/);
-      const r = await e.sweepLegacy({ dryRun: false, plan: applyEdits(plan, { targets: { [s.encoded]: { pid: archived.pid } } }) });
+      const r = await e.sweepLegacy({ by: 'user', dryRun: false, plan: applyEdits(plan, { targets: { [s.encoded]: { pid: archived.pid } } }) });
       assert.deepEqual(r.deferred, []);
       const p = (await e.projects.list()).find((x) => x.pid === archived.pid);
       assert.equal(p.archived, false, '接上資料夾後恢復為使用中');
@@ -304,7 +304,7 @@ describe('收編計畫與執行', () => {
   });
 
   test('執行：複製、建立 junction、原資料夾備份；H05 不再回報已收編的檔案', async () => {
-    const r = await eg.sweepLegacy({ dryRun: false, plan });
+    const r = await eg.sweepLegacy({ by: 'user', dryRun: false, plan });
     assert.equal(r.ok, true);
     assert.ok(r.copied >= 4);
     const encLive = encodeProjectPath(live);
@@ -366,7 +366,7 @@ describe('匯入中途失敗', () => {
       fs.writeFileSync(hook, '#!/bin/sh\ngit diff --cached --name-only | grep -q "second.md" && exit 1\nexit 0\n');
       fs.chmodSync(hook, 0o755);
       let err;
-      try { await e.sweepLegacy({ dryRun: false, plan }); } catch (x) { err = x; }
+      try { await e.sweepLegacy({ by: 'user', dryRun: false, plan }); } catch (x) { err = x; }
       assert.ok(err, '應該失敗');
       assert.match(String(err.restorePoint), /^engram-import-/);
       const { git: g } = await import('./helpers.mjs');
@@ -394,7 +394,7 @@ describe('R-47／R-48：還原保留最新內容、不留足跡', () => {
       mem(path.join(t1.dir, 'memory'), 'ci.md', { name: 'ci', description: 'CI 設定', body: `權杖：${token}` });
       mem(path.join(t1.dir, 'memory'), 'pref.md', { name: 'pref', description: '偏好', type: 'user', body: `個人權杖 ${token}` });
       mem(path.join(t1.dir, 'memory'), 'plain.md', { name: 'plain', description: '一般記憶' });
-      const res = await e.sweepLegacy({ dryRun: false });
+      const res = await e.sweepLegacy({ by: 'user', dryRun: false });
       const { git: g } = await import('./helpers.mjs');
       assert.ok(!g(e.paths.vault, 'log', '--all', '-p').includes(token), '含金鑰的檔案不進 git 歷史');
       await e.rollbackImport(res.restorePoint);
@@ -442,7 +442,7 @@ describe('R-47／R-48：還原保留最新內容、不留足跡', () => {
       mem(path.join(tA.dir, 'memory'), 'a-note.md', { name: 'a-note', description: '甲方', originSessionId: 'sa' });
       const excludeBefore = fs.readFileSync(path.join(a, '.git', 'info', 'exclude'), 'utf8');
       const plan = await e.sweepLegacy({ dryRun: true });
-      const res = await e.sweepLegacy({ dryRun: false, plan });
+      const res = await e.sweepLegacy({ by: 'user', dryRun: false, plan });
       // 匯入後透過 junction 修改
       const memDir = path.join(ta.dir, 'memory');
       fs.writeFileSync(path.join(memDir, 'rule.md'), memoryText({ name: 'rule', description: '規則', body: 'v2' }));
@@ -470,7 +470,7 @@ describe('一鍵收編（H05）', () => {
     const h = await h05Of(t.enc);
     assert.ok(h, '有尚未納管的記憶 → H05');
     assert.equal(h.fixes, undefined, '沒有候選專案時只有一個修正');
-    const r = await eg.apply(h.fix);
+    const r = await eg.apply(h.fix, { by: 'user' });
     assert.equal(r.ok, true);
     const pid = (await eg.projects.list()).find((p) => p.name === 'ScratchTool').pid;
     for (const f of ['scratch-owner.md', 'scratch-install.md', 'scratch-notes.md']) {
@@ -481,7 +481,8 @@ describe('一鍵收編（H05）', () => {
   });
 
   test('GitHub 改名（remote 不同、git 根 commit 相同）：H05 提供「收編到既有專案」；舊資料夾還在時預設建新專案', async () => {
-    const oldDir = makeRepo(path.join(m.userHome, 'Desktop', 'Atlas.Old'), { remote: 'https://github.com/example/Atlas.Old.git' });
+    // README 的內容和別的測試的 repo 不同：同一秒建立、內容相同的 repo 根 commit 會一樣，會多出一個候選（偶爾失敗的原因）
+    const oldDir = makeRepo(path.join(m.userHome, 'Desktop', 'Atlas.Old'), { remote: 'https://github.com/example/Atlas.Old.git', files: { 'README.md': '# atlas old\n' } });
     const oldPid = (await eg.identity.bind(oldDir, { create: { name: 'Atlas.Old' } })).pid;
     const newDir = path.join(m.userHome, 'Desktop', 'atlas-renamed');
     git(path.dirname(newDir), 'clone', '-q', oldDir, newDir);
@@ -503,10 +504,11 @@ describe('一鍵收編（H05）', () => {
     // 不是候選的專案一律拒絕（介面送來的 args 不可信）
     assert.match(h.detail, /那個專案在這台電腦沒有現存的資料夾/);
     // 不依賴前一個測試：自己建一個不相干的專案
-    const other = (await eg.identity.bind(makeRepo(path.join(m.userHome, 'Desktop', 'Unrelated')), { create: { name: 'Unrelated' } })).pid;
+    // 內容和其他 repo 不同：同一秒建立、內容相同的 repo 根 commit 會一樣，會被當成同一個專案的候選（以前偶爾失敗的原因）
+    const other = (await eg.identity.bind(makeRepo(path.join(m.userHome, 'Desktop', 'Unrelated'), { files: { 'README.md': '# unrelated repo\n' } }), { create: { name: 'Unrelated' } })).pid;
     await assert.rejects(eg.apply({ action: 'sweep', args: { encoded: t.enc, pid: other } }), /不是這個資料夾的候選專案/);
     await assert.rejects(eg.apply({ action: 'sweep', args: { encoded: t.enc, pid: { toString: () => oldPid } } }), (e) => e.code === 'E_INVALID');
-    const r = await eg.apply(h.fix);
+    const r = await eg.apply(h.fix, { by: 'user' });
     assert.equal(r.ok, true);
     assert.ok(fs.existsSync(path.join(eg.paths.vault, 'projects', oldPid, 'memory', 'atlas-notes.md')), '收進既有專案');
     assert.equal((await eg.projects.list()).filter((p) => /atlas-renamed/i.test(p.name)).length, 0, '沒有另外建新專案');

@@ -74,8 +74,61 @@ export async function undo(ctx, sha) {
     if (!staged.stdout.trim()) return { ok: true };
     await git(['commit', '-q', '-F', '-'], { cwd: ctx.vault, input: msg });
     const head = (await git(['rev-parse', 'HEAD'], { cwd: ctx.vault })).stdout.trim();
-    return { ok: true, commit: { sha: head, message: msg.split('\n')[0] }, undo: { sha: head } };
+    const result = { ok: true, commit: { sha: head, message: msg.split('\n')[0] }, undo: { sha: head } };
+    // 專案合併（link）改的不只是記憶庫：這台電腦資料夾的記憶連結（junction）與 settings.local.json 也改指向合併的目標，git 退不回去
+    if (info.action === 'link') Object.assign(result, await realignAfterLinkUndo(ctx, info));
+    return result;
   });
+}
+
+/**
+ * 還原專案合併之後，把這台電腦原本綁定在被合併專案（from）的資料夾接回去：綁定紀錄已經由 git 還原，
+ * 這裡把記憶連結與 settings.local.json 的 autoMemoryDirectory 改指回 from（additionalDirectories 是記憶連結本身的路徑，兩個方向都不變）。
+ * 合併時一併改到目標專案的「已移除的舊綁定」（對話回顧用，local/）也改回原專案（retiredRestored 是改回幾筆）。
+ * 做不到的部分放在回傳的 partial：資料夾不見了、重新綁定失敗、舊綁定找不回來，或這次合併是另一台電腦做的（那台電腦的資料夾與舊綁定在那台，這裡碰不到）。
+ * @returns {Promise<{ realigned: string[], retiredRestored?: number, partial?: { kind: string, path?: string, machine?: string, message: string, en: string }[] }>}
+ */
+async function realignAfterLinkUndo(ctx, info) {
+  const fromPid = info.refs.map((r) => /^projects\/([^/]+)$/.exec(r)?.[1]).find(Boolean); // link 的 Engram-Refs：第一個 projects/ 是 from
+  const realigned = [];
+  const partial = [];
+  if (info.machine && info.machine !== ctx.mid) {
+    partial.push({
+      kind: 'other-machine', machine: info.machine,
+      message: `這次合併是電腦「${info.machine}」做的：那台電腦資料夾的記憶連結與 settings.local.json 還指向合併的目標，要在那台電腦同步之後修正（收件匣的「重新建立連結」）；那台電腦上已移除的舊綁定（對話回顧用）如果在合併時改到了目標專案，也留在那台電腦，這裡改不到`,
+      en: `This merge was done on computer "${info.machine}": the memory links and settings.local.json of that computer's folders still point at the merge target; fix them on that computer after it syncs (the "Recreate link" card in the inbox). Removed old bindings (used by conversation review) that the merge moved to the target project also stay on that computer and cannot be changed from here`,
+    });
+    return { realigned, partial };
+  }
+  // 已移除的舊綁定（對話回顧用，local/，不在 git 裡）：合併時改到目標專案，這裡改回原專案；找不回來的筆數放進 partial
+  const { undoLinkRelink } = await import('./retired.mjs');
+  const retired = await undoLinkRelink(ctx.local, info.sha).catch(() => null);
+  if (retired?.missing > 0) {
+    partial.push({
+      kind: 'retired-bindings',
+      message: `有 ${retired.missing} 筆已移除的舊綁定（對話回顧用）找不回來（可能已經被清掉），沒有改回原專案`,
+      en: `${retired.missing} removed old binding${retired.missing === 1 ? '' : 's'} (used by conversation review) could not be found any more (they may have been cleared), so ${retired.missing === 1 ? 'it was' : 'they were'} not moved back to the original project`,
+    });
+  }
+  const extra = retired ? { retiredRestored: retired.restored } : {};
+  if (!fromPid) return { realigned, ...extra, ...(partial.length ? { partial } : {}) };
+  const { bind } = await import('./identity.mjs');
+  const { allBindingViews, readBindings } = await import('./vault.mjs');
+  const { exists } = await import('./fsx.mjs');
+  for (const b of allBindingViews(await readBindings(ctx.vault, ctx.mid))) {
+    if (b.pid !== fromPid) continue;
+    if (!b.path || !exists(b.path)) {
+      partial.push({ kind: 'folder-missing', path: b.path ?? null, message: `資料夾已經不存在，沒有重新接上：${b.path ?? ''}`, en: `The folder no longer exists, so it was not reconnected: ${b.path ?? ''}` });
+      continue;
+    }
+    try {
+      await bind(ctx, b.path, { pid: fromPid }, { mode: 'safe', force: true });
+      realigned.push(b.path);
+    } catch (err) {
+      partial.push({ kind: 'bind-failed', path: b.path, message: `重新接上失敗：${b.path}（${err?.message ?? err}）`, en: `Reconnecting failed: ${b.path} (${err?.en?.message ?? err?.message ?? err})` });
+    }
+  }
+  return { realigned, ...extra, ...(partial.length ? { partial } : {}) };
 }
 
 function isMemoryPath(p) {

@@ -10,6 +10,12 @@ import { checkMemoryText } from '../../cli/commands/safe.mjs';
 const shaOf = (r) => r?.undo?.sha ?? r?.commit?.sha ?? null;
 const red = (t) => (t === null || t === undefined ? t : redactSecrets(String(t)).text);
 const hasSecret = (t) => t !== null && t !== undefined && redactSecrets(String(t)).matches.length > 0;
+// 自我修復留下的衝突（by: 'heal'）：ours 是遮蔽過金鑰的本機版本，原檔只在這台電腦、從沒 commit 過；
+// 任何一邊有遮蔽標記也一樣（內容已經不完整）。這種紀錄絕不自動處理，留給使用者決定
+const hasMask = (t) => t !== null && t !== undefined && /‹已遮蔽：/.test(String(t));
+const leftToUser = (c) => c.by === 'heal' || [c.ours, c.theirs, c.base].some(hasMask);
+// 第二輪審查 R4：2.0 新增的同步 JSON（環境設定、保留區、護欄規則、共用設定、發佈資訊）不是記憶：不交給 LLM，任何選擇都會讓一邊消失，留給使用者
+const settingsFile = (ref) => /^(env|guardrails|holding)\//.test(String(ref ?? '')) || ['settings.json', 'release.json'].includes(String(ref ?? ''));
 
 export async function resolveConflicts(ctx) {
   const { eg, call, run } = ctx;
@@ -17,6 +23,14 @@ export async function resolveConflicts(ctx) {
   if (!all.length) return;
   const safe = [];
   for (const c of all) {
+    if (leftToUser(c)) {
+      run.skipped.push({ task: 'conflicts', why: `${c.ref ?? c.id}：自我修復留下的衝突（本機版本含疑似金鑰、只在這台電腦），或內容含金鑰遮蔽標記：不自動處理，留給你在收件匣決定` });
+      continue;
+    }
+    if (settingsFile(c.ref)) {
+      run.skipped.push({ task: 'conflicts', why: `${c.ref}：設定檔（不是記憶）的衝突不自動處理，兩個版本都在衝突紀錄裡，留給你在收件匣決定` });
+      continue;
+    }
     // 含疑似金鑰的版本不給 LLM 改寫：兩邊都留下，金鑰由金鑰任務處理
     if (!c.ref || [c.ours, c.theirs, c.base].some(hasSecret)) {
       await resolve(ctx, c, 'both', null, c.ref ? '內容含疑似金鑰：兩個版本都留下，金鑰另外處理' : '不是記憶檔的衝突：兩個版本都留下');
@@ -43,7 +57,7 @@ export async function resolveConflicts(ctx) {
         before: [{ ref: `${c.ref}（目前的版本）`, text: c.ours }, { ref: `${c.ref}（另一個版本）`, text: c.theirs }], after: [{ ref: c.ref, text: after }],
       };
     });
-    const rv = await call('衝突審核', { schema: REVIEW_SCHEMA, prompt: reviewPrompt(cands) });
+    const rv = await call('衝突審核', { schema: REVIEW_SCHEMA, prompt: reviewPrompt(cands, { preferences: ctx.preferences }) });
     for (const v of rv.ok ? rv.data.verdicts ?? [] : []) verdict.set(String(v.id), v);
   }
   for (const d of decisions) {
@@ -67,7 +81,7 @@ async function resolve(ctx, c, choice, body, reason, review = null) {
   const { eg, run } = ctx;
   try {
     const res = await eg.conflicts.resolve(c.id, { choice, reviewed: false, ...(body !== null ? { body } : {}) });
-    run.actions.push({ task: 'conflicts', kind: 'conflict', card: c.id, code: 'H15', refs: [c.ref, res?.ref].filter(Boolean), title: `處理衝突：${c.ref ?? c.id}（${{ ours: '保留目前的版本', theirs: '改用另一個版本', both: '兩個版本都留下', manual: '合併兩邊' }[choice]}）`, reason: String(reason).slice(0, 500), category: `conflict-${choice}`, status: 'done', undo: [shaOf(res)].filter(Boolean), ...(review ? { review: { verdict: review.verdict, reason: String(review.reason ?? '').slice(0, 300) } } : {}) });
+    run.actions.push({ task: 'conflicts', kind: 'conflict', card: c.id, code: 'H15', refs: [c.ref, res?.ref].filter(Boolean), title: `處理衝突：${c.ref ?? c.id}（${{ ours: '保留目前的版本', theirs: '改用另一個版本', both: '兩個版本都留下', manual: '合併兩邊' }[choice]}）`, reason: String(reason).slice(0, 500), category: `conflict-${choice}`, status: 'done', undo: [shaOf(res)].filter(Boolean), ...(res?.backup ? { backup: res.backup } : {}), ...(review ? { review: { verdict: review.verdict, reason: String(review.reason ?? '').slice(0, 300) } } : {}) });
   } catch (err) {
     run.actions.push({ task: 'conflicts', kind: 'conflict', card: c.id, code: 'H15', title: `處理衝突：${c.ref ?? c.id}`, reason: '', status: 'failed', undo: [], message: String(err?.message ?? err).slice(0, 300) });
   }

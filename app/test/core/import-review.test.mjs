@@ -89,7 +89,7 @@ describe('還原到匯入前', () => {
       assert.equal(plan.sources.length, 2);
       assert.equal(plan.sources[0].resolvedPath.toLowerCase(), path.join(desk, '乙方專案').toLowerCase(), '測試前提：孤兒來源排在前面');
       assert.equal(plan.sources[1].target.pid, first.pid, '測試前提：現存資料夾接到既有專案');
-      const r = await e.sweepLegacy({ dryRun: false, plan });
+      const r = await e.sweepLegacy({ by: 'user', dryRun: false, plan });
       assert.ok(isLink(memDir));
       await e.rollbackImport(r.restorePoint);
       assert.equal(isLink(memDir), false);
@@ -108,7 +108,7 @@ describe('還原到匯入前', () => {
       fs.writeFileSync(marker, '{"pid":"someone-else"}');
       const t = addTranscript(m.claudeHome, dir);
       mem(path.join(t.dir, 'memory'), 'k.md', { name: 'k', description: '保留' });
-      const r = await e.sweepLegacy({ dryRun: false, plan: await e.sweepLegacy({ dryRun: true }), bindSources: false });
+      const r = await e.sweepLegacy({ by: 'user', dryRun: false, plan: await e.sweepLegacy({ dryRun: true }), bindSources: false });
       await e.rollbackImport(r.restorePoint);
       assert.equal(fs.readFileSync(marker, 'utf8'), '{"pid":"someone-else"}');
     } finally { rmTmp(root); }
@@ -165,7 +165,7 @@ describe('收編計畫', () => {
       mem(path.join(ta.dir, 'memory'), 'a.md', { name: 'a', description: '甲方', originSessionId: 'sa' });
       const first = await e.sweepLegacy({ dryRun: true });
       assert.equal(first.sources.length, 2);
-      await e.sweepLegacy({ dryRun: false, plan: first });
+      await e.sweepLegacy({ by: 'user', dryRun: false, plan: first });
       assert.deepEqual((await e.sweepLegacy({ dryRun: true })).sources, [], '匯入後再產生計畫：沒有東西要匯入');
       mem(path.join(ta.dir, 'memory'), 'a2.md', { name: 'a2', description: '之後才寫', originSessionId: 'sa' });
       const again = await e.sweepLegacy({ dryRun: true });
@@ -209,7 +209,7 @@ describe('第二輪審查', () => {
       const dir = path.join(m.claudeHome, 'projects', encodeProjectPath(spec), 'memory');
       mem(dir, 'spec.md', { name: 'spec', description: '規格', body: `工作目錄 ${spec}\\。` });
       mem(dir, 'spec-style.md', { name: 'spec-style', description: '寫法' });
-      await e.sweepLegacy({ dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
+      await e.sweepLegacy({ by: 'user', dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
       const archived = (await e.projects.list()).find((p) => p.name === 'Spec_舊版規格');
       assert.ok(archived);
       mem(dir, 'spec-new.md', { name: 'spec-new', description: '之後才寫' });
@@ -227,7 +227,7 @@ describe('第二輪審查', () => {
       fs.mkdirSync(notes, { recursive: true });
       const t = addTranscript(m.claudeHome, notes);
       mem(path.join(t.dir, 'memory'), 'n1.md', { name: 'n1', description: '第一次' });
-      await e.sweepLegacy({ dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
+      await e.sweepLegacy({ by: 'user', dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
       const settings = path.join(notes, '.claude', 'settings.local.json');
       const settingsBefore = fs.readFileSync(settings, 'utf8');
       const bindingsFile = path.join(e.paths.vault, 'machines', e.machine.id, 'bindings.json');
@@ -236,7 +236,7 @@ describe('第二輪審查', () => {
       mem(path.join(t.dir, 'memory'), 'n2.md', { name: 'n2', description: '第二次' });
       const plan2 = await e.sweepLegacy({ dryRun: true });
       assert.equal(plan2.sources[0].target.boundPid, plan2.sources[0].target.pid, '計畫標出「早就綁定」，精靈的將綁定數不計入');
-      const second = await e.sweepLegacy({ dryRun: false, plan: plan2 });
+      const second = await e.sweepLegacy({ by: 'user', dryRun: false, plan: plan2 });
       await e.rollbackImport(second.restorePoint);
       assert.equal(Object.keys(JSON.parse(fs.readFileSync(bindingsFile, 'utf8'))).length, 1, '第一次的綁定還在');
       assert.equal(fs.readFileSync(settings, 'utf8'), settingsBefore, '設定檔仍指向 vault');
@@ -255,7 +255,7 @@ describe('第二輪審查', () => {
       const t = addTranscript(m.claudeHome, repo);
       const memDir = path.join(t.dir, 'memory');
       mem(memDir, 'local.md', { name: 'local', description: '這台的' });
-      const r = await e.sweepLegacy({ dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
+      const r = await e.sweepLegacy({ by: 'user', dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
       await e.rollbackImport(r.restorePoint);
       assert.deepEqual(fs.readdirSync(memDir).filter((f) => f !== 'MEMORY.md'), ['local.md']);
     } finally { rmTmp(root); }
@@ -293,7 +293,7 @@ describe('第二輪審查', () => {
     try {
       const enc = encodeProjectPath(path.join(m.userHome, 'Desktop', 'Gone'));
       mem(path.join(m.claudeHome, 'projects', enc, 'memory'), 'gone.md', { name: 'gone', description: '孤兒' });
-      await e.sweepLegacy({ dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
+      await e.sweepLegacy({ by: 'user', dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
       const p = await planImport(e);
       const r = await rehearseImport(e, {});
       assert.equal(r.totals.memories, p.totals.memories);
@@ -311,9 +311,9 @@ describe('還原點名稱', () => {
       fs.mkdirSync(notes, { recursive: true });
       const tr = addTranscript(m.claudeHome, notes);
       mem(path.join(tr.dir, 'memory'), 'n1.md', { name: 'n1', description: '第一次' });
-      const first = await e.sweepLegacy({ dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
+      const first = await e.sweepLegacy({ by: 'user', dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
       mem(path.join(tr.dir, 'memory'), 'n2.md', { name: 'n2', description: '第二次' });
-      const second = await e.sweepLegacy({ dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
+      const second = await e.sweepLegacy({ by: 'user', dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
       assert.notEqual(second.restorePoint, first.restorePoint);
       await e.rollbackImport(second.restorePoint);
       const bindings = JSON.parse(fs.readFileSync(path.join(e.paths.vault, 'machines', e.machine.id, 'bindings.json'), 'utf8'));
