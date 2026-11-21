@@ -355,6 +355,8 @@ describe('對話回顧', () => {
 
   test('prepare：由舊到新、排除目前的對話與進行中的、遮蔽金鑰；建立整理記錄後記為已回顧，resume 變長的再列入', async () => {
     const mem = (await eg.memories.create({ scope: { kind: 'project', pid }, name: 'deploy-notes', type: 'project', description: '部署方式', body: '部署用 npm run deploy。尚未設定 CI。' })).ref;
+    // 新寫的記憶帶 modified（現在）；這個測試的證據日期在過去，要模擬「很久以前寫的記憶」
+    await eg.memories.write(mem, { frontmatter: { 'metadata.modified': '2026-01-01T00:00:00.000Z' } });
     const secret = ['gh', 'p_', 'Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2'].join('');
     writeTranscript('old-1', [user(`改用 npm run release，token: ${secret}`), said('好')], { ageMs: 26 * DAY });
     writeTranscript('mid-2', [user('CI 設好了'), said('確認 CI 已設定')], { ageMs: 5 * DAY });

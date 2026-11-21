@@ -342,6 +342,10 @@ describe('顯示與介面文字', () => {
     assert.equal(langOf('繁體中文'), 'zh');
     assert.equal(langOf('English'), 'en');
     assert.equal(langOf(undefined), 'en');
+    // 第四輪審查 F-14：英文寫法的中文也算
+    assert.equal(langOf('Chinese'), 'zh');
+    assert.equal(langOf('Traditional Chinese'), 'zh');
+    assert.equal(langOf('chinese (simplified)'), 'zh');
   });
 
   test('中英文的文字鍵與參數一致，英文不含中文', () => {

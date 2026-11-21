@@ -35,10 +35,11 @@ allowed-tools: Bash(engram tidy *) Bash(engram memory *) Bash(engram core) Bash(
    - 用 `engram memory write <ref> --base <版本>`、`engram memory move <ref> --to <範圍>`、`engram memory remove <ref>`、`engram memory merge <ref> <ref> --into <ref> --base <版本,版本>`、`engram remember`、`engram core write --base <版本>` 執行。寫入的內容要有完整的 frontmatter（`name` 與檔名相同、`description`、`metadata.type`），保留原有的其他欄位，日期寫絕對日期。
    - 每處理完一項，記回結果：`engram tidy done <id> <項目> --undo <版本,...> --message "<做了什麼，一句話>"`（版本取自指令輸出的「engram undo <版本>」）。問過使用者後決定不處理時：`engram tidy done <id> <項目> --skip --message "<原因>"`。
 3. **失敗的項目**：不要換別的方法硬改。說明原因（最常見的是建議之後記憶被改過，例如另一台電腦同步過來），建議使用者重新整理一次。使用者要你當場處理時，依最新內容重做，再用 `engram tidy done` 記回。
-4. **收尾**：執行 `engram sync`，然後回報：一張表（項目、結果、復原指令；一項有好幾個版本時，依輸出的順序由左到右執行），加上動手前的備份位置，以及結果頁的網址（`engram tidy apply` 輸出的最後一行）。提醒使用者每一項都可以在結果頁按「復原這一項」。
+4. **收尾**：執行 `engram sync`，然後回報：一張表（項目、結果、復原指令；一項有好幾個版本時，依輸出的順序由左到右執行），加上動手前的備份位置，以及結果頁的網址（`engram tidy apply` 輸出的最後一行）。提醒使用者每一項都可以在結果頁按「復原這一項」。也提一句：在對話裡套用的內容不會自動成為自動駕駛必須遵守的規則，要讓自動駕駛遵守，請到管理介面「自動駕駛」頁的偏好區塊確認。
 
 ## 原則
 
 - 一律透過 `engram` 指令讀寫，不要用 Read、Write、Edit 直接碰 `~/.engram/vault`；不要修改任何 `INDEX.md`。
+- 在對話裡執行的整理（`engram tidy apply` 與依備註寫入的內容）記為「在對話裡處理的」，不會自動成為自動駕駛必須遵守的規則：要讓自動駕駛遵守，請使用者到管理介面「自動駕駛」頁的偏好區塊確認。不要代替使用者去確認。
 - 遇到 `E_CONFLICT`（讀取之後被改過）：重新 `engram memory show`，依最新內容重新判斷；改動幅度超出使用者的備註時，先問使用者。
 - Engram 回報 `E_SECRET`（內容疑似含有金鑰）時，不要換別的方式或寫到別的地方，也不要自己判斷那不是金鑰：向使用者說明是哪一筆、哪一行，建議改成只記「存放在哪裡、怎麼取得」。使用者表示那不是金鑰時，請使用者**自己**在終端機（不是 Claude Code 的對話）執行 `engram not-secret --value <那個值>`（既有檔案裡的用 `engram not-secret <ref> --line <行號>`），或在管理介面按「這不是金鑰」；你不能代為執行，在 Claude Code 裡執行會被拒絕。使用者完成後再執行原本的指令。

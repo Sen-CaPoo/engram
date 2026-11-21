@@ -75,7 +75,7 @@ describe('撞名資料夾改名', () => {
       fs.mkdirSync(S, { recursive: true });
       addTranscript(mm.claudeHome, R, { ageMs: 60_000 });
 
-      const imported = await e.sweepLegacy({ dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
+      const imported = await e.sweepLegacy({ by: 'user', dryRun: false, plan: await e.sweepLegacy({ dryRun: true }) });
       assert.equal(imported.bound.length, 2);
       const pidA = (await e.projects.list()).find((p) => p.name === '甲方報告').pid;
       const bindingsFile = path.join(e.paths.vault, 'machines', e.machine.id, 'bindings.json');

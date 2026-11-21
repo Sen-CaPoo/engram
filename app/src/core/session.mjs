@@ -1,56 +1,89 @@
 // SessionStart 動態內容（41 號文件 §09）。純本機、不連網；任何例外都回傳空字串，不阻擋對話。
 // 格式：≤ 12 行、≤ 1,200 字元。唯一的寫入：需要時綁定（設定檔＋可能的 junction，取鎖最多等 200ms）。
+// 2.0.0 S5：已綁定的資料夾在常駐程式預先寫好的快取（writeSessionCache）裡；hook 先走不載入引擎的快速路徑（sessioncache.mjs），
+// 快取不能用時才走這裡（完整路徑）。兩條路徑用同一個 renderSession 組文字。
 import fs from 'node:fs';
 import path from 'node:path';
 import { allowJunctionRead } from './claudesettings.mjs';
-import { createJunction, isEmptyDir, isLink, listMarkdown, readJson, readJsonSync } from './fsx.mjs';
+import { createJunction, isEmptyDir, isLink, listMarkdown, readJson, readJsonSync, safeWrite } from './fsx.mjs';
+import { guardrailFallback } from './guardrails.mjs';
+import { CODE_FILES, codeVersion, installInfo, SESSION_CACHE_V, sessionCacheFile, signatures } from './sessioncache.mjs';
+import { renderSession } from './sessiontext.mjs';
 import {
-  classifyEncodedBinding, junctionAllowed, junctionState, loadedMemoryIndex, memoryPathFor, mergeFootprint, resolveIdentity, writeSettingsBinding,
+  classifyEncodedBinding, junctionAllowed, junctionState, loadedMemoryIndex, memoryIndexCandidate, memoryPathFor, mergeFootprint, resolveIdentity, SETTINGS_LOCAL,
+  writeSettingsBinding,
 } from './identity.mjs';
 import { readDirEntries } from './normalize.mjs';
 import { encodeProjectPath, memoryRootFor, samePath, toTildePath } from './paths.mjs';
 import {
-  bindingKey, findBindingByEncoded, findBindingByPath, machineDir, projectMemoryDir, readBindings, readProject, readState, updateState, writeBindings,
+  allBindingViews, bindingKey, findBindingByEncoded, findBindingByPath, machineDir, projectMemoryDir, readBindings, readLocalMachine, readProject, readState,
+  updateState, writeBindings,
 } from './vault.mjs';
 
-const MAX_LINES = 12;
-const MAX_CHARS = 1200;
-const WRITE_LINE = '記憶寫入：專案 → 自動記憶（照常）；全域 → engram remember --scope global；單機 → engram remember --scope machine';
+// 文字的組法放在 sessiontext.mjs（純函式）：快速路徑（sessioncache.mjs）用同一份，輸出才會一字不差（2.0.0 S5）
+export { relativeTime } from './sessiontext.mjs';
 
-export function relativeTime(iso, now = Date.now()) {
-  const t = Date.parse(iso ?? '');
-  if (!t) return null;
-  const s = Math.max(0, Math.round((now - t) / 1000));
-  if (s < 60) return '剛剛';
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} 分鐘前`;
-  const h = Math.round(m / 60);
-  if (h < 48) return `${h} 小時前`;
-  return `${Math.round(h / 24)} 天前`;
+/**
+ * 已綁定（這個路徑本身有綁定紀錄）時的專案說明、綁定狀態與警告。只讀不寫：完整路徑與常駐程式寫快取時共用。
+ * @returns {Promise<{ projectPart: string, bindState: string, warnings: { priority: number, text: string }[] }>}
+ */
+async function boundPart(ctx, b, { fromSub }) {
+  const warnings = [];
+  let bindState;
+  const project = await readProject(ctx.vault, b.pid);
+  const projectPart = `專案：${project?.name ?? b.pid}（${b.pid}）`;
+  if (b.method === 'settings' && b.collision === false) {
+    bindState = '已綁定';
+    if (fromSub) warnings.push({ priority: 3, text: '⚠ 這次從專案的子資料夾啟動，Claude Code 不會讀到 Engram 的設定：本次的記憶讀寫都在 Claude Code 原本的資料夾，\n  之後可以在 Engram 收件匣收進來。建議從專案根目錄開啟。' });
+  } else if (b.method === 'settings') {
+    bindState = '已綁定（設定檔備援）';
+    warnings.push({ priority: 3, text: '⚠ 這個資料夾的名稱與其他資料夾在 Claude Code 內部撞名（中文字數相同）。Engram 已用設定檔把記憶分開，\n  但只在直接從這個資料夾啟動時有效。建議把資料夾改成英文名稱，Engram 介面可以協助。' });
+  } else {
+    const j = junctionState(ctx.homes, b.encoded, b.pid);
+    if (j.state === 'ok') {
+      bindState = '已綁定';
+      if (fromSub) warnings.push({ priority: 7, text: '⚠ 這次從子資料夾啟動，記憶經由連結讀寫；對話中切到 acceptEdits 或 default 模式時，讀寫記憶會跳出詢問。\n  建議從專案根目錄開啟。' });
+    } else if (b.state === 'pending' || j.state === 'dir') bindState = '等待切換';
+    else {
+      bindState = '綁定失效';
+      warnings.push({ priority: 2, text: '⚠ 這個專案的記憶連結失效：本次寫入的記憶可能不會進入 Engram。請執行 engram doctor 修復。' });
+    }
+  }
+  return { projectPart, bindState, warnings };
 }
 
-function syncLine(state, now) {
-  const s = state.sync ?? {};
-  const last = relativeTime(s.lastSuccessAt, now);
-  if (!state.remote && (!s.state || s.state === 'never' || s.state === 'ok') && !s.lastSuccessAt) return '同步：僅本機（尚未設定同步）';
-  switch (s.state) {
-    case 'syncing': return '同步：同步中';
-    case 'offline': return `同步：離線${last ? `（最後成功 ${last}）` : ''}`;
-    case 'auth': return '同步：需要重新登入 GitHub';
-    case 'error': return s.error?.code === 'E_PUSH_PROTECTED' ? '同步：推送被 GitHub 擋下' : `同步：發生錯誤${last ? `（最後成功 ${last}）` : ''}`;
-    default: return last ? `同步：最後同步 ${last}` : '同步：尚未同步';
-  }
+/** 和目前資料夾無關的狀態：衝突（含核心準則）、同步狀態、收件匣數量、使用者暫停。格式見 sessiontext.mjs 的 renderSession。 */
+async function gatherShared(ctx) {
+  let conflictCount = 0;
+  let coreConflicts = 0;
+  try {
+    for (const id of fs.readdirSync(path.join(ctx.vault, 'conflicts')).filter((n) => n.startsWith('cf_'))) {
+      conflictCount++;
+      const meta = readJsonSync(path.join(ctx.vault, 'conflicts', id, 'meta.json'), {});
+      if (meta?.ref === 'core/CORE.md') coreConflicts++;
+    }
+  } catch { /* 沒有衝突 */ }
+  const state = await readState(ctx.local);
+  const health = (await readJson(path.join(ctx.local, 'cache', 'health.json'), null)) ?? {};
+  const userPaused = ((await readJson(path.join(ctx.local, 'paused.json'), null)) ?? {}).user === true;
+  return {
+    conflictCount,
+    coreConflicts,
+    inboxCount: health.inboxCount ?? 0,
+    userPaused,
+    state: { remote: state.remote ?? null, sync: state.sync ?? null, syncIssue: state.syncIssue ?? null },
+  };
 }
 
-/** 依優先序組合，超過上限時從最低優先的警告開始刪。 */
-function compose(head, warnings) {
-  const sorted = [...warnings].sort((a, b) => a.priority - b.priority).slice(0, 3);
-  for (;;) {
-    const lines = [...head, ...sorted.flatMap((w) => w.text.split('\n'))];
-    const text = lines.join('\n');
-    if ((lines.length <= MAX_LINES && text.length <= MAX_CHARS) || !sorted.length) return text.slice(0, MAX_CHARS);
-    sorted.pop();
-  }
+/**
+ * R-18：這台電腦上只與目前專案有關的單機記憶（最多 3 筆，優先序最低，超出預算時先被省略）。
+ * all：readDirEntries 讀好的單機記憶（寫快取時每個專案共用一份，不必每個專案重讀、重掃金鑰）
+ */
+async function machineWarning(ctx, pid, all) {
+  const entries = (all ?? (await readDirEntries(machineDir(ctx.vault, ctx.mid)))).filter((e) => e.project === pid).slice(0, 3);
+  if (!entries.length) return null;
+  const lines = entries.map((e) => `  - [${e.name}](${toTildePath(path.join(machineDir(ctx.vault, ctx.mid), e.file), ctx.homes.userHome)}) — ${e.description}`);
+  return { priority: 9, text: `本機與此專案相關的記憶（需要時再讀）：\n${lines.join('\n')}` };
 }
 
 /** 只寫設定檔、junction 與綁定紀錄，不呼叫 git（commit 交給下一次同步）。 */
@@ -120,7 +153,7 @@ export async function sessionContext(ctx, { cwd, event = 'startup', transcriptPa
     try {
       memoryIndex = loadedMemoryIndex(ctx.homes, { root, encoded, fromSub });
     } catch { /* 算不出來就不補記，不影響狀態文字 */ }
-    const [bindings, state] = await Promise.all([readBindings(ctx.vault, ctx.mid), readState(ctx.local)]);
+    const bindings = await readBindings(ctx.vault, ctx.mid);
     const warnings = [];
     let projectPart;
     let bindState = null;
@@ -152,25 +185,10 @@ export async function sessionContext(ctx, { cwd, event = 'startup', transcriptPa
     }
 
     if (b) {
-      const project = await readProject(ctx.vault, b.pid);
-      projectPart = `專案：${project?.name ?? b.pid}（${b.pid}）`;
-      if (b.method === 'settings' && b.collision === false) {
-        bindState = '已綁定';
-        if (fromSub) warnings.push({ priority: 3, text: '⚠ 這次從專案的子資料夾啟動，Claude Code 不會讀到 Engram 的設定：本次的記憶讀寫都在 Claude Code 原本的資料夾，\n  之後可以在 Engram 收件匣收進來。建議從專案根目錄開啟。' });
-      } else if (b.method === 'settings') {
-        bindState = '已綁定（設定檔備援）';
-        warnings.push({ priority: 3, text: '⚠ 這個資料夾的名稱與其他資料夾在 Claude Code 內部撞名（中文字數相同）。Engram 已用設定檔把記憶分開，\n  但只在直接從這個資料夾啟動時有效。建議把資料夾改成英文名稱，Engram 介面可以協助。' });
-      } else {
-        const j = junctionState(ctx.homes, b.encoded, b.pid);
-        if (j.state === 'ok') {
-          bindState = '已綁定';
-          if (fromSub) warnings.push({ priority: 7, text: '⚠ 這次從子資料夾啟動，記憶經由連結讀寫；對話中切到 acceptEdits 或 default 模式時，讀寫記憶會跳出詢問。\n  建議從專案根目錄開啟。' });
-        } else if (b.state === 'pending' || j.state === 'dir') bindState = '等待切換';
-        else {
-          bindState = '綁定失效';
-          warnings.push({ priority: 2, text: '⚠ 這個專案的記憶連結失效：本次寫入的記憶可能不會進入 Engram。請執行 engram doctor 修復。' });
-        }
-      }
+      const part = await boundPart(ctx, b, { fromSub });
+      projectPart = part.projectPart;
+      bindState = part.bindState;
+      warnings.push(...part.warnings);
     } else if (!projectPart) {
       const res = await resolveIdentity(ctx, root, { withRootCommits: false });
       const paused = (await readJson(path.join(ctx.local, 'paused.json'), null)) ?? {};
@@ -206,43 +224,19 @@ export async function sessionContext(ctx, { cwd, event = 'startup', transcriptPa
       }
     }
 
-    // CORE.md 衝突、同步錯誤、密鑰擋下
-    let conflictCount = 0;
-    try {
-      for (const id of fs.readdirSync(path.join(ctx.vault, 'conflicts')).filter((n) => n.startsWith('cf_'))) {
-        conflictCount++;
-        const meta = readJsonSync(path.join(ctx.vault, 'conflicts', id, 'meta.json'), {});
-        if (meta?.ref === 'core/CORE.md') warnings.push({ priority: 1, text: '⚠ 核心準則 CORE.md 在兩台電腦有衝突（目前使用本機版本），請在 Engram 介面確認。' });
-      }
-    } catch { /* 沒有衝突 */ }
-    if (state.sync?.state === 'auth') warnings.push({ priority: 5, text: '⚠ GitHub 登入已失效，記憶暫時不會同步到其他電腦。' });
-    if (state.sync?.error?.code === 'E_PUSH_PROTECTED') warnings.push({ priority: 5, text: '⚠ GitHub 擋下了推送（疑似含有金鑰），記憶暫時不會同步。' });
-    if (state.sync?.blockedBySecrets?.length) warnings.push({ priority: 6, text: `⚠ 有 ${state.sync.blockedBySecrets.length} 筆記憶疑似含有金鑰，未同步。記憶裡請只記「存放位置」。` });
-
-    const health = (await readJson(path.join(ctx.local, 'cache', 'health.json'), null)) ?? {};
-    const inbox = (health.inboxCount ?? 0) + (conflictCount && !health.inboxCount ? conflictCount : 0);
-
-    const userPaused = ((await readJson(path.join(ctx.local, 'paused.json'), null)) ?? {}).user === true;
-    const head = [
-      // 全形括號後面不加空白，與「（mid）· 」一致
-      `[Engram] ${ctx.label}（${ctx.mid}）· ${projectPart}${bindState ? `${/[）」]$/.test(projectPart) ? '' : ' '}· ${bindState}` : ''}`,
-      WRITE_LINE,
-      userPaused ? '同步：Engram 已暫停（不同步、不自動接上）' : syncLine(state, now),
-    ];
-    if (inbox > 0) head.push(`收件匣：${inbox} 項待整理（使用者沒有問起就不要提）`);
-    // R-18：這台電腦上只與目前專案有關的單機記憶（最多 3 筆，優先序最低，超出預算時先被省略）
-    if (b?.pid) {
-      const entries = (await readDirEntries(machineDir(ctx.vault, ctx.mid))).filter((e) => e.project === b.pid).slice(0, 3);
-      if (entries.length) {
-        const lines = entries.map((e) => `  - [${e.name}](${toTildePath(path.join(machineDir(ctx.vault, ctx.mid), e.file), ctx.homes.userHome)}) — ${e.description}`);
-        warnings.push({ priority: 9, text: `本機與此專案相關的記憶（需要時再讀）：\n${lines.join('\n')}` });
-      }
-    }
-    const text = compose(head, warnings);
+    // CORE.md 衝突、同步錯誤、密鑰擋下、收件匣（和資料夾無關的部分）
+    const shared = await gatherShared(ctx);
+    // 2.0.0 WP4b：護欄的 mod 沒有載入（沒有這場對話的標記檔）時，補上這台電腦已知的指令寫法問題；優先序最低，放不下就省略
+    const guard = await guardrailFallback(ctx, { sessionId }).catch(() => null);
+    const rendered = renderSession({
+      label: ctx.label, mid: ctx.mid, projectPart, bindState, bindingWarnings: warnings, shared,
+      machineWarning: b?.pid ? await machineWarning(ctx, b.pid) : null, guard, now,
+    });
+    const text = rendered.text;
 
     let loadedFiles;
     if (sessionId) loadedFiles = (await readJson(path.join(ctx.local, 'loaded', `${sessionId}.json`), null)) ?? undefined;
-    return { text, binding: b ? { encoded: b.encoded ?? encoded, pid: b.pid, method: b.method, state: bindState } : null, warnings: warnings.map((w) => w.text), loadedFiles, memoryIndex };
+    return { text, binding: b ? { encoded: b.encoded ?? encoded, pid: b.pid, method: b.method, state: bindState } : null, warnings: rendered.warnings.map((w) => w.text), loadedFiles, memoryIndex };
   } catch (err) {
     try {
       const log = path.join(ctx.local, 'logs', 'session.log');
@@ -251,4 +245,69 @@ export async function sessionContext(ctx, { cwd, event = 'startup', transcriptPa
     } catch { /* ignore */ }
     return { text: '', binding: null, warnings: [] };
   }
+}
+
+/** 記憶庫 HEAD 指到的位置（.git/HEAD、分支的 ref、packed-refs）：被扣住的單機記憶要讀 HEAD 的版本，commit 之後就不用舊的快取 */
+function gitRefFiles(vault) {
+  const gitDir = path.join(vault, '.git');
+  const files = [path.join(gitDir, 'HEAD'), path.join(gitDir, 'packed-refs')];
+  try {
+    const ref = /^ref:\s*(\S+)/.exec(fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8'))?.[1];
+    if (ref) files.push(path.join(gitDir, ...ref.split('/')));
+  } catch { /* 讀不到 HEAD：簽章是 '-'，照樣比對 */ }
+  return files;
+}
+
+/**
+ * 2.0.0 S5：開場 hook 的快速路徑用的快取 local/cache/session/state.json（常駐程式在存檔、同步之後與每隔幾分鐘寫一次）。
+ * 只放「這台電腦已綁定、從那個路徑開啟時不需要任何寫入」的資料夾；從根目錄與從子資料夾開啟各算一份。
+ * 先記下要讀的檔案的簽章、再讀內容：讀的途中有檔案被改，簽章對不上，快速路徑就不會用這份快取。
+ * @returns {Promise<{ roots: number }>}
+ */
+export async function writeSessionCache(ctx, { now = Date.now() } = {}) {
+  const mdir = machineDir(ctx.vault, ctx.mid);
+  let machineFiles = [];
+  try { machineFiles = fs.readdirSync(mdir).filter((n) => /\.md$/i.test(n)).map((n) => path.join(mdir, n)); } catch { /* 沒有單機記憶 */ }
+  const sources = signatures([
+    path.join(ctx.local, 'state.json'), path.join(ctx.local, 'cache', 'health.json'), path.join(ctx.local, 'paused.json'), path.join(ctx.local, 'machine.json'),
+    path.join(ctx.vault, 'conflicts'), path.join(mdir, 'bindings.json'), mdir, ...machineFiles, ...gitRefFiles(ctx.vault), ...CODE_FILES,
+    // 單機記憶疑似含金鑰時，列不列出來要看「不是金鑰」清單（core/secretallow.mjs）
+    path.join(ctx.local, 'secret-allow.json'), path.join(ctx.vault, 'not-secrets'),
+    // 更新 Engram 會改寫安裝清單：之後第一次開場就不用舊程式寫的快取（內容另外比對 installInfo）
+    path.join(ctx.local, 'install.json'),
+  ]);
+  const label = readLocalMachine(ctx.local)?.label ?? ctx.label;
+  const bindings = await readBindings(ctx.vault, ctx.mid);
+  const machineEntries = await readDirEntries(mdir);
+  const roots = [];
+  for (const view of allBindingViews(bindings)) {
+    const root = view?.path;
+    if (!root || !view.pid) continue;
+    // 路徑長到官方加了 hash：編碼要看這次的 transcript，交給完整路徑
+    const encoded = encodeProjectPath(root);
+    if (!encoded) continue;
+    // 同一個路徑有兩筆綁定時，用 sessionContext 會找到的那一筆
+    const b = findBindingByPath(bindings, root);
+    if (!b || b.key !== view.key) continue;
+    const files = [path.join(ctx.vault, 'projects', b.pid, 'project.json'), path.join(root, SETTINGS_LOCAL)];
+    for (const fromSub of [false, true]) {
+      const c = memoryIndexCandidate(ctx.homes, { root, encoded, fromSub });
+      if (c) files.push(c);
+    }
+    if (b.method !== 'settings') files.push(memoryPathFor(ctx.homes, b.encoded), projectMemoryDir(ctx.vault, b.pid));
+    const entry = { root, encoded, sources: signatures(files), binding: { encoded: b.encoded ?? encoded, pid: b.pid, method: b.method } };
+    for (const [key, fromSub] of [['top', false], ['sub', true]]) {
+      let memoryIndex = null;
+      try { memoryIndex = loadedMemoryIndex(ctx.homes, { root, encoded, fromSub }); } catch { /* 同 sessionContext：算不出來就不補記 */ }
+      entry[key] = { ...(await boundPart(ctx, b, { fromSub })), memoryIndex };
+    }
+    entry.machineWarning = await machineWarning(ctx, b.pid, machineEntries);
+    roots.push(entry);
+  }
+  const homes = { home: ctx.homes.home, claudeHome: ctx.homes.claudeHome, userHome: ctx.homes.userHome };
+  const cache = { v: SESSION_CACHE_V, at: new Date(now).toISOString(), engine: codeVersion(), install: installInfo(ctx.local), homes, mid: ctx.mid, label, shared: await gatherShared(ctx), roots, sources };
+  const file = sessionCacheFile(ctx.local);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  await safeWrite(file, JSON.stringify(cache));
+  return { roots: roots.length };
 }

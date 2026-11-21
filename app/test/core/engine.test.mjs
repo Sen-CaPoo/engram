@@ -597,8 +597,18 @@ describe('健康檢查', () => {
     assert.match(h08('global/en-this-pc.md').en.detail, /^Detected: mentions this computer\./);
     assert.match(h08('global/en-disk.md').en.detail, /^Detected: describes disk status\./);
     if (eg.machine.hostname.length >= 4) assert.match(h08('global/en-host.md').en.detail, new RegExp(`^Detected: mentions the host name ${eg.machine.hostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.`, 'i'));
-    assert.match(findings.find((f) => f.code === 'H10' && f.refs[0] === 'global/en-big.md').en.title, /is too large$/);
-    assert.match(findings.find((f) => f.code === 'H10' && f.refs[0] === 'global/en-fat.md').en.title, /is fairly large$/);
+    // 2.0.0：說明維持中性，不建議拆分或精簡（使用者的決定：不拆分、不為了縮短而刪減記憶）
+    const big = findings.find((f) => f.code === 'H10' && f.refs[0] === 'global/en-big.md');
+    const fat = findings.find((f) => f.code === 'H10' && f.refs[0] === 'global/en-fat.md');
+    assert.match(big.en.title, /is large$/);
+    assert.match(fat.en.title, /is fairly large$/);
+    assert.match(big.title, /檔案比較大$/);
+    for (const f of [big, fat]) {
+      assert.match(f.detail, /不建議拆分/);
+      assert.match(f.en.detail, /splitting it is not recommended/);
+      assert.doesNotMatch(`${f.detail}${f.en.detail}`, /拆分或精簡|建議 8KB|split or trim|or less is recommended/);
+    }
+    assert.match(big.detail, /可以釘選或保持原樣/);
     assert.match(findings.find((f) => f.code === 'H12' && f.refs[0] === 'global/en-broken.md').en.detail, /^Line \d+\b.+\. Engram will not rewrite/);
     assert.match(findings.find((f) => f.code === 'H12' && f.refs[0] === 'global/en-incomplete.md').en.title, /is incomplete$/);
     assert.equal(findings.find((f) => f.code === 'H15' && f.refs[0] === 'global/en-conflict.md').en.detail, 'Both computers edited it', '衝突紀錄有英文摘要就用英文');
@@ -680,7 +690,10 @@ describe('介面需要的引擎能力', () => {
     assert.equal(eg.machine.label, '辦公室桌機');
     assert.match(fs.readFileSync(path.join(eg.paths.vault, 'core', 'CORE.md'), 'utf8'), /辦公室桌機（/);
     assert.equal(JSON.parse(fs.readFileSync(path.join(eg.paths.vault, 'machines', eg.machine.id, 'machine.json'), 'utf8')).label, '辦公室桌機');
-    assert.deepEqual(await eg.settings.get(), { bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on', autopilot: 'off', autopilotBudget: 200 });
+    assert.deepEqual(await eg.settings.get(), { bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on', autopilot: 'off', autopilotBudget: 200, envHealth: 'on', guardrails: 'block', envSync: 'report', autoUpdate: 'on', recall: 'on', recallForced: false, indexLayers: 'observe' });
+    assert.equal((await eg.settings.set({ autoUpdate: 'off' })).autoUpdate, 'off');
+    await assert.rejects(eg.settings.set({ autoUpdate: 'maybe' }), (e) => e.code === 'E_INVALID' && /autoUpdate/.test(e.message) && /autoUpdate/.test(e.en.message));
+    assert.equal((await eg.settings.set({ autoUpdate: 'on' })).autoUpdate, 'on');
     await assert.rejects(eg.settings.set({ autopilot: 'yes' }), /autopilot/);
     await assert.rejects(eg.settings.set({ autopilotBudget: 0 }), /autopilotBudget/);
     await assert.rejects(eg.settings.set({ reviewWrites: 'maybe' }), /reviewWrites/);

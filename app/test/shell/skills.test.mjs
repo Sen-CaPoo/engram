@@ -78,7 +78,9 @@ describe('外掛技能', () => {
         assert.ok(tools, `${s.dir} 要用 allowed-tools 預先允許 engram 指令，否則預設權限模式下每一步都會詢問`);
         const rules = tools.split(/\s+(?=[A-Z])/);
         // 只開放技能用得到的 engram 子指令（不可以是涵蓋 uninstall、update、import、collisions 的 engram *），以及沒有 Bash 時寫草稿用的 ~/.engram/local/drafts
-        const SAFE = /^(Bash|PowerShell)\(engram (inbox|memory|memory show|memory list|core|search|remember|undo|status|projects|sync|tidy|tidy create|tidy list|tidy show|dream|autopilot (status|runs|on|off|run)|autopilot (show|undo|budget) \*)( \*)?\)$/;
+        const SAFE = /^(Bash|PowerShell)\(engram (inbox|memory|memory show|memory list|core|search|remember|undo|status|projects|sync|tidy|tidy create|tidy list|tidy show|dream|autopilot (status|runs|on|off|run|preferences|digest)|autopilot (show|undo|budget) \*|holding|holding list|holding show)( \*)?\)$/;
+        // 保留區（2.0.0）只預先允許讀取：採用與捨棄會改記憶，要照一般的權限詢問使用者
+        assert.doesNotMatch(tools, /engram holding (\*|adopt|dismiss)/, `${s.dir} 不可以預先允許 engram holding 的採用與捨棄`);
         // dream（1.4.0）另外可以讀回顧資料夾（匯出的對話文字，只在本機）
         const extra = (r) => r === 'Edit(~/.engram/local/drafts/**)' || (s.dir === 'dream' && r === 'Read(~/.engram/local/dream/**)');
         for (const rule of rules) assert.ok(SAFE.test(rule) || extra(rule), `${s.dir} 只能預先允許技能需要的 engram 子指令與草稿資料夾：${rule}`);
@@ -119,6 +121,21 @@ describe('外掛技能', () => {
       }
     }
     assert.ok(seen > 0);
+  });
+
+  // 2.0.0（WP6 收尾）：使用者的決定是不拆分、不為了縮短而精簡記憶；技能不能再教 Claude 拆分或精簡
+  test('技能不建議拆分記憶，也不為了縮短而精簡內容（和 H10 卡片的中性說明一致）', () => {
+    for (const s of skills) {
+      for (const m of s.text.matchAll(/拆分|拆成|拆開|精簡/g)) {
+        const before = s.text.slice(Math.max(0, m.index - 6), m.index);
+        assert.match(before, /不(要|必|建議|會)?\s*$|不$/, `${s.dir} 在「${s.text.slice(Math.max(0, m.index - 20), m.index + 20).replace(/\n/g, ' ')}」建議拆分或精簡`);
+      }
+      assert.doesNotMatch(s.text, /過長的內容|一個檔案應該只講一件事/, `${s.dir} 仍以檔案大小作為整理的理由`);
+    }
+    const tidy = skills.find((s) => s.dir === 'tidy').text;
+    assert.doesNotMatch(tidy, /keep、update、move、archive、merge、create、split、promote/, 'tidy 不再列出 split 這個建議');
+    const inbox = skills.find((s) => s.dir === 'inbox').text;
+    assert.match(inbox, /H10[^\n]*不建議拆分/, 'inbox 的 H10 說明和卡片一致：不建議拆分');
   });
 
   test('寫入類技能都要求先取得使用者同意', () => {

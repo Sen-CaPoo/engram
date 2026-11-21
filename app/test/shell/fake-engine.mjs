@@ -37,7 +37,7 @@ export function createFakeEngine({ home = path.join('C:', 'fake', '.engram'), cl
   };
   const project = {
     pid: 'acme-gateway-3fa9k', name: 'Acme_Gateway', aliases: [], remotes: ['github.com/acme/acme-gateway'],
-    paths: { [machine.id]: { path: 'C:\\Users\\Sen\\Desktop\\Acme_Gateway', exists: true, lastOpenedAt: AT, method: 'junction', encoded: 'C--Users-Sen-Desktop-Acme-Gateway' } },
+    paths: { [machine.id]: { path: 'C:\\Users\\you\\Desktop\\Acme_Gateway', exists: true, lastOpenedAt: AT, method: 'junction', encoded: 'C--Users-you-Desktop-Acme-Gateway' } },
     counts: { memories: 3, findings: 0 }, index: { lines: 3, bytes: 240 }, lastActivityAt: AT, archived: false,
   };
   const finding = {
@@ -73,7 +73,7 @@ export function createFakeEngine({ home = path.join('C:', 'fake', '.engram'), cl
       pending: async () => rec('identity.pending', [], []),
       reconcile: async (opts) => rec('identity.reconcile', [opts], { ok: true, junction: true, changed: [], deferred: [] }),
       resolve: async (dir) => rec('identity.resolve', [dir], {
-        dir, root: dir, isGit: true, encoded: 'C--Users-Sen-Desktop-Acme-Gateway', pid: project.pid, confidence: 'certain', reason: 'binding',
+        dir, root: dir, isGit: true, encoded: 'C--Users-you-Desktop-Acme-Gateway', pid: project.pid, confidence: 'certain', reason: 'binding',
         candidates: [], binding: { pid: project.pid, path: dir, method: 'junction', state: 'active' }, collision: null, remotes: [], rootCommits: [],
       }),
       bind: async (dir, target, opts) => rec('identity.bind', [dir, target, opts], { ok: true, pid: target?.pid ?? project.pid, created: !!target?.create, method: 'junction', state: 'active', ...action() }),
@@ -117,12 +117,70 @@ export function createFakeEngine({ home = path.join('C:', 'fake', '.engram'), cl
       },
     },
     findings: { dismiss: async (id, o) => rec('findings.dismiss', [id, o], { ok: true }) },
+    env: {
+      fingerprint: async (o) => rec('env.fingerprint', [o], {
+        v: 1, updated: '2026-11-20', claudeCode: { version: '2.1.329' }, engram: { version: '2.0.0', commit: 'a1b2c3d' },
+        settings: { present: true, keys: ['env'], envKeys: ['A_MODE'], enabledPlugins: {}, hooks: [], cleanupPeriodDays: null },
+        plugins: [{ name: 'alpha', marketplace: 'mkt', version: '1.0.0', hooks: [] }], skills: [], agents: [], commands: [],
+        claudeMd: { bytes: 120, hash: 'h1', modified: '2026-11-01', blocks: [{ name: 'engram', bytes: 50, hash: 'e1' }] },
+        hookStats: { windowDays: 7, hooks: [{ event: 'PostToolUse', source: 'tele@mkt', mode: 'sync', command: 'node ~/send.js', runs: 12, medianMs: 1200, totalMs: 14400 }, { event: 'SessionStart', source: null, mode: 'unknown', command: 'python x.py', runs: 8, medianMs: 700, totalMs: 5600 }, { event: 'Stop', source: 'quiet@mkt', mode: 'async', command: 'node bg.js', runs: 9, medianMs: 900, totalMs: 8100 }] },
+      }),
+      findings: async (o) => rec('env.findings', [o], [{
+        id: 'H32:abc1234567', code: 'H32', severity: 'low', title: '沒有設定對話紀錄的保留天數', detail: 'Claude Code 預設在 30 天後清除對話紀錄。', refs: ['env:cleanup-period'],
+        fix: { action: 'env-fix', args: { id: 'H32:abc1234567' }, label: '設成 60 天', en: { label: 'Set it to 60 days' } }, en: { title: 'The conversation retention period is not set', detail: 'x' },
+      }]),
+      diff: async () => rec('env.diff', [], {
+        machines: [{ mid: machine.id, label: machine.label, self: true, updated: '2026-11-20', hasEnv: true }, { mid: 'home-pc-1a2b', label: '家裡電腦', self: false, updated: '2026-11-19', hasEnv: true }], compared: 2,
+        items: [{ area: 'claude-code', key: 'Claude Code', kind: 'version', values: { [machine.id]: '2.1.329', 'home-pc-1a2b': '2.1.322' }, newer: machine.id, summary: '「Claude Code」版本不同：公司電腦：2.1.329，家裡電腦：2.1.322；公司電腦 比較新', en: { summary: 'x' } }],
+      }),
+      fix: async (id, o) => rec('env.fix', o === undefined ? [id] : [id, o], { ok: true, code: 'H32', changed: true, days: 60, backup: 'C:\\fake\\env-backup' }),
+      run: async (o) => rec('env.run', [o], { ok: true, written: false, findings: 1, fixed: [] }),
+      // 2.0.0 WP8：環境設定同步與瘦身
+      profile: async () => rec('env.profile', [], { present: true, problem: null, profile: { v: 1, env: { A_MODE: '1' }, settings: { theme: 'dark' }, skills: ['alpha-skill'], plugins: [{ name: 'alpha', marketplace: 'mkt' }], updatedAt: AT, by: 'home-pc-1a2b' }, overrides: { present: false, problem: null, skip: [], env: {}, settings: {} }, blocked: [], whitelist: ['theme'] }),
+      set: async (key, value, o) => rec('env.set', o === undefined ? [key, value] : [key, value, o], { ok: true, key, changed: true, approved: o?.approve !== false }),
+      approve: async (items) => rec('env.approve', items === undefined ? [] : [items], { ok: true, count: 1, approved: [{ area: 'env', key: 'GONE_MODE', hash: 'a'.repeat(40), summary: '環境變數「GONE_MODE」：新增 1（等待這台核可）', en: { summary: 'x' } }] }),
+      unset: async (name) => rec('env.unset', [name], { ok: true, key: String(name).replace(/^setting:/, ''), area: String(name).startsWith('setting:') ? 'setting' : 'env', changed: true }),
+      removeSkill: async (name) => rec('env.removeSkill', [name], { ok: true, name, removedFiles: true, changed: true }),
+      removePlugin: async (name) => rec('env.removePlugin', [name], { ok: true, key: `${name}@mkt`, changed: true }),
+      skip: async (item) => rec('env.skip', [item], { ok: true, changed: true, item, skip: true }),
+      unskip: async (item) => rec('env.unskip', [item], { ok: true, changed: true, item, skip: false }),
+      export: async (o) => rec('env.export', [o], {
+        ok: true, changed: true, settings: ['theme'], plugins: 1,
+        blocked: [{ area: 'setting', key: 'statusLine', reason: 'home-path', message: '「statusLine」的值含這台電腦的家目錄路徑，換到別台電腦就不對了', en: { message: 'x' } }],
+        skills: {
+          synced: [{ name: 'alpha-skill', files: 2, skippedLarge: ['big.bin'], skippedLinks: [] }],
+          blocked: [{ name: 'leaky', reason: 'secret', files: [{ rel: 'notes.txt', kinds: ['anthropic-api-key'] }] }],
+          conflicts: [{ name: 'twin', reason: 'changed-elsewhere' }],
+        },
+      }),
+      plan: async (o) => rec('env.plan', o === undefined ? [] : [o], {
+        v: 1, at: AT, envSync: 'report', profile: { present: true, updatedAt: AT, by: 'home-pc-1a2b' }, overrides: { present: false }, settingsFormat: 'ok',
+        items: [
+          { area: 'setting', key: 'theme', action: 'update', from: 'light', to: 'dark', approved: true, hash: 'a'.repeat(40), summary: '設定「theme」：light → dark', en: { summary: 'Setting "theme": light -> dark' } },
+          { area: 'env', key: 'NEW_MODE', action: 'add', from: null, to: 'a-very-long-value-that-is-shown-in-full', approved: false, hash: 'b'.repeat(40), summary: '環境變數「NEW_MODE」：新增 a-very-long-value-that-is-shown-in-full（等待這台核可）', en: { summary: 'x' } },
+          { area: 'plugin', key: 'beta@mkt', action: 'missing', summary: '外掛「beta@mkt」：這台沒有安裝（Engram 不會自動安裝，請自行安裝）', en: { summary: 'x' } },
+        ],
+        blocked: [{ area: 'env', key: 'MY_API_KEY', reason: 'secret-name', message: '名稱含 KEY、TOKEN、SECRET 或 PASSWORD 的環境變數不會同步', en: { message: 'x' } }],
+        unused: { known: true, windowDays: 30, plugins: [{ key: 'idle-one@mkt', name: 'idle-one', installedAt: AT }] }, changes: 1, pending: 1,
+      }),
+      apply: async () => rec('env.apply', [], { ok: true, id: '2026-11-21T01-00-00-000Z', applied: 1, backup: 'C:\\fake\\env-backup\\apply', items: [{ area: 'setting', key: 'theme', action: 'update', summary: '設定「theme」：light → dark', en: { summary: 'x' } }] }),
+      undo: async () => rec('env.undo', [], { ok: true, id: '2026-11-21T01-00-00-000Z', kind: 'apply', restored: 1, kept: [{ key: 'setting:model', reason: 'changed' }] }),
+      setPlugin: async (name, enabled) => rec('env.setPlugin', [name, enabled], { ok: true, changed: true, key: `${name}@mkt`, enabled, backup: 'C:\\fake\\env-backup\\plugin' }),
+      cachedPlan: async () => rec('env.cachedPlan', [], null),
+      syncRun: async (o) => rec('env.syncRun', [o], { ok: true, mode: 'report', changes: 0, applied: false }),
+    },
     secrets: {
       preview: async (ref) => rec('secrets.preview', [ref], { before: 'token=ghp_x', after: 'token=‹已遮蔽›', matches: [{ line: 1, kind: 'github-pat', preview: 'ghp_…' }] }),
       redact: async (ref) => rec('secrets.redact', [ref], action()),
       allow: async (ref, line) => rec('secrets.allow', [ref, line], { ok: true }),
     },
     _pending: [],
+    holding: {
+      list: async (o) => rec('holding.list', [o], [{ id: 'hd-20261120-101500-ab2c', status: 'held', kind: 'rejected', title: '合併兩筆重複的記憶', local: false }]),
+      get: async (id) => rec('holding.get', [id], { id, status: 'held', kind: 'rejected', title: '合併兩筆重複的記憶', ops: [], evidence: [], local: false }),
+      adopt: async (id) => rec('holding.adopt', [id], { ok: true, id, record: '20261120-101600-cd3e', item: 'i1', undo: ['a1b2c3d'] }),
+      dismiss: async (id) => rec('holding.dismiss', [id], { ok: true, item: { id, status: 'dismissed' } }),
+    },
     settings: { get: async () => rec('settings.get', [], { bindAuto: 'confident' }), set: async (o) => rec('settings.set', [o], { ok: true }) },
     claudeMdBlock: async () => rec('claudeMdBlock', [], `<!-- engram:begin · 由 Engram 管理 -->\n@~/.engram/vault/core/CORE.md\n@~/.engram/vault/machines/${machine.id}/INDEX.md\n<!-- engram:end -->\n`),
     doctor: async () => rec('doctor', [], { ok: true, checks: [{ id: 'git', ok: true, label: 'git 執行檔', detail: 'git version 2.53.0' }], findings: [finding] }),

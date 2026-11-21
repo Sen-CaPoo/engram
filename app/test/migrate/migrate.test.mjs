@@ -79,7 +79,7 @@ test('計畫 → 演練 → 套用 → 還原：全程可逆，原始記憶不�
   assert.equal(rh.realUntouched.ok, true);
   assert.deepEqual(fingerprintLegacy(f.m.claudeHome), before, '演練不能動到原始記憶');
 
-  const applied = await applyImport(eg, { edits });
+  const applied = await applyImport(eg, { edits }, { by: 'user' });
   assert.equal(applied.ok, true);
   assert.equal(applied.copied, 3);
   const mems = await eg.memories.list({});
@@ -116,7 +116,7 @@ test('匯入時親自改過範圍的記憶，不會馬上出現「改回去」�
   const edits = { items: { [itemKey(notesSrc.encoded, 'printer.md')]: { scope: 'project' } } };
 
   assert.equal((await rehearseImport(eg, { edits })).ok, true);
-  const applied = await applyImport(eg, { edits });
+  const applied = await applyImport(eg, { edits }, { by: 'user' });
   assert.equal(applied.ok, true);
   const isPrinterH08 = (x) => x.code === 'H08' && x.refs[0].endsWith('/printer.md');
   assert.ok(!(await eg.health()).some(isPrinterH08), '使用者決定留在專案，收件匣不再建議改單機');
@@ -142,7 +142,7 @@ test('SW-2：計畫產生後來源又被修改 → 這個來源這次不套用�
   // 產生計畫之後，Claude 又改了這個來源的一筆記憶
   fs.writeFileSync(path.join(appLegacy.mem, 'db-choice.md'), memoryText({ name: 'db-choice', description: '資料庫改用 PostgreSQL 16', type: 'project' }));
 
-  const applied = await applyImport(eg, { edits: wizardEdits(plan) });
+  const applied = await applyImport(eg, { edits: wizardEdits(plan) }, { by: 'user' });
   assert.deepEqual(applied.deferred, [{ path: f.app, reason: 'changed-since-plan' }]);
   assert.equal(applied.copied, 1, '沒有變更的來源照常匯入');
   assert.equal(fs.lstatSync(appLegacy.mem).isSymbolicLink(), false, '延後的來源不能換成 junction');
@@ -151,7 +151,7 @@ test('SW-2：計畫產生後來源又被修改 → 這個來源這次不套用�
   // 重新規劃：看到改過的內容，套用後才匯入並接上；使用者略過的檔案仍不進 vault
   const again = await planImport(eg);
   assert.deepEqual(again.sources.map((s) => s.encoded), [appLegacy.enc]);
-  const applied2 = await applyImport(eg, { edits: wizardEdits(again) });
+  const applied2 = await applyImport(eg, { edits: wizardEdits(again) }, { by: 'user' });
   assert.deepEqual(applied2.deferred, []);
   assert.equal(fs.lstatSync(appLegacy.mem).isSymbolicLink(), true);
   const names = (await eg.memories.list({})).map((m) => m.name).sort();
@@ -168,7 +168,7 @@ test('SW-2：所有來源都有變更時不建立還原點，只回報延後', a
   const plan = await planImport(eg);
   const revs = Object.fromEntries(plan.sources.map((s) => [`${s.encoded}|${s.resolvedPath ?? ''}`, s.rev]));
   for (const l of f.legacy) fs.writeFileSync(path.join(l.mem, 'late.md'), memoryText({ name: 'late', description: '規劃後才寫的記憶', type: 'project' }));
-  const r = await applyImport(eg, { edits: { revs } });
+  const r = await applyImport(eg, { edits: { revs } }, { by: 'user' });
   assert.equal(r.tag, null);
   assert.equal(r.deferred.length, 2);
   assert.equal((await planImport(eg)).applied, false, '沒有套用任何東西，不能留下匯入紀錄');
@@ -193,7 +193,7 @@ test('R-25：三個中文撞名資料夾共用一個記憶資料夾 → 各自�
   assert.deepEqual(plan.sources.map((s) => s.resolvedPath).sort(), [...dirs].sort(), '依 originSessionId 分成三個來源');
 
   const revs = Object.fromEntries(plan.sources.map((s) => [`${s.encoded}|${s.resolvedPath ?? ''}`, s.rev]));
-  const applied = await applyImport(eg, { edits: { revs } });
+  const applied = await applyImport(eg, { edits: { revs } }, { by: 'user' });
   assert.deepEqual(applied.deferred, []);
   assert.equal(applied.bound, 3);
   assert.equal(fs.lstatSync(mem).isSymbolicLink(), false, '共用的記憶資料夾不能換成 junction');
@@ -228,7 +228,7 @@ for (const [failAt, what] of [[3, '第一個綁定的 commit'], [4, '第二個�
     fs.writeFileSync(hook, `#!/bin/sh\nf="$(git rev-parse --git-dir)/fail-count"\nn=$(cat "$f" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$f"\n[ $n -ge ${failAt} ] && { echo injected >&2; exit 1; }\nexit 0\n`);
     fs.chmodSync(hook, 0o755);
 
-    const err = await applyImport(eg, {}).then(() => null, (e) => e);
+    const err = await applyImport(eg, {}, { by: 'user' }).then(() => null, (e) => e);
     assert.ok(err, '應該失敗');
     assert.ok(err.tag, '錯誤要帶出這次匯入的紀錄，讓使用者能還原');
     assert.match(err.hint, /還原到匯入前/);

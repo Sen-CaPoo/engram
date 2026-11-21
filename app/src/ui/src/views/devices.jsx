@@ -3,10 +3,10 @@ import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import { api } from '../api.js';
 import { useApp, useData, Skeleton, Banner, ErrorBanner, useAction, Section, Empty, ConfirmDialog } from '../components.jsx';
-import { relTime, SYNC_LABEL, humanizeCommit, undoText } from '../util.js';
+import { relTime, SYNC_LABEL, humanizeCommit, undoText, heldFileKind } from '../util.js';
 import { IconMonitor, IconSync, IconUndo, IconHistory, IconCloud, IconChevronRight } from '../icons.jsx';
 import { IMPORT_ACTIONS } from './library.jsx';
-import { t, local } from '../i18n.js';
+import { t, N_, local } from '../i18n.js';
 
 // 同步錯誤：說清楚原因與下一步（M4）
 export function SyncErrorBanner({ sync, go, syncNow }) {
@@ -18,6 +18,39 @@ export function SyncErrorBanner({ sync, go, syncNow }) {
   return <Banner tone="bad" title={t('同步失敗：{message}', { message: local(e, 'message') || t('原因不明') })} actions={<><button class="btn sm" onClick={syncNow}><IconSync />{t('重試')}</button><button class="btn sm ghost" onClick={() => go('schedule')}>{t('看日誌')}</button></>}>{local(e, 'hint') || t('可以到「排程與紀錄」查看日誌，或在終端機執行 engram doctor 檢查。')}</Banner>;
 }
 
+// 沒有推送的檔案（疑似含金鑰，只留在這台）。2.0.0 起記憶庫裡除了記憶，還有會同步的環境設定、保留區與護欄規則：
+// 它們不是記憶，不能在記憶庫打開，改成顯示完整路徑與說明，按鈕帶到處理它的頁面。
+const HELD_KIND = {
+  memory: { label: N_('記憶'), help: N_('到收件匣的「疑似含有金鑰」卡片遮蔽後就會恢復同步。'), action: N_('到收件匣處理'), route: 'inbox' },
+  env: { label: N_('環境設定'), help: N_('共用環境設定檔或自製技能的檔案，不是記憶。請打開這個檔案拿掉金鑰（改放環境變數或系統的憑證保管），下次同步就會推送。'), action: N_('前往環境'), route: 'env', params: { tab: 'sync' } },
+  holding: { label: N_('保留區'), help: N_('保留區的項目，不是記憶。在保留區採用或標成不需要之後，就不需要再同步它。'), action: N_('前往保留區'), route: 'holding' },
+  guardrails: { label: N_('護欄規則'), help: N_('護欄的規則檔，不是記憶。請打開這個檔案拿掉看起來像金鑰的字串，下次同步就會推送。'), action: N_('看護欄'), route: 'env', params: { tab: 'guard' } },
+  other: { label: N_('其他檔案'), help: N_('記憶庫裡的其他檔案，不是記憶。請打開這個檔案拿掉金鑰，下次同步就會推送。'), action: null },
+};
+
+function HeldFiles({ held, vault, go }) {
+  if (!held?.length) return null;
+  const sep = String(vault || '').includes('\\') ? '\\' : '/';
+  const full = (ref) => (vault ? `${vault}${sep}${String(ref).split('/').join(sep)}` : ref);
+  return (
+    <Banner tone="warn" title={t('有 {n} 個檔案沒有推送', { n: held.length })}>
+      {t('這些檔案疑似含有金鑰，只留在這台電腦，不會同步到其他電腦。')}
+      <ul class="held-list">
+        {held.map((x) => {
+          const k = HELD_KIND[heldFileKind(x.ref)];
+          return (
+            <li key={x.ref}>
+              <span class="held-head"><span class="chip">{t(k.label)}</span><code class="path">{full(x.ref)}</code></span>
+              <span class="faint">{t(k.help)}</span>
+              {k.route && <button class="btn sm" onClick={() => go(k.route, k.params)}>{t(k.action)}<IconChevronRight /></button>}
+            </li>
+          );
+        })}
+      </ul>
+    </Banner>
+  );
+}
+
 export function Devices({ go }) {
   const { status, syncNow } = useApp();
   const hist = useData(() => api.history({ limit: 60 }), []);
@@ -27,12 +60,14 @@ export function Devices({ go }) {
   if (!status) return <div class="page"><Skeleton rows={6} /></div>;
   const s = status.sync;
   const devName = (id) => status.devices.find((d) => d.id === id)?.label || id;
+  // 索引相容模式裡讓索引維持舊規則的電腦（GET /api/status 的 indexCompat.machines；相容模式沒有開時是空的）
+  const olderIds = new Set(status.indexCompat?.active ? (status.indexCompat.machines || []).map((m) => m.mid) : []);
   const commits = (hist.data || []).filter((c) => who === 'all' || c.machine === who);
 
   return (
     <div class="page">
       <SyncErrorBanner sync={s} go={go} syncNow={syncNow} />
-      {s.held?.length > 0 && <Banner tone="warn" title={t('有 {n} 個檔案沒有推送', { n: s.held.length })} actions={<button class="btn sm" onClick={() => go('inbox')}>{t('到收件匣處理')}<IconChevronRight /></button>}>{t('{files} 疑似含有金鑰，只留在這台。', { files: s.held.map((x) => x.ref).join(t('、')) })}</Banner>}
+      <HeldFiles held={s.held} vault={status.vault?.path} go={go} />
 
       <div class="grid cols-2">
         {status.devices.map((d) => (
@@ -44,7 +79,8 @@ export function Devices({ go }) {
             </header>
             <dl class="kv">
               <dt>{t('電腦 ID')}</dt><dd class="mono">{d.id}</dd>
-              <dt>{t('Engram 版本')}</dt><dd>{d.engramVersion}</dd>
+              <dt>{t('Engram 版本')}</dt>
+              <dd>{d.engramVersion}{olderIds.has(d.id) && <span class="chip warn dev-old" title={t('索引目前是相容模式：這台更新 Engram 之後，共用的索引才會切換到新規則。')}>{t('舊版，更新後索引才會切換到新規則')}</span>}</dd>
               {d.isSelf ? (
                 <>
                   <dt>{t('同步狀態')}</dt><dd><span class={`chip ${s.state === 'ok' ? 'ok' : s.state === 'syncing' || s.state === 'busy' ? 'brand' : 'warn'}`}>{t(SYNC_LABEL[s.state])}</span></dd>

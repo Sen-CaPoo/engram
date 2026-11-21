@@ -166,7 +166,35 @@ export function undoText(res, okText) {
   const notes = local(res, 'notes');
   if (res?.done === false) return t('部分還原：{note}。處理後再按一次復原', { note: notes?.[0] ?? t('有資料夾沒有改回') });
   if (notes?.length) return t('{ok}；注意：{notes}', { ok: okText, notes: notes.join(t('；')) });
-  return okText;
+  // 2.0.0：還原專案合併之後，這台電腦的資料夾重新接回原本的專案（realigned）；做不到的部分在 partial（en 是英文字串）
+  let ok = okText;
+  if (res?.realigned?.length) ok = t('{ok}，{n} 個資料夾已重新接回原本的專案', { ok, n: res.realigned.length });
+  if (res?.partial?.length) {
+    const msgs = res.partial.map((p) => (getLang() !== 'zh-TW' && typeof p.en === 'string' ? p.en : p.message));
+    return t('{ok}；注意：{notes}', { ok, notes: msgs.join(t('；')) });
+  }
+  return ok;
+}
+
+/**
+ * 沒有推送的檔案（status.sync.held）是哪一種：2.0.0 起 vault 裡除了記憶，還有會同步的環境設定、保留區與護欄規則，
+ * 它們內容疑似含金鑰時一樣只留在這台，但不是記憶，不能當成記憶打開。
+ * 回傳 'memory'（記憶或核心準則）、'env'、'holding'、'guardrails' 或 'other'。
+ */
+export function heldFileKind(ref) {
+  const r = String(ref || '').replace(/\\/g, '/');
+  if (/^env\//.test(r) || /^machines\/[^/]+\/env(-overrides)?\.json$/.test(r)) return 'env';
+  if (/^holding\//.test(r)) return 'holding';
+  if (/^guardrails\//.test(r)) return 'guardrails';
+  if (/^(global|projects|machines)\/.+\.md$/.test(r) || /^core\/.+\.md$/.test(r)) return 'memory';
+  return 'other';
+}
+
+/** 最近一輪已結束的自動駕駛為什麼提前停止：{ reason: 'limit'|'auth'|'budget'|'busy', run } 或 null（runs 新的在前，執行中的略過） */
+export function latestStop(runs) {
+  const last = (runs || []).find((r) => r.status !== 'running');
+  const s = last?.summary?.stopped;
+  return ['limit', 'auth', 'budget', 'busy'].includes(s) ? { reason: s, run: last } : null;
 }
 
 // 經過多久（用在「已經 9 天沒有同步」這類句子）

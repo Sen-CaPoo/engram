@@ -97,7 +97,7 @@ async function precheck(eg, item, start) {
  * 執行一個動作，回傳 { sha, ref? }（ref：動作之後這筆記憶的位置）。
  * 這些內容使用者已在記憶整理頁核可，寫入時一併記為確認過（1.4.0，H23）。
  */
-async function runOp(eg, op, { reviewed = true } = {}) {
+async function runOp(eg, op, { reviewed = true, coreReviewed } = {}) {
   switch (op.op) {
     case 'write':
       return { sha: shaOf(await eg.memories.write(op.ref, { text: op.content, ...(reviewed ? { reviewed } : {}) })) };
@@ -124,7 +124,7 @@ async function runOp(eg, op, { reviewed = true } = {}) {
       return { sha: shaOf(r), ref: r.ref };
     }
     case 'core':
-      return { sha: shaOf(await eg.core.write(op.content, { reviewed })) };
+      return { sha: shaOf(await eg.core.write(op.content, { reviewed: coreReviewed === undefined ? reviewed : coreReviewed })) };
     default:
       throw new CliError('E_INVALID', `不認得的動作：${op.op}`);
   }
@@ -228,8 +228,11 @@ async function runItem(eg, item, save, opts) {
 /**
  * reviewed：寫入時記為使用者確認過（預設；使用者在記憶整理頁看過內容）。自動駕駛傳 false：
  * 沒有人看過，寫進每次都會載入的範圍時留在「待你確認」，由下一輪的把關再看一次。
+ * reviewedItems（2.0.0 Q6）：這些項目（項目 id）不論 reviewed 都記為確認過——自動駕駛的審核員已經同意過的項目（來源記為 autopilot）。
+ * coreReviewed（第四輪審查 F-04）：有給時，改寫 core/CORE.md 的動作用它代替 reviewed（在 Claude Code 裡採用保留區的項目傳 false：
+ * 核心準則照寫但留在待你確認）。記憶整理（engram tidy apply）不帶，照舊。
  */
-export async function applyRecord(eg, id, { reviewed = true } = {}) {
+export async function applyRecord(eg, id, { reviewed = true, reviewedItems = null, coreReviewed } = {}) {
   const local = eg.paths.local;
   // 取得執行權：同一份記錄同時只能有一個程序在執行
   const rec = await updateRecord(local, id, (r) => {
@@ -252,7 +255,8 @@ export async function applyRecord(eg, id, { reviewed = true } = {}) {
     }
     for (const item of todo) {
       const save = (progress) => updateRecord(local, id, (r) => { r.items.find((x) => x.id === item.id).progress = progress; });
-      const res = await runItem(eg, item, save, { reviewed });
+      // 自動駕駛的審核員同意過的項目：記為「自動駕駛代為確認」（不算使用者確認，偏好區塊不採用）
+      const res = await runItem(eg, item, save, { reviewed: reviewed || (reviewedItems?.has(item.id) ? 'autopilot' : false), ...(coreReviewed !== undefined ? { coreReviewed } : {}) });
       await updateRecord(local, id, (r) => {
         const x = r.items.find((y) => y.id === item.id);
         x.result = res;

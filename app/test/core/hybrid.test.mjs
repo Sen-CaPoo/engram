@@ -102,7 +102,7 @@ describe('R-52 混合綁定', () => {
     assert.equal(f.en.title, 'Reading and writing memory will trigger permission prompts');
     assert.match(f.en.detail, /default permission mode is acceptEdits\. In this mode/);
     assert.equal(f.fix.en.label, 'Use settings-file links');
-    const rc = await eg.apply(f.fix);
+    const rc = await eg.apply(f.fix, { by: 'user' });
     assert.ok(rc.changed.some((c) => c.pid === r.pid && c.from === 'junction' && c.to === 'settings'));
     assert.equal(isLink(memDirOf(repo)), false);
     assert.ok(pointsToVault(repo, r.pid), '設定檔仍指向 vault');
@@ -306,7 +306,7 @@ describe('R-54 從 git 子資料夾啟動', () => {
     assert.match(f?.title ?? '', /建在錯誤的位置/);
     assert.match(f.en.title, /^The memory link for ".+" is in the wrong place$/);
     assert.equal(f.fix.en.label, 'Fix link location');
-    const rc = await eg.apply(f.fix);
+    const rc = await eg.apply(f.fix, { by: 'user' });
     assert.ok(rc.changed.some((c) => c.pid === r.pid && c.encoded?.to === encodeProjectPath(repo)));
     assert.equal(fs.existsSync(memDirOf(sub)), false, '放錯位置的 junction 已移除');
     assert.ok(!allowedDirs().includes(memDirOf(sub).toLowerCase()), '錯的 additionalDirectories 已撤銷');

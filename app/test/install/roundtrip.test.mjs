@@ -73,7 +73,7 @@ test('安裝 → 匯入 → 解除安裝：Claude 設定與專案資料夾逐檔
 
   const eg = await engine.open({ home: m.home, claudeHome: m.claudeHome, userHome: m.userHome });
   await planImport(eg);
-  const applied = await applyImport(eg, {});
+  const applied = await applyImport(eg, {}, { by: 'user' });
   assert.equal(applied.ok, true);
   assert.ok(applied.bound >= 1, '至少要綁定一個資料夾');
 

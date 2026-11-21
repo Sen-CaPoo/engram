@@ -29,7 +29,7 @@ export function buildSampleDataEn(now = Date.now()) {
   const projects = P.map((p) => ({
     pid: pidOf(p.key), name: p.name, aliases: [], remotes: p.remote ? [p.remote] : [],
     paths: {
-      [SELF.id]: { path: `C:\\Users\\Demo\\Projects\\${p.key}`, exists: true, lastOpenedAt: ago(p.last), method: 'junction', encoded: `C--Users-Demo-Projects-${p.key}` },
+      [SELF.id]: { path: `C:\\Users\\you\\Projects\\${p.key}`, exists: true, lastOpenedAt: ago(p.last), method: 'junction', encoded: `C--Users-you-Projects-${p.key}` },
       ...(p.home ? { [OTHER.id]: { path: `D:\\Work\\${p.key}`, exists: true, lastOpenedAt: ago(p.last + 20 * H), method: 'junction', encoded: `D--Work-${p.key}` } } : {}),
     },
     counts: { memories: 0, findings: 0 }, lastActivityAt: ago(p.last), archived: false, index: { lines: 2, bytes: 60 },
@@ -68,7 +68,7 @@ export function buildSampleDataEn(now = Date.now()) {
     ['project', 'analytics-dashboard', 'kpi-definitions', 'reference', 'KPI definitions used on the dashboard (GMV, AOV, repeat rate, churn)', 26 * H,
       KPI_BODY()],
     ['project', 'analytics-dashboard', 'chart-color-rules', 'feedback', 'Charts use the brand blue for the main series; red only for alerts', 4 * D,
-      'Main series: #0072CE. Red (#E4002B) is reserved for alerts and must not be used as a regular series color.'],
+      'Main series: #2563EB. Red (#DC2626) is reserved for alerts and must not be used as a regular series color.'],
     ['project', 'analytics-dashboard', 'export-settings', 'project', 'Report export path is C:\\Reports\\exports on this computer', 9 * D,
       'Scheduled exports are written to `C:\\Reports\\exports` and uploaded every night at 02:00.'],
     ['project', 'analytics-dashboard', 'timezone-handling', 'project', 'Store UTC, display in the viewer\'s time zone', 15 * D,
@@ -125,7 +125,7 @@ export function buildSampleDataEn(now = Date.now()) {
   const plan = {
     sources: [
       {
-        encoded: 'C--Users-Demo-Projects-order-service', resolvedPath: 'C:\\Users\\Demo\\Projects\\order-service', how: 'transcript-cwd', exists: true,
+        encoded: 'C--Users-you-Projects-order-service', resolvedPath: 'C:\\Users\\you\\Projects\\order-service', how: 'transcript-cwd', exists: true,
         target: { pid: pidOf('order-service'), name: 'Order service', isNew: true, archived: false },
         items: [
           item('order-status-rules.md', 'project', 'copy', 'project', ''),
@@ -136,7 +136,7 @@ export function buildSampleDataEn(now = Date.now()) {
         ],
       },
       {
-        encoded: 'C--Users-Demo-Projects-analytics-dashboard', resolvedPath: 'C:\\Users\\Demo\\Projects\\analytics-dashboard', how: 'origin-session', exists: true,
+        encoded: 'C--Users-you-Projects-analytics-dashboard', resolvedPath: 'C:\\Users\\you\\Projects\\analytics-dashboard', how: 'origin-session', exists: true,
         target: { pid: pidOf('analytics-dashboard'), name: 'Analytics dashboard', isNew: true, archived: false },
         items: [
           item('kpi-definitions.md', 'reference', 'copy', 'project', ''),
@@ -146,7 +146,7 @@ export function buildSampleDataEn(now = Date.now()) {
         ],
       },
       {
-        encoded: 'C--Users-Demo-Projects-legacy-crm', resolvedPath: 'C:\\Users\\Demo\\Projects\\legacy-crm', how: 'decoded', exists: false,
+        encoded: 'C--Users-you-Projects-legacy-crm', resolvedPath: 'C:\\Users\\you\\Projects\\legacy-crm', how: 'decoded', exists: false,
         target: { pid: pidOf('legacy-crm'), name: 'Legacy CRM', isNew: true, archived: true },
         items: [
           item('crm-export-format.md', 'reference', 'copy', 'project', ''),

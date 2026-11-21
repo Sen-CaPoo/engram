@@ -280,7 +280,7 @@ describe('常駐程式、工作、日誌、載入記錄', () => {
     const r = await call('GET', '/api/agent');
     assert.deepEqual(keys(r.json), ['claudeVersion', 'jobs', 'logonTask', 'pausedAutomations', 'paused', 'pid', 'port', 'probe', 'startedAt', 'version'].sort());
     assert.deepEqual(keys(r.json.logonTask), ['installed', 'lastResult', 'lastRunAt', 'launcher', 'state']);
-    assert.deepEqual(r.json.jobs.map((j) => j.id), ['sync', 'watch', 'health', 'probe', 'bind', 'rename', 'curate']);
+    assert.deepEqual(r.json.jobs.map((j) => j.id), ['sync', 'watch', 'health', 'probe', 'bind', 'rename', 'gc', 'curate', 'env', 'update']);
     for (const j of r.json.jobs) assert.deepEqual(keys(j), ['en', 'enabled', 'id', 'label', 'lastResult', 'lastRunAt', 'nextRunAt', 'running', 'schedule']);
     // 每個工作都有英文名稱與排程說明（管理介面切到英文時顯示）
     for (const j of r.json.jobs) assert.deepEqual(keys(j.en), ['label', 'schedule'], j.id);
@@ -350,6 +350,22 @@ describe('審查修正後新增的端點', () => {
     assert.deepEqual(lastCall('memories.write').args[1], { text: '---\nname: x\n---\n內文\n', allowSecrets: false, reviewed: true });
   });
 
+  test('保留區（2.0.0）：列出、讀一項、採用、忽略', async () => {
+    const l = await call('GET', '/api/holding?status=held');
+    assert.equal(l.status, 200);
+    assert.deepEqual(lastCall('holding.list').args, [{ status: 'held' }]);
+    await call('GET', '/api/holding');
+    assert.deepEqual(lastCall('holding.list').args, [{}]);
+    const g = await call('GET', '/api/holding/item?id=hd-20261120-101500-ab2c');
+    assert.equal(g.json.id, 'hd-20261120-101500-ab2c');
+    assert.equal((await call('GET', '/api/holding/item')).status, 400, '缺少 id');
+    const a = await call('POST', '/api/holding/adopt', { id: 'hd-20261120-101500-ab2c' });
+    assert.deepEqual([a.status, a.json.record], [200, '20261120-101600-cd3e']);
+    assert.deepEqual(lastCall('holding.adopt').args, ['hd-20261120-101500-ab2c']);
+    assert.equal((await call('POST', '/api/holding/dismiss', { id: 'hd-20261120-101500-ab2c' })).status, 200);
+    assert.deepEqual(lastCall('holding.dismiss').args, ['hd-20261120-101500-ab2c']);
+  });
+
   test('POST /api/findings/dismiss：忽略或延後', async () => {
     const r = await call('POST', '/api/findings/dismiss', { id: 'f1', until: '2026-10-29T00:00:00.000Z' });
     assert.equal(r.status, 200);
@@ -389,7 +405,7 @@ describe('審查修正後新增的端點', () => {
     const settings = createSettings(paths);
     const api2 = createApi({ eg, jobs, paths, info: { statusSummary: () => ({}) }, settings });
     const got = await api2.handle('GET', '/api/settings', new URLSearchParams(), {});
-    assert.deepEqual(keys(got), ['autopilot', 'autopilotBudget', 'bindAuto', 'collisionRename', 'healthTime', 'machineLabel', 'paused', 'remote', 'reviewWrites', 'syncIntervalMin']);
+    assert.deepEqual(keys(got), ['autopilot', 'autopilotBudget', 'bindAuto', 'collisionRename', 'envHealth', 'envSync', 'healthTime', 'machineLabel', 'paused', 'remote', 'reviewWrites', 'syncIntervalMin']);
     const put = await api2.handle('PUT', '/api/settings', new URLSearchParams(), { syncIntervalMin: 15, healthTime: '08:45', paused: true, machineLabel: '家裡電腦', bindAuto: 'ask' });
     assert.equal(put.syncIntervalMin, 15);
     assert.equal(put.healthTime, '08:45');
@@ -442,5 +458,150 @@ describe('記憶整理', () => {
     assert.equal((await call('GET', '/api/tidy/record?id=20991231-000000-zzzz')).status, 404);
     assert.deepEqual((await call('POST', '/api/tidy/delete', { id })).json, { ok: true });
     assert.deepEqual((await call('GET', '/api/tidy')).json, []);
+  });
+});
+
+describe('環境健檢（2.0.0 R1、R5）', () => {
+  test('GET /api/env → { envHealth, fingerprint, findings }；GET /api/env/diff；POST /api/env/fix 轉給引擎', async () => {
+    const r = await call('GET', '/api/env');
+    assert.equal(r.status, 200);
+    assert.deepEqual(keys(r.json), ['envHealth', 'findings', 'fingerprint']);
+    assert.equal(r.json.envHealth, 'on');
+    assert.equal(r.json.fingerprint.claudeCode.version, '2.1.329');
+    assert.equal(r.json.findings[0].code, 'H32');
+    assert.equal(r.json.findings[0].fix.action, 'env-fix');
+    const d = await call('GET', '/api/env/diff');
+    assert.equal(d.status, 200);
+    assert.equal(d.json.compared, 2);
+    assert.equal(d.json.items[0].area, 'claude-code');
+    const bad = await call('POST', '/api/env/fix', {});
+    assert.equal(bad.status, 400);
+    const fix = await call('POST', '/api/env/fix', { id: 'H32:abc1234567' });
+    assert.equal(fix.status, 200);
+    assert.deepEqual(lastCall('env.fix').args, ['H32:abc1234567']);
+    assert.deepEqual([fix.json.ok, fix.json.code], [true, 'H32']);
+  });
+
+  test('引擎沒有環境健檢時回 501（附英文）；PUT /api/settings 的 envHealth 交給引擎', async () => {
+    const api2 = createApi({ eg: { ...eg, env: undefined }, jobs, paths, info: { statusSummary: () => ({}) } });
+    await assert.rejects(api2.handle('GET', '/api/env/diff', new URLSearchParams(), {}), (err) => err.status === 501 && err.en.message === 'This version of the engine does not support the environment comparison yet');
+    await assert.rejects(api2.handle('GET', '/api/env', new URLSearchParams(), {}), (err) => err.status === 501);
+    const { createSettings } = await import('../../src/agent/settings.mjs');
+    const api3 = createApi({ eg, jobs, paths, info: { statusSummary: () => ({}) }, settings: createSettings(paths) });
+    await api3.handle('PUT', '/api/settings', new URLSearchParams(), { envHealth: 'off' });
+    assert.deepEqual(lastCall('settings.set').args, [{ envHealth: 'off' }]);
+  });
+
+  test('自動更新（R2）：PUT /api/settings 的 autoUpdate 交給引擎；GET /api/update 回報設定、本機版本、發佈資訊與最近一次的結果', async () => {
+    const { createSettings } = await import('../../src/agent/settings.mjs');
+    const api2 = createApi({ eg, jobs, paths, info: { statusSummary: () => ({}) }, settings: createSettings(paths) });
+    await api2.handle('PUT', '/api/settings', new URLSearchParams(), { autoUpdate: 'off' });
+    assert.deepEqual(lastCall('settings.set').args, [{ autoUpdate: 'off' }]);
+    // 沒有安裝紀錄也沒有發佈資訊：欄位都在，值是 null
+    fs.rmSync(path.join(paths.local, 'install.json'), { force: true });
+    fs.rmSync(path.join(paths.local, 'auto-update.json'), { force: true });
+    let r = await call('GET', '/api/update');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json, { autoUpdate: 'on', local: null, dev: false, release: null, last: null });
+    // 有安裝紀錄、發佈資訊與最近一次的結果
+    fs.mkdirSync(path.join(paths.vault), { recursive: true });
+    fs.mkdirSync(paths.local, { recursive: true });
+    fs.writeFileSync(path.join(paths.local, 'install.json'), JSON.stringify({ version: '1.6.0-abc1234', dev: false }));
+    const release = { version: '1.7.0', commit: 'a'.repeat(40), repo: 'github.com/example/engram', at: '2026-12-01T00:00:00.000Z', by: 'pc-a' };
+    fs.writeFileSync(path.join(paths.vault, 'release.json'), JSON.stringify(release));
+    fs.writeFileSync(path.join(paths.local, 'auto-update.json'), JSON.stringify({ last: { at: '2026-12-01T01:00:00.000Z', status: 'refused', code: 'dirty', reason: '來源資料夾有未提交的變更' } }));
+    r = await call('GET', '/api/update');
+    assert.deepEqual(r.json, { autoUpdate: 'on', local: '1.6.0-abc1234', dev: false, release, last: { at: '2026-12-01T01:00:00.000Z', status: 'refused', code: 'dirty', reason: '來源資料夾有未提交的變更' } });
+    fs.rmSync(path.join(paths.vault, 'release.json'), { force: true });
+    fs.rmSync(path.join(paths.local, 'install.json'), { force: true });
+    fs.rmSync(path.join(paths.local, 'auto-update.json'), { force: true });
+  });
+});
+
+describe('環境設定同步與瘦身（2.0.0 WP8）', () => {
+  test('GET /api/env/profile 回傳共用設定檔的內容（管理介面的環境頁用）', async () => {
+    const r = await call('GET', '/api/env/profile');
+    assert.equal(r.status, 200);
+    assert.ok(lastCall('env.profile'));
+    assert.deepEqual([r.json.present, r.json.profile.env.A_MODE, r.json.profile.skills[0]], [true, '1', 'alpha-skill']);
+  });
+
+  test('GET /api/env/plan 回傳 plan；POST /api/env/apply、/api/env/undo 轉給引擎', async () => {
+    const p = await call('GET', '/api/env/plan');
+    assert.equal(p.status, 200);
+    assert.equal(p.json.changes, 1);
+    assert.equal(p.json.items[0].action, 'update');
+    assert.equal(p.json.unused.plugins[0].key, 'idle-one@mkt');
+    const a = await call('POST', '/api/env/apply', {});
+    assert.equal(a.status, 200);
+    assert.deepEqual([a.json.ok, a.json.applied], [true, 1]);
+    assert.ok(lastCall('env.apply'));
+    const u = await call('POST', '/api/env/undo', {});
+    assert.equal(u.status, 200);
+    assert.deepEqual([u.json.ok, u.json.restored], [true, 1]);
+  });
+
+  test('POST /api/env/plugin：name 與 enabled（布林）都要有；轉給引擎的 setPlugin', async () => {
+    assert.equal((await call('POST', '/api/env/plugin', { enabled: false })).status, 400);
+    assert.equal((await call('POST', '/api/env/plugin', { name: 'idle-one' })).status, 400);
+    assert.equal((await call('POST', '/api/env/plugin', { name: 'idle-one', enabled: 'no' })).status, 400);
+    const r = await call('POST', '/api/env/plugin', { name: 'idle-one', enabled: false });
+    assert.equal(r.status, 200);
+    assert.deepEqual(lastCall('env.setPlugin').args, ['idle-one', false]);
+    assert.deepEqual([r.json.ok, r.json.key, r.json.enabled], [true, 'idle-one@mkt', false]);
+    await call('POST', '/api/env/plugin', { name: 'idle-one', enabled: true });
+    assert.deepEqual(lastCall('env.setPlugin').args, ['idle-one', true]);
+  });
+
+  test('POST /api/env/approve：{}（全部）、{ name }、{ name, hash }（綁定 plan 顯示的內容）、{ items } 都轉給引擎的 approve；回傳核可了什麼', async () => {
+    const all = await call('POST', '/api/env/approve', {});
+    assert.equal(all.status, 200);
+    assert.deepEqual(lastCall('env.approve').args, []);
+    assert.deepEqual([all.json.ok, all.json.count, all.json.approved[0].key], [true, 1, 'GONE_MODE']);
+    await call('POST', '/api/env/approve', { name: 'env:GONE_MODE' });
+    assert.deepEqual(lastCall('env.approve').args, [['env:GONE_MODE']]);
+    await call('POST', '/api/env/approve', { name: 'GONE_MODE', hash: 'abc' });
+    assert.deepEqual(lastCall('env.approve').args, [[{ item: 'GONE_MODE', hash: 'abc' }]]);
+    await call('POST', '/api/env/approve', { items: ['a', { item: 'b', hash: 'h' }] });
+    assert.deepEqual(lastCall('env.approve').args, [['a', { item: 'b', hash: 'h' }]]);
+  });
+
+  test('POST /api/env/approve 不受 Claude Code 偵測的限制：那是使用者自己在管理介面操作（CLI 的 engram env approve 才擋）', async () => {
+    const saved = { CLAUDECODE: process.env.CLAUDECODE, CLAUDE_CODE_ENTRYPOINT: process.env.CLAUDE_CODE_ENTRYPOINT };
+    process.env.CLAUDECODE = '1';
+    process.env.CLAUDE_CODE_ENTRYPOINT = 'cli';
+    try {
+      const r = await call('POST', '/api/env/approve', {});
+      assert.equal(r.status, 200);
+      assert.equal(r.json.ok, true);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+
+  test('POST /api/env/profile：action 只能是 unset、remove-skill、remove-plugin、skip、unskip；name 必填；轉給對應的引擎方法', async () => {
+    assert.equal((await call('POST', '/api/env/profile', { name: 'x' })).status, 400);
+    assert.equal((await call('POST', '/api/env/profile', { action: 'unset' })).status, 400);
+    const bad = await call('POST', '/api/env/profile', { action: 'delete-everything', name: 'x' });
+    assert.equal(bad.status, 400);
+    assert.equal((await call('POST', '/api/env/profile', { action: 'toString', name: 'x' })).status, 400, '原型鏈上的名稱不算動作');
+    const expect = { unset: 'env.unset', 'remove-skill': 'env.removeSkill', 'remove-plugin': 'env.removePlugin', skip: 'env.skip', unskip: 'env.unskip' };
+    for (const [action, name] of Object.entries(expect)) {
+      const r = await call('POST', '/api/env/profile', { action, name: 'thing' });
+      assert.equal(r.status, 200, action);
+      assert.deepEqual(lastCall(name).args, ['thing'], action);
+      assert.equal(r.json.ok, true);
+    }
+  });
+
+  test('引擎沒有這些功能時回 501（附英文）；PUT /api/settings 的 envSync 交給引擎', async () => {
+    const api2 = createApi({ eg: { ...eg, env: undefined }, jobs, paths, info: { statusSummary: () => ({}) } });
+    for (const [m, p, body] of [['GET', '/api/env/plan', {}], ['POST', '/api/env/apply', {}], ['POST', '/api/env/undo', {}], ['POST', '/api/env/plugin', { name: 'x', enabled: true }], ['POST', '/api/env/profile', { action: 'unset', name: 'x' }], ['POST', '/api/env/approve', {}]]) {
+      await assert.rejects(api2.handle(m, p, new URLSearchParams(), body), (err) => err.status === 501 && Boolean(err.en.message), `${m} ${p}`);
+    }
+    const { createSettings } = await import('../../src/agent/settings.mjs');
+    const api3 = createApi({ eg, jobs, paths, info: { statusSummary: () => ({}) }, settings: createSettings(paths) });
+    await api3.handle('PUT', '/api/settings', new URLSearchParams(), { envSync: 'auto' });
+    assert.deepEqual(lastCall('settings.set').args, [{ envSync: 'auto' }]);
   });
 });

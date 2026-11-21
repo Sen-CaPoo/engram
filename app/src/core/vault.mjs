@@ -12,9 +12,17 @@ import { makeMid, makeVaultId } from './ids.mjs';
 import { normalizeFsPath, toTildePath } from './paths.mjs';
 
 export const SCHEMA_VERSION = 1;
-export const ENGINE_VERSION = '1.6.0';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+/** 版本號單一來源是 app/package.json（改版本用 app/tools/set-version.mjs）；部署的複本也帶著 package.json（install/deploy.mjs）。 */
+function readEngineVersion() {
+  try {
+    const v = JSON.parse(fs.readFileSync(path.join(HERE, '..', '..', 'package.json'), 'utf8')).version;
+    if (/^\d+\.\d+\.\d+/.test(String(v))) return String(v);
+  } catch { /* 讀不到就用 0.0.0（和 cli/paths.mjs 的 appVersion 一致） */ }
+  return '0.0.0';
+}
+export const ENGINE_VERSION = readEngineVersion();
 export const TEMPLATES_DIR = path.join(HERE, 'templates');
 /** CLI 入口（合併器設定要指向它）；由 claude-25 提供 app/bin/engram.mjs。 */
 export const DEFAULT_CLI = path.resolve(HERE, '..', '..', 'bin', 'engram.mjs');
@@ -57,6 +65,16 @@ export function projectDir(vaultDir, pid) { return path.join(vaultDir, 'projects
 export function projectMemoryDir(vaultDir, pid) { return path.join(vaultDir, 'projects', assertId('專案 id', pid), 'memory'); }
 export function machineDir(vaultDir, mid) { return path.join(vaultDir, 'machines', assertId('電腦 id', mid)); }
 
+/**
+ * 同步來的電腦名稱（machines/<mid>/machine.json 的 label）能不能拿來顯示或寫進核心準則（第四輪審查 F-08）：
+ * 一行、40 字以內、只有文字、數字、空白與 . _ - ' ( ) （ ） 這些符號（不能有 @、#、換行，寫進 CORE.md 也不會變成匯入或標題）。
+ * 可以用就回傳去掉頭尾空白的名稱，否則 null（呼叫端改用電腦代號）。
+ */
+export function safeMachineLabel(label) {
+  const s = typeof label === 'string' ? label.trim() : '';
+  return s && s.length <= 40 && /^[\p{L}\p{N}\p{M} ._'()（）-]+$/u.test(s) ? s : null;
+}
+
 /** 簡單樣板：{{key}} 換成 vars[key]；未提供的鍵換成空字串。 */
 export function renderTemplate(text, vars = {}) {
   return text.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => (vars[k] === undefined || vars[k] === null ? '' : String(vars[k])));
@@ -96,6 +114,8 @@ export async function configureRepo(vaultDir, { mid, label, cli = DEFAULT_CLI, c
     ['core.quotepath', 'false'],
     ['core.longpaths', 'true'],
     ['pull.rebase', 'false'],
+    // 關掉 git 的自動打包：它附在 fetch／commit 後面、逾時只有 30 秒，被殺掉後留下過期的 gc.pid；改由常駐程式定期打包（S3）
+    ['gc.auto', '0'],
     ['merge.ours.driver', 'true'],
     ['merge.engram-md.name', 'Engram memory merge'],
     // 合併器：%O 共同祖先、%A 本機（結果寫回這裡）、%B 對方、%P 路徑
@@ -181,12 +201,24 @@ export async function initVault({ homes, remote, machineLabel, userName, cli }) 
   return { machine, vault, created };
 }
 
+/**
+ * 這台電腦目前安裝的 commit（讀 local/install.json）：部署時寫的 version 是「版本-commit」（例如 1.6.0-fd82015），有 commit 欄位時以它為準。
+ * 有未提交修改的部署帶 -dirty；開發模式或來源不是 git 複本沒有 commit → null。machine.json 與環境指紋都用這個值，所以解析只在這裡。
+ */
+export async function installedCommit(localDir) {
+  const j = await readJson(path.join(localDir, 'install.json'), null);
+  if (typeof j?.commit === 'string' && j.commit) return j.commit;
+  const m = /^\d+\.\d+\.\d+-([0-9a-f]{7,40}(?:-dirty)?)$/.exec(String(j?.version ?? ''));
+  return m ? m[1] : null;
+}
+
 /** 在 vault 登記本機（單一寫入者：只寫 machines/<mid>/）。 */
 export async function registerMachine(homes, machine) {
   const dir = machineDir(homes.vault, machine.mid);
   await fsp.mkdir(dir, { recursive: true });
   const p = path.join(dir, 'machine.json');
   const prev = await readJson(p, {});
+  const commit = await installedCommit(homes.local);
   const next = {
     id: machine.mid,
     label: machine.label,
@@ -194,6 +226,7 @@ export async function registerMachine(homes, machine) {
     os: `${os.type()} ${os.release()}`,
     user: os.userInfo().username,
     engramVersion: ENGINE_VERSION,
+    ...(commit ? { engramCommit: commit } : {}),
     firstSeenAt: prev.firstSeenAt ?? new Date().toISOString(),
     lastSeenAt: prev.lastSeenAt ?? new Date().toISOString(),
   };
@@ -202,15 +235,31 @@ export async function registerMachine(homes, machine) {
   if (!exists(b)) await writeJson(b, {});
 }
 
-/** lastSeenAt 最多每 6 小時寫一次，避免 commit 雜訊。 */
-export async function touchMachine(homes, mid) {
+const HEARTBEAT_PIGGYBACK_MS = 6 * 3600_000;
+const HEARTBEAT_STANDALONE_MS = 24 * 3600_000;
+
+/**
+ * 更新 machine.json 的最後上線（lastSeenAt）與最後同步（lastSyncAt）。
+ * 心跳曾經每 6 小時各單獨提交一次，佔了記憶庫歷史三成的 commit，所以不再單獨成為 commit（S3）：
+ * - 引擎版本或安裝的 commit（engramCommit，讀 local/install.json）改變：馬上寫（其他電腦靠它判斷這台是否已升級）。沒有 install.json 的環境兩邊都是 null，不會每次都寫。
+ * - piggyback（這一輪本來就有其他變更要提交）而且距離上次寫入已超過 6 小時：寫進，跟著同一個 commit。
+ * - 其餘情況只有距離上次寫入超過 24 小時才寫（呼叫端把它單獨提交一次）。
+ * lastSyncAt 只用傳進來的值：呼叫的時候這一輪的 push 還沒成功，不能先蓋成現在；沒傳就不動。
+ * @param {{ piggyback?: boolean, lastSyncAt?: string|null, now?: number }} [opts]
+ * @returns {Promise<boolean>} 是否有寫入 machine.json
+ */
+export async function touchMachine(homes, mid, { piggyback = false, lastSyncAt, now = Date.now() } = {}) {
   const p = path.join(machineDir(homes.vault, mid), 'machine.json');
   const m = await readJson(p, null);
   if (!m) return false;
-  const last = Date.parse(m.lastSeenAt ?? 0) || 0;
-  if (Date.now() - last < 6 * 3600_000 && m.engramVersion === ENGINE_VERSION) return false;
-  m.lastSeenAt = new Date().toISOString();
+  const age = now - (Date.parse(m.lastSeenAt ?? 0) || 0);
+  const commit = await installedCommit(homes.local);
+  const due = m.engramVersion !== ENGINE_VERSION || (m.engramCommit ?? null) !== commit || age >= HEARTBEAT_STANDALONE_MS || (piggyback && age >= HEARTBEAT_PIGGYBACK_MS);
+  if (!due) return false;
+  m.lastSeenAt = new Date(now).toISOString();
   m.engramVersion = ENGINE_VERSION;
+  if (commit) m.engramCommit = commit; else delete m.engramCommit;
+  if (lastSyncAt) m.lastSyncAt = lastSyncAt;
   await writeJson(p, m);
   return true;
 }
@@ -343,10 +392,11 @@ export async function guardStaged(vaultDir, allow = {}) {
   const bad = new Set();
   const markers = await git(['grep', '--cached', '-I', '-l', '-z', '-E', '^(<<<<<<<|>>>>>>>)( |$)', '--', ...staged], { cwd: vaultDir, allowFail: true });
   for (const p of markers.stdout.split('\0').filter(Boolean)) bad.add(p);
-  const { scanWithAllow } = await import('./secretallow.mjs');
-  for (const p of staged.filter((s) => /\.md$/i.test(s) && !bad.has(s))) {
+  // 所有 Markdown，加上 env/、holding/、guardrails/ 底下的文字檔（不是記憶、但會同步：環境設定檔、技能檔案、保留區項目、護欄規則）
+  const { isSecretScanned, needsSecretScan, scanWithAllow } = await import('./secretallow.mjs');
+  for (const p of staged.filter((s) => isSecretScanned(s) && !bad.has(s))) {
     const blob = await git(['show', `:${p}`], { cwd: vaultDir, allowFail: true });
-    if (blob.code === 0 && scanWithAllow(blob.stdout, p, allow).length) bad.add(p);
+    if (blob.code === 0 && needsSecretScan(p, blob.stdout) && scanWithAllow(blob.stdout, p, allow).length) bad.add(p);
   }
   if (bad.size) await git(['reset', '-q', '--', ...bad], { cwd: vaultDir });
   return [...bad];

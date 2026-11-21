@@ -10,6 +10,7 @@ import { counts, listRecords, readRecord } from '../../tidy/store.mjs';
 import { CliError } from '../errors.mjs';
 import { localTime } from '../fsutil.mjs';
 import { BIN_PATH, DEFAULT_PORT, localPaths } from '../paths.mjs';
+import { CLAUDE_NOTE, confirmSource } from '../source.mjs';
 import { spawnDetachedNode } from '../proc.mjs';
 import { redactText } from './safe.mjs';
 
@@ -120,7 +121,9 @@ export async function cmdTidy(ctx) {
   if (sub === 'apply') {
     const [id] = rest;
     if (!id) throw new CliError('E_USAGE', '請提供整理記錄的 id', '例如：engram tidy apply 20261024-153012-k3p9');
-    const r = await applyRecord(eg, id);
+    // 第三輪審查 A：在 Claude Code 裡（/engram:tidy-apply）套用的記為 claude（不算使用者本人確認，不進自動駕駛的偏好區塊）
+    const by = confirmSource(ctx);
+    const r = await applyRecord(eg, id, { reviewed: by });
     const c = counts(r.record);
     const failed = r.done.filter((it) => it.result.status === 'failed');
     const changed = r.done.filter((it) => it.result.status === 'done');
@@ -131,6 +134,7 @@ export async function cmdTidy(ctx) {
       ...changed.map(itemLine),
       ...(failed.length ? ['失敗的項目（其他項目照常執行）：', ...failed.map(itemLine)] : []),
       ...(r.needsClaude.length ? ['', '依備註調整的項目（處理完每一項執行 engram tidy done <id> <項目> --undo <版本> --message "<做了什麼>"；決定不處理時加 --skip）：', ...r.needsClaude.flatMap(claudeBlock)] : []),
+      by === 'claude' && changed.length ? CLAUDE_NOTE : null,
       `結果頁：${base}#/tidy?id=${id}`,
     ]);
   }

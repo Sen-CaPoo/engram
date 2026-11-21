@@ -5,6 +5,7 @@
 import { setLang } from './i18n.js';
 import { buildTidySample, tidyCounts } from './demo-tidy.js';
 import { buildAutopilotSample, summarizeRun } from './demo-autopilot.js';
+import { createV2Demo } from './demo-v2.js';
 
 /* global __DEMO_DATA__ */
 const RAW = typeof __DEMO_DATA__ !== 'undefined' && __DEMO_DATA__ ? __DEMO_DATA__ : fallbackData();
@@ -28,9 +29,32 @@ const TIDY_PID = 'order-system-x1y2z';
 if (!projects.some((p) => p.pid === TIDY_PID)) {
   projects.push({ pid: TIDY_PID, name: EN_DATA ? 'Order system' : '訂單系統', aliases: [], remotes: ['github.com/example/order-system'], paths: {}, counts: { memories: 3, findings: 0 }, lastActivityAt: new Date(NOW - 26 * 3600000).toISOString(), archived: false, index: { lines: 4, bytes: 320 } });
 }
-// 審查用的狀態變體：?autopilot=off（關閉，但有執行紀錄）、?autopilot=empty（關閉，從來沒執行過）
+// 審查用的狀態變體：?autopilot=off（關閉，但有執行紀錄）、?autopilot=empty（關閉，從來沒執行過）、
+// ?autopilot=limit|auth（最近一輪因為用量上限或登入到期而停止）
 const AP_VARIANT = (() => { try { return new URLSearchParams(location.search).get('autopilot'); } catch { return null; } })();
 const AP = buildAutopilotSample({ en: EN_DATA, pid: TIDY_PID, now: NOW, self });
+// 2.0.0：最近一輪有 2 項建議存進保留區；變體 limit／auth 讓它提前停止（與 app/src/autopilot/run.mjs 的備註相同）
+AP.runs[0].held = ['hd-20261119-031522-k7m2', 'hd-20261119-032210-p3x8'];
+// 2.0.0 Q6：代你確認時內容和你在對話裡的要求相符；寫進全域、審核員同意過的直接記為確認過；被拒的一項核心事實有依據
+{
+  const acts = AP.runs[0].actions;
+  const c = acts.find((a) => a.kind === 'confirm');
+  if (c) c.matchedRequest = true;
+  const g = acts.find((a) => a.kind === 'tidy' && a.scope === 'global' && a.action === 'update');
+  if (g) g.confirmed = true;
+  const rj = AP.runs[0].rejected[0];
+  if (rj) Object.assign(rj, { grounded: true, keep: [EN_DATA ? 'The company and title still apply to every project' : '公司與職稱仍適用每個專案'] });
+}
+// ?autopilot=limit：用量上限約 3 小時後重置（與 app/src/autopilot/state.mjs 的 activeLimit 相同形狀）
+const AP_LIMIT = AP_VARIANT === 'limit' ? (() => { const r = new Date(NOW + 3 * 3600e3); r.setMinutes(0, 0, 0); return { at: new Date(NOW - 20 * 60e3).toISOString(), resetAt: r.toISOString(), machine: self.id }; })() : null;
+const AP_RESET_HM = AP_LIMIT ? new Date(AP_LIMIT.resetAt).toTimeString().slice(0, 5) : '';
+if (AP_VARIANT === 'limit' || AP_VARIANT === 'auth') {
+  AP.runs[0].stopped = AP_VARIANT;
+  AP.runs[0].notes.push(AP_VARIANT === 'auth'
+    ? { task: 'run', note: EN_DATA ? 'The Claude Code sign-in has expired; sign in again (run claude auth login in a terminal). The rest will be handled in the next run' : 'Claude Code 的登入已到期，請重新登入（在終端機執行 claude auth login），其餘的下一輪處理' }
+    : { task: 'run', note: EN_DATA ? `Claude's usage limit was reached; the rest will be handled after it resets at ${AP_RESET_HM}` : `已達 Claude 的用量上限，其餘的等 ${AP_RESET_HM} 重置之後再處理` });
+}
+AP.runs[0].summary = summarizeRun(AP.runs[0]);
 let tidyRecords = [...(AP_VARIANT === 'empty' ? [] : AP.tidyRecords), ...buildTidySample({ en: EN_DATA, pid: TIDY_PID, now: NOW })].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 const tidyById = (id) => {
   const r = tidyRecords.find((x) => x.id === id);
@@ -64,8 +88,10 @@ let coreText = EN_DATA ? CORE_TEXT_EN() : CORE_TEXT();
 const REDACTED = EN_DATA ? '[redacted: stored in Windows Credential Manager]' : '［已遮蔽：存放在 Windows 認證管理員］';
 let importState = { applied: false, tag: null };
 let guidelinesAdopted = false;
-let pendingList = projects.slice(0, 1).map((p) => ({ path: 'C:\\Users\\Demo\\Desktop\\' + (p.aliases?.[0] || p.name) + '-v2', pid: p.pid, encoded: 'C--Users-Demo-Desktop-example-v2', since: minutesAgo(35), reason: 'ask' }));
-const settings = { machineLabel: RAW.self.label, remote: 'https://github.com/demo/engram-vault.git', syncIntervalMin: 10, bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on', autopilot: ['off', 'empty'].includes(AP_VARIANT) ? 'off' : 'on', autopilotBudget: 200, healthTime: '09:30', paused: false };
+let pendingList = projects.slice(0, 1).map((p) => ({ path: 'C:\\Users\\you\\Desktop\\' + (p.aliases?.[0] || p.name) + '-v2', pid: p.pid, encoded: 'C--Users-you-Desktop-example-v2', since: minutesAgo(35), reason: 'ask' }));
+const settings = { machineLabel: RAW.self.label, remote: 'https://github.com/demo/engram-vault.git', syncIntervalMin: 10, bindAuto: 'confident', collisionRename: 'ask', reviewWrites: 'on', autopilot: ['off', 'empty'].includes(AP_VARIANT) ? 'off' : 'on', autopilotBudget: 200, healthTime: '09:30', paused: false,
+  // 2.0.0（真的 GET /api/settings 只有 envHealth、envSync；其餘由各自的端點回報，這裡一起存）
+  envHealth: VARIANT.env === 'off' ? 'off' : 'on', envSync: 'report', guardrails: 'block', recall: 'on', indexLayers: 'observe', autoUpdate: 'on' };
 
 const byRef = (ref) => memories.find((m) => m.ref === ref);
 const projectName = (pid) => projects.find((p) => p.pid === pid)?.name || pid;
@@ -109,7 +135,7 @@ const findings = [];
   const used = new Set();
   const pick = (pred) => { const m = memories.find((x) => !used.has(x.ref) && pred(x)); if (m) used.add(m.ref); return m; };
   const big = [...memories].sort((a, b) => b.size - a.size)[0];
-  if (big && big.size > 8 * 1024) { used.add(big.ref); add({ code: 'H10', severity: 'medium', title: '單檔過大', detail: `${big.name}.md 有 ${Math.round(big.size / 1024)} KB。被讀取時會佔用大量上下文，建議請 Claude 拆成幾個主題檔。`, refs: [big.ref], en: { title: 'File too large', detail: `${big.name}.md is ${Math.round(big.size / 1024)} KB. Reading it takes up a lot of context; ask Claude to split it into a few topic files.` } }); }
+  if (big && big.size > 8 * 1024) { used.add(big.ref); add({ code: 'H10', severity: 'medium', title: `「${big.name}」檔案比較大`, detail: `${(big.size / 1024).toFixed(1)}KB；這筆記憶比較大，每次被讀取會佔用較多上下文。可以釘選或保持原樣，不建議拆分。`, refs: [big.ref], en: { title: `"${big.name}" is large`, detail: `${(big.size / 1024).toFixed(1)}KB. This memory is large, so each time it is read it takes up more context. You can pin it or leave it as is; splitting it is not recommended.` } }); }
   const groups = new Map();
   for (const m of memories) { const k = m.name.split('-')[0]; if (k.length >= 4) groups.set(k, [...(groups.get(k) || []), m]); }
   const dup = [...groups.entries()].find(([, ms]) => ms.length >= 2 && ms.length <= 4 && ms.every((m) => m.scope.kind === ms[0].scope.kind));
@@ -117,8 +143,8 @@ const findings = [];
   const secret = pick((m) => m.scope.kind === 'project' && /(PAT|token|金鑰|密碼|DB|資料庫)/i.test(m.description));
   if (secret) secret.body += EN_DATA ? '\n\nRead-only token: `' + 'gh' + 'p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' + '` (sample, not a real secret)' : '\n\n查詢用的權杖：`' + 'gh' + 'p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' + '`（範例，非真實金鑰）';
   if (secret) add({ code: 'H13', severity: 'high', title: '疑似含有金鑰，已暫停同步這個檔案', detail: '內文出現類似個人存取權杖（ghp_…）的字串。這個檔案只留在本機，不會推送到 GitHub。建議改成只記「金鑰存放在哪裡」。', refs: [secret.ref], pid: secret.scope.pid, fix: { action: 'edit', args: { ref: secret.ref, lines: [7] }, label: '移除金鑰', en: { label: 'Remove secret' } }, en: { title: 'Possible secret: syncing of this file is paused', detail: 'The text contains something that looks like a personal access token (ghp_…). This file stays on this computer and is not pushed to GitHub. Record only where the secret is stored instead.' } });
-  if (EN_DATA) add({ code: 'H06', severity: 'high', title: '資料夾名稱碰撞：多個資料夾共用同一份 Claude Code 紀錄', detail: 'C:\\Users\\Demo\\Desktop\\Client A → Client A-k3fz；C:\\Users\\Demo\\Desktop\\Client.A → Client.A-7qma。', refs: ['C--Users-Demo-Desktop-Client-A'], fix: { action: 'rename-collisions', args: { paths: ['C:\\Users\\Demo\\Desktop\\Client A', 'C:\\Users\\Demo\\Desktop\\Client.A'] }, label: '依命名規則改名', en: { label: 'Rename by naming rule' } }, en: { title: 'Folder name collision: several folders share one Claude Code history', detail: 'C:\\Users\\Demo\\Desktop\\Client A → Client A-k3fz; C:\\Users\\Demo\\Desktop\\Client.A → Client.A-7qma. Claude Code replaces spaces and symbols with "-", so these folders encode the same as Client-A (C--Users-Demo-Desktop-Client-A). Adding a 4-character code to the original name keeps them apart; the folders are rebound, old paths in your memories are updated, and the whole batch can be undone. Conversations from before the rename will not appear in the /resume list.' } });
-  else add({ code: 'H06', severity: 'high', title: '資料夾名稱碰撞：多個資料夾共用同一份 Claude Code 紀錄', detail: 'C:\\Users\\Demo\\Desktop\\甲方專案 → 甲方專案-k3fz；C:\\Users\\Demo\\Desktop\\乙方專案 → 乙方專案-7qma。Claude Code 把中文與符號都換成「-」，這些資料夾與 丙方設計 編碼相同（C--Users-Demo-Desktop-----）。依命名規則在原名後加 4 碼代號即可分開；改名後重新綁定、記憶裡的舊路徑一併更新，可以整批還原。改名前的對話不會出現在 /resume 清單。', refs: ['C--Users-Demo-Desktop-----'], fix: { action: 'rename-collisions', args: { paths: ['C:\\Users\\Demo\\Desktop\\甲方專案', 'C:\\Users\\Demo\\Desktop\\乙方專案'] }, label: '依命名規則改名', en: { label: 'Rename by naming rule' } }, en: { title: 'Folder name collision: several folders share one Claude Code history', detail: 'C:\\Users\\Demo\\Desktop\\甲方專案 → 甲方專案-k3fz; C:\\Users\\Demo\\Desktop\\乙方專案 → 乙方專案-7qma. Claude Code replaces Chinese characters and symbols with "-", so these folders encode the same as 丙方設計 (C--Users-Demo-Desktop-----). Adding a 4-character code to the original name keeps them apart; the folders are rebound, old paths in your memories are updated, and the whole batch can be undone. Conversations from before the rename will not appear in the /resume list.' } });
+  if (EN_DATA) add({ code: 'H06', severity: 'high', title: '資料夾名稱碰撞：多個資料夾共用同一份 Claude Code 紀錄', detail: 'C:\\Users\\you\\Desktop\\Client A → Client A-k3fz；C:\\Users\\you\\Desktop\\Client.A → Client.A-7qma。', refs: ['C--Users-you-Desktop-Client-A'], fix: { action: 'rename-collisions', args: { paths: ['C:\\Users\\you\\Desktop\\Client A', 'C:\\Users\\you\\Desktop\\Client.A'] }, label: '依命名規則改名', en: { label: 'Rename by naming rule' } }, en: { title: 'Folder name collision: several folders share one Claude Code history', detail: 'C:\\Users\\you\\Desktop\\Client A → Client A-k3fz; C:\\Users\\you\\Desktop\\Client.A → Client.A-7qma. Claude Code replaces spaces and symbols with "-", so these folders encode the same as Client-A (C--Users-you-Desktop-Client-A). Adding a 4-character code to the original name keeps them apart; the folders are rebound, old paths in your memories are updated, and the whole batch can be undone. Conversations from before the rename will not appear in the /resume list.' } });
+  else add({ code: 'H06', severity: 'high', title: '資料夾名稱碰撞：多個資料夾共用同一份 Claude Code 紀錄', detail: 'C:\\Users\\you\\Desktop\\甲方專案 → 甲方專案-k3fz；C:\\Users\\you\\Desktop\\乙方專案 → 乙方專案-7qma。Claude Code 把中文與符號都換成「-」，這些資料夾與 丙方設計 編碼相同（C--Users-you-Desktop-----）。依命名規則在原名後加 4 碼代號即可分開；改名後重新綁定、記憶裡的舊路徑一併更新，可以整批還原。改名前的對話不會出現在 /resume 清單。', refs: ['C--Users-you-Desktop-----'], fix: { action: 'rename-collisions', args: { paths: ['C:\\Users\\you\\Desktop\\甲方專案', 'C:\\Users\\you\\Desktop\\乙方專案'] }, label: '依命名規則改名', en: { label: 'Rename by naming rule' } }, en: { title: 'Folder name collision: several folders share one Claude Code history', detail: 'C:\\Users\\you\\Desktop\\甲方專案 → 甲方專案-k3fz; C:\\Users\\you\\Desktop\\乙方專案 → 乙方專案-7qma. Claude Code replaces Chinese characters and symbols with "-", so these folders encode the same as 丙方設計 (C--Users-you-Desktop-----). Adding a 4-character code to the original name keeps them apart; the folders are rebound, old paths in your memories are updated, and the whole batch can be undone. Conversations from before the rename will not appear in the /resume list.' } });
   const pathy = pick((m) => m.scope.kind === 'project' && /[A-Z]:\\/.test(m.description));
   if (pathy) add({ code: 'H08', severity: 'medium', title: '專案記憶裡有本機路徑', detail: '說明中出現這台電腦的磁碟路徑，另一台電腦的路徑可能不同。路徑部分適合改成單機記憶。', refs: [pathy.ref], pid: pathy.scope.pid, fix: { action: 'move', args: { ref: pathy.ref, scope: { kind: 'machine', mid: self.id } }, label: '改為單機記憶', en: { label: 'Make it a machine memory' } }, en: { title: 'Local path in a project memory', detail: 'The description contains a disk path on this computer; the path may differ on your other computers. The path part fits better in a machine memory.' } });
   for (let i = 0; i < 2; i++) {
@@ -130,8 +156,24 @@ const findings = [];
   // 1.4.0：建議回顧對話（H20）、待你確認的寫入（H23）
   const p0 = projects[0];
   if (p0) add({ code: 'H20', severity: 'low', title: `建議回顧「${p0.name}」的對話`, detail: '4 個對話還沒回顧，最早的一個 5 天後會被 Claude Code 清除（保留 30 天）；2 筆容易過時的記憶超過 30 天沒確認。回顧時 Claude 會拿對話紀錄驗證這個專案的記憶、補上漏記的事，所有建議都由你在網頁逐項決定。', refs: [`projects/${p0.pid}`], pid: p0.pid, fix: { action: 'open-dream', args: { pid: p0.pid }, label: '交給 Claude 回顧', en: { label: 'Ask Claude to review' } }, en: { title: `Review the conversations for "${p0.name}"`, detail: '4 conversations have not been reviewed, and the oldest will be deleted by Claude Code in 5 days (kept for 30 days); 2 memories that go out of date easily have not been checked in over 30 days. Claude checks this project\'s memories against the conversations and adds what was missed; you decide on every suggestion in the dashboard.' } });
-  add({ code: 'H23', severity: 'low', title: '2 筆每次對話都會載入的內容還沒經過你確認', detail: 'powershell-bom、meeting-notes-format。這些是 Claude 新增或修改的全域記憶、單機記憶或核心準則，會在每個專案的每次對話被讀到；看一下內容是否正確。', refs: ['global/powershell-bom.md', 'global/meeting-notes-format.md'], fix: { action: 'open-review', args: {}, label: '檢視與確認', en: { label: 'Review and confirm' } }, en: { title: '2 items that load in every conversation have not been reviewed', detail: 'powershell-bom, meeting-notes-format. Claude added or changed these global memories, machine memories, or core rules, and they are read in every conversation in every project. Check that they are correct.' } });
-  add({ code: 'H05', severity: 'medium', title: '有 1 筆記憶還沒收編', detail: '這個資料夾在綁定生效前的那次對話裡寫了新記憶，還留在 Claude Code 的預設位置。收編後會複製進 vault，原檔保留到確認為止。', refs: ['~/.claude/projects/C--Users-Demo-Desktop-example/memory/new-note.md'], fix: { action: 'sweep', args: { encoded: 'C--Users-Demo-Desktop-example' }, label: '收編到 Engram', en: { label: 'Adopt into Engram' } }, en: { title: '1 memory has not been adopted yet', detail: 'This folder wrote a new memory in a conversation before its binding took effect, so it is still in the Claude Code default location. Adopting copies it into the vault; the original stays until you confirm.' } });
+  add({ code: 'H23', severity: 'low', title: '2 筆每次對話都會載入的內容還沒經過你確認', detail: 'lint-before-commit、meeting-notes-format。這些是 Claude 新增或修改的全域記憶、單機記憶或核心準則，會在每個專案的每次對話被讀到；看一下內容是否正確。', refs: ['global/lint-before-commit.md', 'global/meeting-notes-format.md'], fix: { action: 'open-review', args: {}, label: '檢視與確認', en: { label: 'Review and confirm' } }, en: { title: '2 items that load in every conversation have not been reviewed', detail: 'lint-before-commit, meeting-notes-format. Claude added or changed these global memories, machine memories, or core rules, and they are read in every conversation in every project. Check that they are correct.' } });
+  // 2.0.0：疑似同一個專案的兩個代號（H34，修正是 link-projects），與 app/src/core/health.mjs 相同的文字
+  const others = projects.filter((p) => p.pid !== p0?.pid && p.pid !== TIDY_PID);
+  const [pTo, pFrom] = others.length >= 2 ? others : projects;
+  if (pTo && pFrom) {
+    const [nf, nt] = [pFrom.name, pTo.name];
+    const folder = `C:\\Users\\you\\Desktop\\${EN_DATA ? 'old-copy' : '舊的副本'}`;
+    add({ code: 'H34', severity: 'medium', title: `「${nf}」可能和「${nt}」是同一個專案`,
+      detail: `依據：兩個專案記錄的 git 遠端完全相同（刻意分開的兩份 clone 也會這樣）。「${nf}」：這台的資料夾 ${folder}，2 筆記憶。「${nt}」：其他電腦 1 台有綁定，${pTo.counts.memories} 筆記憶。風險：同一個樣板或 fork 出來的專案也會符合這個條件；合併會把「${nf}」的記憶搬進「${nt}」，這台電腦上「${nf}」的資料夾之後寫的記憶也會進「${nt}」，兩個其實不同的專案就混在一起了。可以還原，但還原只會復原記憶庫與這台電腦的綁定、記憶連結，其他電腦要各自檢查；不確定是同一個專案就不要合併。`,
+      refs: [`projects/${pFrom.pid}`, `projects/${pTo.pid}`], pid: pFrom.pid,
+      fix: { action: 'link-projects', args: { from: pFrom.pid, to: pTo.pid }, label: `合併到「${nt}」`, en: { label: `Merge into "${nt}"` } },
+      en: { title: `"${nf}" may be the same project as "${nt}"`, detail: `Basis: Both projects record exactly the same git remotes (two clones kept apart on purpose look like this too). "${nf}": folder on this computer: ${folder}; 2 memories. "${nt}": not bound on this computer; bound on 1 other computer; ${pTo.counts.memories} memories. Risk: projects made from the same template or fork also match this; merging moves the memories of "${nf}" into "${nt}", and memories written later in the folder of "${nf}" on this computer go into "${nt}" too, so two projects that are really different get mixed together. It can be undone, but the undo restores only the vault and this computer's bindings and memory links; check the other computers yourself. If you are not sure they are the same project, do not merge them.` } });
+  }
+  // H35：全域索引被永遠列出的記憶占滿（只提醒，沒有一鍵修正）
+  add({ code: 'H35', severity: 'medium', title: '全域記憶的索引被永遠列出的記憶占滿',
+    detail: '全域記憶索引的預算是 40 筆，目前有 42 筆永遠列出（釘選，或類型是 feedback／user），預算已經用完，其他類型的記憶（包括剛寫的）一筆都列不進索引。建議檢視其中哪些可以取消釘選或封存。', refs: ['global/INDEX.md'],
+    en: { title: 'The index for global memory is full of always-listed memories', detail: 'The index budget for global memory is 40 memories, and 42 memories are always listed (pinned, or of type feedback/user). The budget is used up, so no memory of any other type (including newly written ones) fits in the index. Review which of them can be unpinned or archived.' } });
+  add({ code: 'H05', severity: 'medium', title: '有 1 筆記憶還沒收編', detail: '這個資料夾在綁定生效前的那次對話裡寫了新記憶，還留在 Claude Code 的預設位置。收編後會複製進 vault，原檔保留到確認為止。', refs: ['~/.claude/projects/C--Users-you-Desktop-example/memory/new-note.md'], fix: { action: 'sweep', args: { encoded: 'C--Users-you-Desktop-example' }, label: '收編到 Engram', en: { label: 'Adopt into Engram' } }, en: { title: '1 memory has not been adopted yet', detail: 'This folder wrote a new memory in a conversation before its binding took effect, so it is still in the Claude Code default location. Adopting copies it into the vault; the original stays until you confirm.' } });
   for (const f of findings) {
     for (const r of f.refs) { const m = byRef(r); if (m) m.findings.push(f.code); }
     if (f.pid) { const p = projects.find((x) => x.pid === f.pid); if (p) p.counts.findings++; }
@@ -153,6 +195,51 @@ const conflicts = conflictTarget ? [{
   theirs: BASE_TEXT.replace(TIMEOUT[0], TIMEOUT[2]),
   otherMachine: other.label,
 }] : [];
+// 2.0.0：同步自動修復留下的衝突（by: 'heal'，與 app/src/core/heal.mjs 相同）：這台的版本疑似含金鑰被扣住，對方也改了這個檔案
+// 這台被扣住的檔案從沒同步過，記憶清單裡不一定有它；ref 用合成的名稱
+{
+  const healRef = 'global/staging-api-account.md';
+  const HEAL_BASE = EN_DATA ? 'Staging API test account: qa-api-01\n\n**How to apply:** Use it only on staging.' : '測試環境 API 的測試帳號：qa-api-01\n\n**How to apply:** 只在測試環境使用。';
+  conflicts.push({
+    id: 'cf_20261121T0204_h8p2', ref: healRef, kind: 'content', createdAt: minutesAgo(95), by: 'heal',
+    summary: `${healRef} 的本機版本疑似含有金鑰，被扣住沒有同步；另一台電腦也修改了這個檔案，對方的版本保留在這裡。這裡的本機版本已遮蔽金鑰，原檔仍在這台電腦`,
+    en: { summary: `This computer's version of ${healRef} may contain a secret and is withheld from sync, and the other computer also modified the file, so its version is kept here. The local version here has its secrets masked; the original file stays on this computer` },
+    base: HEAL_BASE,
+    ours: HEAL_BASE.replace(/(qa-api-01)/, EN_DATA ? '$1 (token: ‹redacted: GitHub personal access token›)' : '$1（權杖：‹已遮蔽：GitHub 個人存取權杖›）'),
+    theirs: HEAL_BASE.replace('qa-api-01', 'qa-api-02'),
+    otherMachine: other.label,
+  });
+}
+// 2.0.0 第三輪審查 R4：環境設定檔的衝突紀錄（與 app/src/core/sync.mjs、conflicts.mjs 相同）：兩台都改了同一個環境變數的值，
+// 帶 choices（只能選其中一邊）；目前的檔案是 ours 的值。護欄規則檔（guardrails/rules.json）的紀錄形狀相同。
+// 第四輪審查 F-01：後端依「現在看的這台」把 ours／theirs 對調好，附上 view、sides、choiceLabels（與 core/conflicts.mjs 的 jsonView 相同）；
+// 說明不寫「這台／對方」。展示版預設是 view: 'other'（這筆是另一台電腦記下的）；?conflict=recorder｜third｜legacy 看其他三種觀點
+const CONFLICT_VIEW = ['recorder', 'third', 'legacy'].includes(VARIANT.conflict) ? VARIANT.conflict : 'other';
+{
+  const profile = (timeout) => `${JSON.stringify({ v: 1, env: { BASH_DEFAULT_TIMEOUT_MS: timeout, BASH_MAX_OUTPUT_LENGTH: '60000' }, settings: { cleanupPeriodDays: 60 }, skills: [], plugins: [], updatedAt: minutesAgo(60 * 20), by: other.id }, null, 2)}\n`;
+  const third = { id: 'laptop-4k9d', label: EN_DATA ? 'Travel laptop' : '出差筆電' };
+  const mach = (m) => ({ machine: m.id, label: m.label });
+  const view = CONFLICT_VIEW;
+  // recorder、other：ours 是這台的版本、theirs 是另一台的版本；third：ours＝記下紀錄的那台、theirs＝另一台（兩邊都不是這台）
+  const sides = view === 'third' ? { ours: mach(other), theirs: mach(third) } : view === 'legacy' ? { ours: { machine: null, label: null }, theirs: { machine: null, label: null } } : { ours: mach(self), theirs: mach(other) };
+  const texts = { ours: profile('900000'), theirs: profile(view === 'third' ? '1500000' : '1200000') };
+  const labels = view === 'legacy'
+    ? { zh: { ours: '維持目前的值，只移除紀錄' }, en: { ours: 'Keep the current value and only remove the record' } }
+    : view === 'third'
+      ? { zh: { ours: `用 ${sides.ours.label} 的版本`, theirs: `用 ${sides.theirs.label} 的版本` }, en: { ours: `Use ${sides.ours.label}'s version`, theirs: `Use ${sides.theirs.label}'s version` } }
+      : { zh: { ours: `保留這台（${sides.ours.label}）的版本`, theirs: `改用另一台（${sides.theirs.label}）的版本` }, en: { ours: `Keep this computer's (${sides.ours.label}) version`, theirs: `Use the other computer's (${sides.theirs.label}) version` } };
+  const summary = view === 'legacy'
+    // 舊版留下的紀錄（沒有 recordedOn）：說明還是舊的說法
+    ? { zh: '兩台電腦都改了環境設定檔的 BASH_DEFAULT_TIMEOUT_MS，已留較新的那一邊的值；兩個版本都在這裡。可以選「改用對方的版本」或「保留這台的版本」（兩者都保留與手動合併不適用）', en: 'Both computers changed BASH_DEFAULT_TIMEOUT_MS in the environment profile; the newer value was kept and both versions are here. Choose "use theirs" or "keep this computer\'s version" (keeping both or merging by hand does not apply)' }
+    : { zh: '兩台電腦都改了環境設定檔的 BASH_DEFAULT_TIMEOUT_MS，已留較新的那一邊的值；兩個版本都在這裡，處理時選要用哪一邊的值（兩者都保留與手動合併不適用）', en: 'Both computers changed BASH_DEFAULT_TIMEOUT_MS in the environment profile; the newer value was kept and both versions are here. Choose which side\'s value to use (keeping both or merging by hand does not apply)' };
+  conflicts.push({
+    id: 'cf_20261121T0733_e4q7', ref: 'env/profile.json', kind: 'content', createdAt: minutesAgo(40),
+    choices: view === 'legacy' ? ['ours'] : ['theirs', 'ours'], view, sides, choiceLabels: labels.zh,
+    summary: summary.zh, en: { summary: summary.en, choiceLabels: labels.en },
+    base: profile('600000'), ours: texts.ours, theirs: texts.theirs,
+    ...(view === 'recorder' || view === 'other' ? { otherMachine: sides.theirs.label } : {}),
+  });
+}
 
 // ── 歷史 ─────────────────────────────────────────────
 const commits = [];
@@ -221,7 +308,7 @@ const curateJob = () => {
   };
 };
 const agentInfo = () => ({
-  pid: 18244, version: '1.1.0', startedAt: minutesAgo(60 * 9 + 12), port: 4777, claudeVersion: VARIANT.probe === 'fail' ? '2.1.307' : '2.1.306', paused: VARIANT.probe === 'fail',
+  pid: 18244, version: '2.0.0', startedAt: minutesAgo(60 * 9 + 12), port: 4777, claudeVersion: VARIANT.probe === 'fail' ? '2.1.307' : '2.1.306', paused: VARIANT.probe === 'fail',
   logonTask: { installed: true, state: 'running', launcher: 'wscript', lastRunAt: minutesAgo(60 * 9 + 12) },
   jobs: clone(jobs).map((j) => (j.id === 'curate' ? { ...j, ...curateJob() } : j)), probe: clone(probe),
 });
@@ -244,11 +331,11 @@ const loadedRecord = () => {
   return {
     sessionId: '7d1c2a9e-4b6f-4e1a-9a52-0c7b3f1e2d44', at: minutesAgo(60 * 2), cwd: lp?.paths?.[self.id]?.path || '', pid: lp?.pid,
     files: [
-      { path: 'C:\\Users\\Demo\\.claude\\CLAUDE.md', kind: 'user', bytes: 2412, lines: 58, loadReason: 'session_start' },
-      { path: 'C:\\Users\\Demo\\.engram\\vault\\core\\CORE.md', kind: 'import', bytes: 4180, lines: 71, loadReason: 'include', parent: 'C:\\Users\\Demo\\.claude\\CLAUDE.md' },
-      { path: 'C:\\Users\\Demo\\.engram\\vault\\global\\INDEX.md', kind: 'import', bytes: 1630, lines: 12, loadReason: 'include', parent: 'C:\\Users\\Demo\\.engram\\vault\\core\\CORE.md' },
-      { path: `C:\\Users\\Demo\\.engram\\vault\\machines\\${self.id}\\INDEX.md`, kind: 'import', bytes: 1290, lines: 13, loadReason: 'include', parent: 'C:\\Users\\Demo\\.claude\\CLAUDE.md' },
-      { path: `C:\\Users\\Demo\\.engram\\vault\\projects\\${lp?.pid}\\memory\\MEMORY.md`, kind: 'memory-index', bytes: lp?.index?.bytes || 1800, lines: lp?.index?.lines || 13, loadReason: 'session_start' },
+      { path: 'C:\\Users\\you\\.claude\\CLAUDE.md', kind: 'user', bytes: 2412, lines: 58, loadReason: 'session_start' },
+      { path: 'C:\\Users\\you\\.engram\\vault\\core\\CORE.md', kind: 'import', bytes: 4180, lines: 71, loadReason: 'include', parent: 'C:\\Users\\you\\.claude\\CLAUDE.md' },
+      { path: 'C:\\Users\\you\\.engram\\vault\\global\\INDEX.md', kind: 'import', bytes: 1630, lines: 12, loadReason: 'include', parent: 'C:\\Users\\you\\.engram\\vault\\core\\CORE.md' },
+      { path: `C:\\Users\\you\\.engram\\vault\\machines\\${self.id}\\INDEX.md`, kind: 'import', bytes: 1290, lines: 13, loadReason: 'include', parent: 'C:\\Users\\you\\.claude\\CLAUDE.md' },
+      { path: `C:\\Users\\you\\.engram\\vault\\projects\\${lp?.pid}\\memory\\MEMORY.md`, kind: 'memory-index', bytes: lp?.index?.bytes || 1800, lines: lp?.index?.lines || 13, loadReason: 'session_start' },
     ],
   };
 };
@@ -264,15 +351,18 @@ function statusReport() {
   for (const x of findings) if (f[x.severity] != null) f[x.severity]++;
   return {
     machine: self,
-    vault: { path: 'C:\\Users\\Demo\\.engram\\vault', remote: 'github.com/demo/engram-vault', branch: 'main', head: commits[0]?.sha },
-    sync: { ...sync, held: findings.filter((x) => x.code === 'H13').map((x) => ({ ref: x.refs[0], reason: '疑似含有金鑰' })) },
+    vault: { path: 'C:\\Users\\you\\.engram\\vault', remote: 'github.com/demo/engram-vault', branch: 'main', head: commits[0]?.sha },
+    // 2.0.0：環境設定的技能檔與護欄規則也會同步，疑似含金鑰時一樣只留在這台（不是記憶）
+    sync: { ...sync, held: [...findings.filter((x) => x.code === 'H13').map((x) => ({ ref: x.refs[0], reason: 'secret' })), { ref: 'env/skills/meeting-summary/template.md', reason: 'secret' }, { ref: 'guardrails/rules.json', reason: 'secret' }] },
     counts,
     inbox: { conflicts: conflicts.length, findings: f },
+    // 2.0.0 混版相容：還有舊版的電腦時索引照舊版產生（?compat=on 看相容模式開著的畫面）
+    indexCompat: V2.indexCompat(),
     devices: [
-      { id: self.id, label: self.label, lastSeenAt: new Date().toISOString(), lastSyncAt: sync.lastSuccessAt, engramVersion: '1.1.0', isSelf: true },
+      { id: self.id, label: self.label, lastSeenAt: new Date().toISOString(), lastSyncAt: sync.lastSuccessAt, engramVersion: '2.0.0', isSelf: true },
       VARIANT.stale
-        ? { id: other.id, label: other.label, lastSeenAt: minutesAgo(60 * 24 * 9), lastSyncAt: minutesAgo(60 * 24 * 9), engramVersion: '1.1.0', isSelf: false }
-        : { id: other.id, label: other.label, lastSeenAt: minutesAgo(52), lastSyncAt: minutesAgo(52), engramVersion: '1.1.0', isSelf: false },
+        ? { id: other.id, label: other.label, lastSeenAt: minutesAgo(60 * 24 * 9), lastSyncAt: minutesAgo(60 * 24 * 9), engramVersion: V2.indexCompat().active ? '1.6.0' : '2.0.0', isSelf: false }
+        : { id: other.id, label: other.label, lastSeenAt: minutesAgo(52), lastSyncAt: minutesAgo(52), engramVersion: V2.indexCompat().active ? '1.6.0' : '2.0.0', isSelf: false },
     ],
     agent: { paused: VARIANT.probe === 'fail', probe: { ok: probe.ok, failed: probe.checks.filter((c) => !c.ok).map((c) => c.id) } },
     tidy: tidySummary(),
@@ -317,8 +407,20 @@ function dropFinding(id) {
   return f;
 }
 
+// ── 2.0.0：保留區、環境、護欄、情境召回、自動更新、每週摘要（demo-v2.js） ─────
+const V2 = createV2Demo({
+  en: EN_DATA, now: NOW, self, other, pid: TIDY_PID, variant: VARIANT, settings, rawOf, emit, projectName,
+  findMemory: byRef,
+  addMemory: (m) => {
+    memories.push(m);
+    if (m.scope.kind === 'project') { const p = projects.find((x) => x.pid === m.scope.pid); if (p) p.counts.memories++; }
+  },
+  addTidyRecord: (rec) => { tidyRecords = [rec, ...tidyRecords]; emit('tidy', null); },
+});
+
 // ── API ─────────────────────────────────────────────
 export const demoApi = {
+  ...V2.api,
   isDemo: true,
   async status() {
     await wait(80);
@@ -331,7 +433,7 @@ export const demoApi = {
     await wait(60);
     const m = byRef(ref);
     if (!m) throw Object.assign(new Error('找不到這筆記憶'), { code: 'E_NOT_FOUND', en: { message: 'Memory not found' } });
-    return { ...summary(m), frontmatter: frontmatterOf(m), body: m.body, raw: rawOf(m), path: `C:\\Users\\Demo\\.engram\\vault\\${m.ref.replace(/\//g, '\\')}`, history: commits.filter((c) => c.refs.includes(ref)).slice(0, 5) };
+    return { ...summary(m), frontmatter: frontmatterOf(m), body: m.body, raw: rawOf(m), path: `C:\\Users\\you\\.engram\\vault\\${m.ref.replace(/\//g, '\\')}`, history: commits.filter((c) => c.refs.includes(ref)).slice(0, 5) };
   },
   async writeMemoryRaw(ref, raw) {
     await wait(120);
@@ -436,6 +538,11 @@ export const demoApi = {
       if (f) dropFinding(f.id);
       return action(`${fix.args.scope.kind === 'global' ? '升級為全域' : '改為單機'} ← ${prev.ref}`, [m.ref], () => { moveMem(m, prev.scope); if (f) findings.push(f); });
     }
+    // 專案合併（H34）：還原時這台的資料夾重新接回原本的專案（與 app/src/core/history.mjs 的 realigned 相同）
+    if (fix.action === 'link-projects') {
+      if (f) dropFinding(f.id);
+      return action(`link ${fix.args.from} → ${fix.args.to}`, [`projects/${fix.args.from}`, `projects/${fix.args.to}`], () => { if (f) findings.push(f); return { undoExtra: { realigned: [`C:\\Users\\you\\Desktop\\${EN_DATA ? 'old-copy' : '舊的副本'}`] } }; });
+    }
     if (f) dropFinding(f.id);
     return action(`處理 ${f?.code || fix.action}`, f?.refs || [], () => { if (f) findings.push(f); });
   },
@@ -443,20 +550,55 @@ export const demoApi = {
   async resolveConflict(id, choice, body) {
     await wait(200);
     const i = conflicts.findIndex((c) => c.id === id);
+    const only = conflicts[i]?.choices;
+    // 設定檔的紀錄（choices）：兩者都保留與手動合併不適用，紀錄留著（與 app/src/core/conflicts.mjs 的 resolveJsonConflict 相同）
+    if (only && (choice === 'both' || choice === 'manual')) {
+      throw Object.assign(new Error('環境設定檔的衝突只能選「改用另一台的版本」或「保留這台的版本」'), {
+        code: 'E_INVALID', hint: '「兩者都保留」與手動合併不適用；紀錄留著',
+        en: { message: 'A conflict in the environment profile can only be resolved with "use the other computer\'s version" or "keep this computer\'s version"', hint: 'Keeping both or merging by hand does not apply; the record is kept' },
+      });
+    }
+    // 沒有記下是哪台電腦記的舊紀錄（view: legacy）：不猜，只能維持目前的值、移除紀錄
+    if (only && conflicts[i].view === 'legacy' && choice !== 'ours') {
+      throw Object.assign(new Error('這筆環境設定檔的衝突紀錄沒有記下是哪台電腦記的，不能判斷哪一邊是這台的版本，所以不能改值'), {
+        code: 'E_INVALID', hint: '看過兩個版本後需要的話自己改設定，再選「維持目前的值，只移除紀錄」',
+        en: { message: 'This environment profile conflict does not say which computer recorded it, so it cannot tell which version is this computer\'s and will not change any value', hint: 'Look at both versions, change the setting yourself if needed, then choose "keep the current value and only remove the record"' },
+      });
+    }
     const [c] = conflicts.splice(i, 1);
+    if (only) {
+      const changeLabel = c.choiceLabels[choice];
+      const res = action(`解決衝突：${changeLabel}`, [c.ref], () => conflicts.splice(i, 0, c));
+      if (c.view === 'legacy') {
+        return { ...res, ref: c.ref, changed: false, message: '沒有改任何值：這筆環境設定檔的衝突紀錄沒有記下是哪台電腦記的，只移除了紀錄。', en: { message: 'No value was changed: this environment profile conflict does not say which computer recorded it, so only the record was removed.' } };
+      }
+      // 目前的檔案是 ours 的值：改用另一邊的值才有變更；選 ours 不用改。選的那一邊怎麼稱呼依觀點（與 conflicts.mjs 的 said 相同）
+      const said = c.view === 'third'
+        ? { zh: { ours: `${c.sides.ours.label} 的版本`, theirs: `${c.sides.theirs.label} 的版本` }, en: { ours: `${c.sides.ours.label}'s version`, theirs: `${c.sides.theirs.label}'s version` } }
+        : { zh: { ours: '這台的版本', theirs: '另一台的版本' }, en: { ours: "this computer's version", theirs: "the other computer's version" } };
+      const changed = choice === 'theirs';
+      return {
+        ...res, ref: c.ref, changed,
+        message: changed ? `已把環境設定檔的 BASH_DEFAULT_TIMEOUT_MS 改成${said.zh[choice]}的值（這台還沒核可過的值要核可之後才會套用）。` : `BASH_DEFAULT_TIMEOUT_MS 已經是${said.zh[choice]}的值，維持不變。`,
+        en: { message: changed ? `Changed BASH_DEFAULT_TIMEOUT_MS in the environment profile to ${said.en[choice]} (a value this computer has not approved is applied only after you approve it).` : `BASH_DEFAULT_TIMEOUT_MS already had ${said.en[choice]}, so it was kept.` },
+      };
+    }
     const m = byRef(c.ref);
     if (m) m.body = choice === 'theirs' ? c.theirs : choice === 'manual' ? body : c.ours;
     const label = { ours: '保留這台的版本', theirs: '改用對方的版本', both: '兩者都保留', manual: '手動合併' }[choice];
-    return action(`解決衝突：${label}`, [c.ref], () => conflicts.splice(i, 0, c));
+    const res = action(`解決衝突：${label}`, [c.ref], () => conflicts.splice(i, 0, c));
+    // 覆蓋沒進過 git 的原檔之前先備份（與 app/src/core/conflicts.mjs 相同，位置相對於 local/）
+    if (c.by === 'heal' && (choice === 'theirs' || choice === 'manual')) res.backup = `backup/${new Date().toISOString().replace(/[-:.]/g, '')}/${c.ref}`;
+    return res;
   },
   async history(f = {}) { await wait(80); return clone((f.ref ? commits.filter((c) => c.refs.includes(f.ref)) : commits).slice(0, f.limit || 50)); },
   async undo(s) {
     await wait(150);
     const fn = undoers.get(s);
     if (!fn) throw Object.assign(new Error('這個動作無法復原'), { code: 'E_INVALID', en: { message: 'This action cannot be undone' } });
-    fn(); undoers.delete(s);
+    const extra = fn()?.undoExtra; undoers.delete(s);
     const c = commits.find((x) => x.sha === s); if (c) c.undoable = false;
-    return action(`復原 ${s}`, c?.refs || []);
+    return { ...action(`復原 ${s}`, c?.refs || []), ...extra };
   },
   async collisions() { await wait(80); return { plan: [], history: [] }; },
   async collisionsUndo() { await wait(120); return { ok: true }; },
@@ -496,7 +638,7 @@ export const demoApi = {
   async claudePlugin() {
     await wait(60);
     const state = ['missing', 'disabled'].includes(VARIANT.plugin) ? VARIANT.plugin : 'ready';
-    const commands = state === 'ready' ? [] : state === 'disabled' ? ['claude plugin enable engram@engram-local'] : ['claude plugin marketplace add "C:\\Users\\demo\\.engram\\app\\current"', 'claude plugin install engram@engram-local --scope user'];
+    const commands = state === 'ready' ? [] : state === 'disabled' ? ['claude plugin enable engram@engram-local'] : ['claude plugin marketplace add "C:\\Users\\you\\.engram\\app\\current"', 'claude plugin install engram@engram-local --scope user'];
     const skills = [
       { name: 'inbox', command: '/engram:inbox', argumentHint: '[卡片 id | 代碼，例如 H09]', description: '用 AI 整理 Engram 收件匣' },
       { name: 'tidy', command: '/engram:tidy', argumentHint: '<global | machine | project:<pid> | core | all | 記憶 ref> [補充說明]', description: '請 Claude 分析記憶並提出整理建議' },
@@ -537,7 +679,7 @@ export const demoApi = {
       restore: { ok: true, via: 'rollbackImport', reverted: t.sources, remainingDiff: '', legacyChanged: [] },
       selfTest: { ok: true, ms: 5900, checks: [['甲方設定檔綁定', 'Settings-file binding (client A)'], ['乙方設定檔綁定', 'Settings-file binding (client B)'], ['共用資料夾不換成 junction', 'Shared folder is not turned into a junction'], ['git 專案 junction', 'Junction for the git project'], ['一鍵還原完成', 'One-click restore completed'], ['換回實體資料夾', 'Turned back into a real folder'], ['匯入後的修改保留', 'Changes made after import are kept'], ['新記憶放回', 'New memories are put back'], ['settings.json 一致', 'settings.json matches'], ['甲方資料夾一致', 'Client A folder matches'], ['乙方資料夾一致', 'Client B folder matches'], ['git 專案資料夾一致', 'Git project folder matches']].map(([name, nameEn]) => ({ name, ok: true, detail: '', en: { name: nameEn } })) },
       realUntouched: { ok: true, changed: 0 },
-      health: [{ code: 'H07', severity: 'medium', title: '可能重複：同主題 3 筆', refs: 3 }, { code: 'H10', severity: 'medium', title: '單檔過大', refs: 1 }],
+      health: [{ code: 'H07', severity: 'medium', title: '可能重複：同主題 3 筆', refs: 3 }, { code: 'H10', severity: 'medium', title: '檔案比較大', refs: 1 }],
       steps: [],
     };
   },
@@ -564,6 +706,7 @@ export const demoApi = {
   async settings() { await wait(80); return clone(settings); },
   async saveSettings(patch) {
     await wait(150);
+    V2.checkSettings(patch);
     const was = settings.autopilot;
     Object.assign(settings, patch);
     if (patch.machineLabel) self.label = patch.machineLabel;
@@ -632,7 +775,13 @@ export const demoApi = {
     const reads = h % 5 === 0 ? 0 : h % 13;
     const pid = projects[h % projects.length]?.pid;
     const day = (d) => new Date(NOW - d * 864e5).toISOString().slice(0, 10);
-    return { tracking: true, since: day(84), reads, last: reads ? day(h % 9) : null, projects: reads && pid ? { [pid]: reads } : {}, byMachine: reads ? { [self.id]: reads } : {}, daily: [] };
+    // 2.0.0：情境召回帶出、帶出後被打開、搜尋列出、護欄命中（與 app/src/core/index.mjs 的 exposureOf 相同的欄位）
+    const recalled = h % 4 === 0 ? 0 : h % 7;
+    const recallOpened = Math.min(recalled, h % 3);
+    return {
+      tracking: true, since: day(84), reads, last: reads ? day(h % 9) : null, projects: reads && pid ? { [pid]: reads } : {}, byMachine: reads ? { [self.id]: reads } : {}, daily: [],
+      recalled, recallOpened, openRate: recalled ? Math.round((recallOpened / recalled) * 1000) / 1000 : null, searched: h % 5, guarded: 0,
+    };
   },
   async memoryLinks(ref) {
     await wait(50);
@@ -657,6 +806,7 @@ export const demoApi = {
     reviewItems = reviewItems.filter((x) => !refs.has(x.ref));
     const f = findings.find((x) => x.code === 'H23');
     if (f && !reviewItems.length) dropFinding(f.id);
+    V2.markConfirmed([...refs]);
     emit('finding', null);
     return { ok: true, confirmed: [...refs], stale: [] };
   },
@@ -685,7 +835,9 @@ export const demoApi = {
     return {
       enabled: on, budget: { monthly, used: apUsed, remaining: Math.max(0, Math.round((monthly - apUsed) * 10000) / 10000) },
       machines,
-      paused: apPaused(), feedback: clone(apFeedback.slice(-20)), running: apRunning ? clone(apRunning) : null, runs: apRuns.map(apEntry),
+      paused: apPaused(), feedback: clone(apFeedback.slice(-20)), running: apRunning ? clone(apRunning) : null,
+      limit: AP_LIMIT && Date.parse(AP_LIMIT.resetAt) > Date.now() ? clone(AP_LIMIT) : null,
+      runs: apRuns.map(apEntry),
     };
   },
   async autopilotRun(id) {
@@ -780,10 +932,10 @@ function stopDemoRun() {
 
 // 待你確認（H23）的展示資料：一筆 Claude 修改的全域記憶、一筆新增的
 let reviewItems = EN_DATA ? [
-  { ref: 'global/powershell-bom.md', kind: 'changed', sha: 'demo1', name: 'powershell-bom', description: 'Chinese text in .ps1 needs a UTF-8 BOM', previous: '---\nname: powershell-bom\n---\n\nWindows PowerShell 5.1 reads .ps1 files without a BOM in the system code page.\n', current: '---\nname: powershell-bom\n---\n\nWindows PowerShell 5.1 reads .ps1 files without a BOM in the system code page.\nPowerShell 7 reads them as UTF-8, so the BOM is only needed for 5.1 (tested 2026-11-05).\n', previousMissing: false, changedAt: new Date(NOW - 26 * 3600e3).toISOString(), machine: 'office-7k2q' },
+  { ref: 'global/lint-before-commit.md', kind: 'changed', sha: 'demo1', name: 'lint-before-commit', description: 'Run lint and unit tests before committing', previous: '---\nname: lint-before-commit\n---\n\nRun npm run lint and npm test before every commit.\n', current: '---\nname: lint-before-commit\n---\n\nRun npm run lint and npm test before every commit.\nSince 2026-11-05, also run npm run typecheck (type errors now fail the build).\n', previousMissing: false, changedAt: new Date(NOW - 26 * 3600e3).toISOString(), machine: 'office-7k2q' },
   { ref: 'global/meeting-notes-format.md', kind: 'new', sha: 'demo2', name: 'meeting-notes-format', description: 'Meeting notes: decisions first, then action items', previous: null, current: '---\nname: meeting-notes-format\ndescription: Meeting notes: decisions first, then action items\nmetadata:\n  type: feedback\n---\n\nPut decisions at the top, then action items with owners and dates.\n', previousMissing: false, changedAt: new Date(NOW - 3 * 3600e3).toISOString(), machine: 'home-3f9a' },
 ] : [
-  { ref: 'global/powershell-bom.md', kind: 'changed', sha: 'demo1', name: 'powershell-bom', description: '含中文的 .ps1 要加 UTF-8 BOM', previous: '---\nname: powershell-bom\n---\n\nWindows PowerShell 5.1 讀沒有 BOM 的 .ps1 會用系統編碼，中文會變亂碼。\n', current: '---\nname: powershell-bom\n---\n\nWindows PowerShell 5.1 讀沒有 BOM 的 .ps1 會用系統編碼，中文會變亂碼。\nPowerShell 7 預設用 UTF-8 讀，BOM 只有 5.1 需要（2026-11-05 實測）。\n', previousMissing: false, changedAt: new Date(NOW - 26 * 3600e3).toISOString(), machine: 'office-7k2q' },
+  { ref: 'global/lint-before-commit.md', kind: 'changed', sha: 'demo1', name: 'lint-before-commit', description: '提交前先跑 lint 與單元測試', previous: '---\nname: lint-before-commit\n---\n\n每次 commit 前先跑 npm run lint 與 npm test。\n', current: '---\nname: lint-before-commit\n---\n\n每次 commit 前先跑 npm run lint 與 npm test。\n2026-11-05 起也要跑 npm run typecheck（型別錯誤現在會讓建置失敗）。\n', previousMissing: false, changedAt: new Date(NOW - 26 * 3600e3).toISOString(), machine: 'office-7k2q' },
   { ref: 'global/meeting-notes-format.md', kind: 'new', sha: 'demo2', name: 'meeting-notes-format', description: '會議紀錄：決議在前、待辦在後', previous: null, current: '---\nname: meeting-notes-format\ndescription: 會議紀錄：決議在前、待辦在後\nmetadata:\n  type: feedback\n---\n\n會議紀錄先寫決議，再列待辦（負責人、期限）。\n', previousMissing: false, changedAt: new Date(NOW - 3 * 3600e3).toISOString(), machine: 'home-3f9a' },
 ];
 // 核心準則建議（H24）：展示版預設沒有（?core=old 可以看到）

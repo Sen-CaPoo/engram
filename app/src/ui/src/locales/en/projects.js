@@ -6,6 +6,8 @@ export default {
   '篩選': 'Filter',
   '使用中': 'Active',
   '需要注意': 'Needs attention',
+  '休眠': 'Dormant',
+  '90 天沒有對話、任何電腦都沒有綁定的專案會休眠：記憶完整保留、照常搜尋，重新綁定或有新的對話就會恢復。': 'Projects with no conversations for 90 days and no binding on any computer go dormant: their memories are kept in full and still searchable, and they wake up again when you rebind them or start a new conversation.',
   '已封存': 'Archived',
   '專案用固定 ID 識別，資料夾搬家或改名都不影響記憶。': 'Projects are identified by a fixed ID, so moving or renaming a folder does not affect memories.',
   '等待接上的資料夾': 'Folders waiting to connect',

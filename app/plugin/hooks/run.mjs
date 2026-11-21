@@ -50,6 +50,20 @@ function bootstrapFailed(event, err) {
 }
 
 const event = process.argv[2];
+
+// 情境召回的後備（2.0.0 P3，mod 沒有載入時）：每則訊息都會執行，所以不讀安裝清單、不載入引擎，
+// 只用外掛裡的 recall-hook.mjs 讀索引與標記檔。任何錯誤都安靜結束，不算 Engram 載入失敗
+if (event === 'prompt-submit') {
+  if (process.env.ENGRAM_HEADLESS !== '1') {
+    try {
+      const { promptSubmit } = await import('./recall-hook.mjs');
+      const out = promptSubmit(await readStdin(1000), { home });
+      if (out) await new Promise((resolve) => process.stdout.write(out, resolve));
+    } catch { /* 情境召回壞掉絕不能擋住訊息 */ }
+  }
+  process.exit(0);
+}
+
 let installed = null;
 try {
   installed = JSON.parse(fs.readFileSync(path.join(local, 'install.json'), 'utf8'));

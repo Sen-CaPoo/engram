@@ -167,6 +167,8 @@ describe('CLI 使用真引擎', () => {
     const r = await engram(['remember', '--scope', 'machine', '--name', 'office-proxy', '--type', 'reference', '--description', '公司代理設定', '--body', '代理設定在 IT 入口網站。']);
     assert.equal(r.code, 0, r.err);
     assert.equal(r.out.trim(), `已記住：machines/${A.machine.id}/office-proxy.md（單機 ${A.machine.id}）`);
+    // engram remember 寫出的檔案帶 metadata.modified（全域與單機索引放不下時靠它排序）
+    assert.match(fs.readFileSync(path.join(A.paths.vault, 'machines', A.machine.id, 'office-proxy.md'), 'utf8'), /\n {2}modified: \d{4}-\d{2}-\d{2}T[\d:.]+Z\n/);
     const s = await engram(['search', '代理', '--json']);
     assert.ok(JSON.parse(s.out).some((h) => h.ref.endsWith('office-proxy.md')));
     const st = await engram(['status']);

@@ -13,9 +13,20 @@ export function summarizeRun(run) {
     dismissed: run.actions.filter((a) => a.kind === 'dismiss').length,
     rejected: run.rejected.length,
     failed: run.actions.filter((a) => a.status === 'failed').length,
-    byTask: { curate: by('curate'), dream: by('dream'), cards: by('cards'), conflicts: by('conflicts'), secrets: by('secrets'), review: by('review') },
+    byTask: { curate: by('curate'), dream: by('dream'), cards: by('cards'), conflicts: by('conflicts'), secrets: by('secrets'), review: by('review'), graduate: by('graduate') },
     calls: run.calls.length,
     costUsd: Math.round(cost * 10000) / 10000,
+    // 2.0.0：提前停止的原因（用量上限、登入到期、本月預算）與這一輪新進保留區的筆數
+    stopped: ['limit', 'auth', 'budget', 'busy'].includes(run.stopped) ? run.stopped : null,
+    held: (run.held ?? []).length,
+    // 每種工作的呼叫次數與約當金額（展示資料的呼叫只有 label，取第一段當工作）
+    callsByTask: run.calls.reduce((o, c) => {
+      const k = c.task ?? String(c.label ?? 'other').split(':')[0];
+      const e = (o[k] ??= { calls: 0, costUsd: 0 });
+      e.calls++;
+      e.costUsd = Math.round((e.costUsd + (c.costUsd ?? 0)) * 10000) / 10000;
+      return o;
+    }, {}),
   };
 }
 
@@ -35,7 +46,7 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
   const REC_A = '20261107-031840-ap01';
   const REC_B = '20261107-032530-ap02';
   const teamBefore = fm('team-lead-role', L('使用者是開發小組長', 'The user is a development team lead'), 'user', L('使用者是開發小組長，負責程式審查。\n\n偏好：\n- 回覆用條列\n- 程式碼附註解', 'The user is a development team lead and does code reviews.\n\nPreferences:\n- Answers as bullet points\n- Comment the code'));
-  const teamAfter = fm('team-lead-role', L('使用者負責專案管理並主講內部 AI 分享', 'The user manages projects and presents the internal AI talks'), 'user', L('使用者負責專案管理，並主講公司內部的 AI 技術分享（2026-09 起）。\n\n偏好：\n- 回覆用條列\n- 程式碼附註解', 'The user manages projects and presents the company\'s internal AI talks (since 2026-09).\n\nPreferences:\n- Answers as bullet points\n- Comment the code'));
+  const teamAfter = fm('team-lead-role', L('使用者轉任產品設計，負責介面規格', 'The user moved to product design and owns the UI specs'), 'user', L('使用者轉任產品設計，負責介面規格與使用者訪談（2026-09 起）。\n\n偏好：\n- 回覆用條列\n- 程式碼附註解', 'The user moved to product design and owns the UI specs and user interviews (since 2026-09).\n\nPreferences:\n- Answers as bullet points\n- Comment the code'));
   const vpnBefore = fm('old-vpn-client', L('舊 VPN 用戶端的連線設定', 'Connection settings for the old VPN client'), 'reference', L('開啟舊 VPN 用戶端 → 匯入設定檔 → 輸入 OTP。', 'Open the old VPN client → import the profile → enter the OTP.'));
   const deployRef = `projects/${pid}/memory/deploy-notes.md`;
   const csvRef = `projects/${pid}/memory/report-csv-only.md`;
@@ -47,14 +58,14 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
   const recA = {
     v: 1, id: REC_A, createdAt: ago(60 * 5 - 6), updatedAt: ago(60 * 5 - 7), appliedAt: ago(60 * 5 - 7), machine: self.id, scope: 'global', request: '', status: 'done',
     summary: L('2 筆全域記憶：1 筆職稱已過期、1 筆講的 VPN 工具已汰換；改寫 1 筆、封存 1 筆。', 'Two global memories: one title is out of date and one describes a retired VPN tool. Rewrote 1 and archived 1.'),
-    highlights: [], kept: [], backup: 'C:\\Users\\Demo\\.engram\\local\\backups\\2026-11-07T03-18-41-300Z-tidy-ap01',
+    highlights: [], kept: [], backup: 'C:\\Users\\you\\.engram\\local\\backups\\2026-11-07T03-18-41-300Z-tidy-ap01',
     kind: 'autopilot', autopilot: { run: R1, task: 'curate' },
     texts: { 'global/team-lead-role.md': teamBefore, 'global/old-vpn-client.md': vpnBefore },
     items: [
       item('i1', {
         ref: 'global/team-lead-role.md', name: 'team-lead-role', scope: 'global', type: 'user', action: 'update',
         title: L('補上目前負責的工作，刪掉過期的職稱', 'Add the current role and drop the outdated title'),
-        reason: L('2026-09 之後已經不是小組長，現在主講內部 AI 分享；舊說法會讓 Claude 用錯誤的角色回答。', 'Since 2026-09 the user is no longer a team lead and now presents the internal AI talks. The old wording makes Claude answer from the wrong role.'),
+        reason: L('2026-09 之後已經不是小組長，轉任產品設計；舊說法會讓 Claude 用錯誤的角色回答。', 'Since 2026-09 the user is no longer a team lead and has moved to product design. The old wording makes Claude answer from the wrong role.'),
         ops: [{ op: 'write', ref: 'global/team-lead-role.md', content: teamAfter }],
         result: { status: 'done', undo: ['d4c3b2a1'], at: ago(60 * 5 - 7) },
         autopilot: { risk: 'medium', category: 'update', cards: [], review: { verdict: 'approve', reason: L('新的說法有 2026-09 的對話為證，原本的偏好設定一項都沒有少。', 'The new wording is backed by the 2026-09 conversations, and none of the original preferences were lost.') } },
@@ -72,7 +83,7 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
   const recB = {
     v: 1, id: REC_B, createdAt: ago(60 * 5 - 14), updatedAt: ago(60 * 5 - 15), appliedAt: ago(60 * 5 - 15), machine: self.id, scope: `project:${pid}`, request: '', status: 'done',
     summary: L('回顧了這台電腦 4 個對話：1 筆部署指令已過時、1 件客戶決定還沒有人記下來。', 'Reviewed 4 conversations on this computer: one deploy command is out of date and one client decision was never recorded.'),
-    highlights: [], kept: [], backup: 'C:\\Users\\Demo\\.engram\\local\\backups\\2026-11-07T03-25-31-500Z-tidy-ap02',
+    highlights: [], kept: [], backup: 'C:\\Users\\you\\.engram\\local\\backups\\2026-11-07T03-25-31-500Z-tidy-ap02',
     kind: 'autopilot', autopilot: { run: R1, task: 'dream', dream: true },
     dream: { id: 'dr-20261107-032200-w5e1', sessions: 4, from: '2026-11-02T02:10:00.000Z', to: '2026-11-06T09:40:00.000Z', remaining: 0 },
     texts: { [deployRef]: deployBefore },
@@ -125,14 +136,14 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
         title: L('加入核心準則的建議更新', 'Added the suggested core rules update'),
         reason: L('Engram 內建的記憶寫入協定更新', 'Update to the memory-writing protocol built into Engram') }),
       act({ task: 'cards', kind: 'dismiss', card: 'f_H10_5', code: 'H10',
-        title: L('不處理：單檔過大', 'Not handling: file too large'),
-        reason: L('這筆是使用者釘選的參考資料，內容本來就長，拆開反而不好找。', 'This is a pinned reference memory that is long by nature; splitting it would make it harder to find.') }),
+        title: L('不處理：檔案比較大', 'Not handling: a large file'),
+        reason: L('這筆是使用者釘選的參考資料，內容本來就長，保持原樣。', 'This is a pinned reference memory that is long by nature; leaving it as it is.') }),
       act({ task: 'cards', kind: 'dismiss', card: 'f_H03_6', code: 'H03',
         title: L('不處理：說明太短', 'Not handling: description too short'),
         reason: L('標題已經足以判斷用途，加長說明沒有幫助。', 'The title is enough to tell what it is for; a longer description would not help.') }),
-      act({ task: 'conflicts', kind: 'conflict', card: 'f_H15_7', code: 'H15', refs: ['global/powershell-bom.md'], category: 'conflict-both', undo: ['c0d8e2f5'],
-        title: L('處理衝突：global/powershell-bom.md（兩個版本都留下）', 'Resolved conflict: global/powershell-bom.md (kept both versions)'),
-        reason: L('兩台電腦各補了不同的實測日期，內容不互相矛盾，兩邊的事實都保留。', 'Each computer added a different test date and the content does not contradict itself, so both sets of facts are kept.'),
+      act({ task: 'conflicts', kind: 'conflict', card: 'f_H15_7', code: 'H15', refs: ['global/lint-before-commit.md'], category: 'conflict-both', undo: ['c0d8e2f5'],
+        title: L('處理衝突：global/lint-before-commit.md（兩個版本都留下）', 'Resolved conflict: global/lint-before-commit.md (kept both versions)'),
+        reason: L('兩台電腦各補了不同的檢查步驟，內容不互相矛盾，兩邊的事實都保留。', 'Each computer added a different check and the content does not contradict itself, so both sets of facts are kept.'),
         review: { verdict: 'approve', reason: L('兩個版本的事實都保留，沒有遺失資訊。', 'Both versions\' facts are kept and nothing is lost.') } }),
       act({ task: 'review', kind: 'confirm', refs: ['global/meeting-notes-format.md'], code: 'H23', category: 'confirm',
         title: L('代你確認：meeting-notes-format', 'Confirmed for you: meeting-notes-format'),
@@ -148,26 +159,38 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
         title: recB.items[0].title, reason: recB.items[0].reason, review: recB.items[0].autopilot.review }),
       act({ task: 'dream', pid, kind: 'tidy', record: REC_B, item: 'i2', action: 'create', category: 'dream-create', risk: 'medium', refs: [csvRef], undo: ['5b0a3e9f'],
         title: recB.items[1].title, reason: recB.items[1].reason, review: recB.items[1].autopilot.review }),
+      // 記憶畢業（與 app/src/autopilot/tasks/graduate.mjs 的 run.actions 相同形狀）
+      act({ task: 'graduate', kind: 'graduate', refs: ['global/answer-in-bullets.md'], category: 'core', risk: 'medium', undo: ['e7a1c3b9', '4d2f8a61'], to: 'core',
+        title: L('記憶畢業成核心準則的一行：回覆用條列', 'Graduate into a core rule line: answer in bullet points'),
+        reason: L('這筆偏好每個專案、每次對話都適用，而且已經穩定好幾週沒有改過；放進核心準則比留在索引裡更確定會被看到。', 'This preference applies to every project and every conversation, and has been stable for weeks. In the core rules it is sure to be seen, unlike an index entry.'),
+        review: { verdict: 'approve', reason: L('那一行完整保留了原本記憶的意思，原記憶內文不動。', 'The line keeps the full meaning of the original memory, and the memory body is unchanged.') },
+        graduate: { to: 'core', ref: 'global/answer-in-bullets.md', title: 'answer-in-bullets', at: ago(60 * 5 - 15), line: L('回覆用條列，每點一句。', 'Answer in bullet points, one sentence each.'), shas: ['e7a1c3b9', '4d2f8a61'] } }),
     ],
     rejected: [
       { task: 'curate', scope: 'global', action: 'move', category: 'move', risk: 'high', refs: ['global/user-profile-office.md'],
         title: L('把「使用者背景」整筆搬到訂單系統', 'Move the whole "user background" memory to the order system'),
         reason: L('其餘內容只跟訂單系統有關，放在全域其他專案也會套用。', 'The rest only concerns the order system; kept in global, every other project would assume it too.'),
         why: L('審核員沒有同意：搬走之後，其他專案會失去「公司與職稱」這項還用得到的事實（會遺失：公司與職稱）', 'The reviewer did not agree: after the move, other projects would lose a fact they still need, the company and title (would lose: company and title)') },
-      { task: 'curate', scope: 'global', action: 'merge', category: 'merge', risk: 'high', refs: ['global/report-format.md', 'global/table-first.md'],
-        title: L('把「報告格式」與「表格優先」合併成一筆', 'Merge "report format" and "tables first" into one memory'),
+      { task: 'curate', scope: 'global', action: 'merge', category: 'merge', risk: 'high', refs: ['global/api-docs.md', 'global/api-examples.md'],
+        title: L('把「API 文件」與「API 範例」合併成一筆', 'Merge "API docs" and "API examples" into one memory'),
         why: L('「merge」類的處理被你復原過多次，暫停中', 'Handling of "merge" was undone by you several times and is paused') },
       { task: 'dream', pid, action: 'archive', category: 'archive', risk: 'high', refs: [`projects/${pid}/memory/release-checklist-oct.md`],
         title: L('封存：10 月的上線清單已全部完成', 'Archive: the October launch checklist is done'),
         why: L('超過這一輪最多改動的記憶筆數，下一輪再處理', 'Over the most memories one run may change; will be handled in the next run'), deferred: true },
       { task: 'cards', title: L('解決同步衝突：global/core-notes.md', 'Resolve sync conflict: global/core-notes.md'),
         why: L('這個修正要在介面操作', 'This fix has to be done in the dashboard') },
+      // 你在保留區標成「不需要」的同一個提案（與 app/src/autopilot/pipeline.mjs 的 screen 相同：why 與 en.why 是 DISMISSED_WHY）
+      { task: 'curate', scope: 'global', action: 'archive', category: 'archive', risk: 'high', refs: ['global/report-template.md'], dismissed: true,
+        title: L('封存「舊的報表範本」', 'Archive "old report template"'), reason: L('三個月沒有被讀過。', 'Not read for three months.'),
+        why: '你之前在保留區把同一個提案標成「不需要」（90 天內），這次略過',
+        en: { why: 'You marked the same proposal as not needed in the holding area within the last 90 days, so it was skipped this time' } },
     ],
     notes: [{ task: 'run', note: L('暫停中的類別（被你復原過多次）：merge', 'Paused categories (undone by you several times): merge') }],
     calls: [
       call('secrets', 8200, 5210, 640, 0.071), call('cards', 9400, 7320, 910, 0.094), call('conflicts', 7100, 4800, 520, 0.062),
       call('review', 6800, 4100, 380, 0.049, 'haiku'), call('curate:global', 31200, 38800, 2900, 0.261), call('review:curate:global', 12400, 9800, 640, 0.083, 'haiku'),
       call('dream:order-system', 44800, 52100, 3600, 0.318), call('review:dream:order-system', 11900, 8700, 520, 0.072, 'haiku'),
+      call('graduate', 9800, 6400, 520, 0.071), call('review:graduate', 5200, 3100, 260, 0.036, 'haiku'),
     ],
   });
   run1.summary = summarizeRun(run1);
@@ -180,15 +203,15 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
         title: L('並排比對並合併：可能重複：db 主題有 2 筆', 'Compare and merge: possible duplicates: 2 memories about db'),
         reason: L('兩筆都在講資料庫備份，內容只有細節不同，合併後保留兩邊的所有數字。', 'Both are about database backups and differ only in details; the merge keeps every number from both.') }),
       act({ task: 'cards', kind: 'dismiss', card: 'f_H10_2', code: 'H10',
-        title: L('不處理：單檔過大', 'Not handling: file too large'),
-        reason: L('使用者釘選的參考資料，不拆。', 'A pinned reference memory; not splitting it.') }),
+        title: L('不處理：檔案比較大', 'Not handling: a large file'),
+        reason: L('使用者釘選的參考資料，保持原樣。', 'A pinned reference memory; leaving it as it is.') }),
       act({ task: 'review', kind: 'confirm', refs: ['global/git-commit-style.md'], code: 'H23', category: 'confirm',
         title: L('代你確認：git-commit-style', 'Confirmed for you: git-commit-style'),
         reason: L('只補了一個範例，沒有改變原本的規則。', 'It only added an example and did not change the existing rule.') }),
     ],
-    rejected: [{ task: 'curate', scope: 'global', action: 'update', category: 'update', risk: 'medium', refs: ['global/email-brevity.md'],
-      title: L('把「內部信要精簡」改寫得更短', 'Rewrite "internal email: keep it short" more briefly'),
-      why: L('審核員沒有同意：改寫後少了「圖 > 表 > 文」的優先順序（會遺失：呈現優先順序）', 'The reviewer did not agree: the rewrite drops the "visuals > tables > text" order (would lose: presentation priority)') }],
+    rejected: [{ task: 'curate', scope: 'global', action: 'update', category: 'update', risk: 'medium', refs: ['global/code-comments.md'],
+      title: L('把「註解寫為什麼」改寫得更短', 'Rewrite "comments explain why" more briefly'),
+      why: L('審核員沒有同意：改寫後少了「寫下限制條件」這一點（會遺失：限制條件）', 'The reviewer did not agree: the rewrite drops "write down the limits" (would lose: the limits)') }],
     calls: [call('cards', 8800, 6100, 700, 0.083), call('review', 6400, 3900, 320, 0.044, 'haiku'), call('curate:global', 24100, 31000, 1900, 0.188)],
   });
   run2.summary = summarizeRun(run2);
@@ -231,7 +254,7 @@ export function buildAutopilotSample({ en = false, pid = 'order-system-x1y2z', n
   run5.summary = null;
 
   const feedback = [
-    { at: ago(60 * 24 * 20), category: 'merge', ref: 'global/report-format.md', title: L('把「報告格式」與「表格優先」合併成一筆', 'Merged "report format" and "tables first" into one memory'), reason: '', mid: self.id },
+    { at: ago(60 * 24 * 20), category: 'merge', ref: 'global/api-docs.md', title: L('把「API 文件」與「API 範例」合併成一筆', 'Merged "API docs" and "API examples" into one memory'), reason: '', mid: self.id },
     { at: ago(60 * 24 * 9), category: 'merge', ref: 'global/git-commit-style.md', title: L('合併兩筆 git 習慣', 'Merged two git habit memories'), reason: '', mid: self.id },
     { at: ago(60 * 20), category: 'card-H07', ref: `projects/${pid}/memory/db-notes.md`, title: L('並排比對並合併：可能重複：db 主題有 2 筆', 'Compare and merge: possible duplicates: 2 memories about db'), reason: '', mid: self.id },
   ];

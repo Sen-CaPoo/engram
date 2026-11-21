@@ -71,6 +71,8 @@ after(() => rmTmp(root));
 describe('verify（確認仍正確）', () => {
   test('只存日期（證據最新的那天）、不存內容；不能和改寫同一項；執行時用當下內容，沒確認過的維持待確認', async () => {
     const g = (await eg.memories.create({ scope: { kind: 'global' }, name: 'claude-fact', type: 'reference', description: 'Claude 寫的', body: '事實。' })).ref;
+    // 新寫的記憶帶 modified（現在）；這個測試的證據日期在過去，要模擬「很久以前寫的記憶」
+    await eg.memories.write(g, { frontmatter: { 'metadata.modified': '2026-01-01T00:00:00.000Z' } });
     await assert.rejects(createFromPlan(eg, plan(
       { scope: 'global', summary: 's', items: [{ ref: g, action: 'update', title: 't', reason: 'r', ops: [{ op: 'write', ref: g, base: rev(g), file: 'g.md' }, { op: 'verify', ref: g }] }] },
       { 'g.md': raw(g).replace('事實。', '事實（改）。') },
@@ -179,6 +181,8 @@ describe('讀取統計與索引', () => {
 describe('對話回顧', () => {
   test('沒分析到的不記為已回顧、全部沒分析到要擋；引句對照；只處理這個專案；同一個回顧只能一份記錄；撤銷；接續的對話只看新的部分；完成後刪掉匯出的文字', async () => {
     const mem = (await eg.memories.create({ scope: { kind: 'project', pid }, name: 'ci-notes', type: 'project', description: 'CI', body: 'CI 尚未設定。' })).ref;
+    // 新寫的記憶帶 modified（現在）；這個測試的證據日期在過去，要模擬「很久以前寫的記憶」
+    await eg.memories.write(mem, { frontmatter: { 'metadata.modified': '2026-01-01T00:00:00.000Z' } });
     writeTranscript('rv-a', [user('CI 設好了，用 GitHub Actions'), said('好')], { ageMs: 3 * DAY });
     writeTranscript('rv-b', [user('另一個對話'), said('嗯')], { ageMs: 2 * DAY });
     const run = await eg.dream.prepare({ pid });

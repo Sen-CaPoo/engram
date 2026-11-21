@@ -262,4 +262,23 @@ describe('兩台電腦同步', () => {
     const r2 = await A.sync();
     assert.equal(r2.ok, true);
   });
+
+  // R2：vault/release.json（自動更新的發佈資訊）可能兩台電腦同時寫：留版本較新的，不留衝突、也不卡住同步
+  test('release.json 兩台同時發佈：合併後兩台都留版本較新的，沒有衝突紀錄', async () => {
+    const rel = (version, at) => `${JSON.stringify({ version, commit: 'c'.repeat(40), repo: 'github.com/example/engram', at, by: 'pc' }, null, 2)}\n`;
+    write(A, 'release.json', rel('1.7.0', '2026-12-01T00:00:00.000Z'));
+    write(B, 'release.json', rel('1.10.0', '2026-12-02T00:00:00.000Z'));
+    const { a, b, a2 } = await syncBoth();
+    for (const r of [a, b, a2]) assert.equal(r.ok, true, JSON.stringify(r.error));
+    assert.equal(JSON.parse(read(A, 'release.json')).version, '1.10.0', '1.10.0 比 1.7.0 新（不是字串比較）');
+    assert.equal(read(A, 'release.json'), read(B, 'release.json'));
+    assert.deepEqual([...a.conflicts, ...b.conflicts, ...a2.conflicts], [], '沒有衝突隔離');
+    assert.deepEqual((await A.conflicts.list()).filter((c) => c.ref === 'release.json'), []);
+    // 版本相同：留 at 較晚的
+    write(A, 'release.json', rel('2.0.0', '2026-12-05T00:00:00.000Z'));
+    write(B, 'release.json', rel('2.0.0', '2026-12-06T00:00:00.000Z'));
+    await syncBoth();
+    assert.equal(JSON.parse(read(A, 'release.json')).at, '2026-12-06T00:00:00.000Z');
+    assert.equal(read(A, 'release.json'), read(B, 'release.json'));
+  });
 });

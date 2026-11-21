@@ -406,9 +406,12 @@ const NO_COPY = new Set(['skip-same', 'superseded', 'skip']);
 /**
  * 依計畫執行。plan 可由精靈修改：改 item.action（'copy'、'rename'、'merge-candidate' 會複製；'skip-same'、'superseded'、'skip' 不複製）、
  * 改 item.scope、改 target.pid（連結到既有專案）、或設 target.sameAs = '<encoded>|<resolvedPath>'（跟另一個來源用同一個專案）。
- * @param {{ bindSources?: boolean }} [opts]  bindSources：收編後把來源資料夾換成 junction（預設 true）
+ * @param {{ bindSources?: boolean, by: string }} opts  bindSources：收編後把來源資料夾換成 junction（預設 true）；
+ *   by：收進全域或單機的記憶記為確認過的來源（必填，第四輪審查 F-02：管理介面的匯入是 user，CLI 在 Claude Code 裡是 claude）
  */
-export async function executeSweep(ctx, plan, { bindSources = true } = {}) {
+export async function executeSweep(ctx, plan, { bindSources = true, by } = {}) {
+  const { REVIEW_SOURCES } = await import('./review.mjs');
+  if (!REVIEW_SOURCES.includes(by)) throw new Error(`匯入要有明確的確認來源，收到：${String(by).slice(0, 20)}`);
   const result = { ok: true, sources: 0, copied: 0, skipped: 0, bound: [], deferred: [], backupOnly: [], commits: [], restorePoint: null };
   const log = (await readJson(path.join(ctx.local, 'sweep.json'), {})) ?? {};
   // 還原點：本機 tag（不會推到遠端）＋ 匯入紀錄，讓「一鍵還原」能處理部分完成的狀態
@@ -485,7 +488,7 @@ export async function executeSweep(ctx, plan, { bindSources = true } = {}) {
       const label = src.resolvedPath ? path.basename(src.resolvedPath) : src.encoded;
       // 1.4.0：收編的是 Engram 之前就有的記憶（等同確認紀錄的起點），收進全域或單機時記為確認過；跟著這個 commit 一起還原
       const { markReviewed } = await import('./review.mjs');
-      touched.push(...await markReviewed(ctx, imported.map((x) => x.destRef)));
+      touched.push(...await markReviewed(ctx, imported.map((x) => x.destRef), { by }));
       const commit = await commitPaths(ctx.vault, touched, `sweep ${src.items.length} memories from ${label}`, { action: 'sweep', mid: ctx.mid, trailers: { 'Engram-Import': tag } });
       if (commit) { result.commits.push(commit.sha); record.commits.push(commit.sha); }
       for (const it of imported) it.sha = commit?.sha ?? null;

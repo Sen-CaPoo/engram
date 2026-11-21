@@ -87,16 +87,18 @@ function revertButton() {
   return b;
 }
 
-export function Merge({ ours, theirs, onChange }) {
+// readOnly：只比對（兩邊都不能編輯，也沒有搬移的箭頭）
+export function Merge({ ours, theirs, onChange, readOnly = false }) {
   const host = useRef(null);
   const cb = useRef(onChange);
   cb.current = onChange;
   useEffect(() => {
+    const lock = [EditorState.readOnly.of(true), EditorView.editable.of(false)];
     const mv = new MergeView({
       parent: host.current,
-      a: { doc: ours, extensions: [...baseExtensions(), EditorView.updateListener.of((u) => { if (u.docChanged) cb.current?.(u.state.doc.toString()); })] },
-      b: { doc: theirs, extensions: [...baseExtensions(), EditorState.readOnly.of(true), EditorView.editable.of(false)] },
-      revertControls: 'b-to-a',
+      a: { doc: ours, extensions: [...baseExtensions(), EditorView.updateListener.of((u) => { if (u.docChanged) cb.current?.(u.state.doc.toString()); }), ...(readOnly ? lock : [])] },
+      b: { doc: theirs, extensions: [...baseExtensions(), ...lock] },
+      revertControls: readOnly ? undefined : 'b-to-a',
       renderRevertControl: revertButton,
       highlightChanges: true,
       gutter: true,

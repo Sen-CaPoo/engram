@@ -4,15 +4,14 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { E, EngramError } from './errors.mjs';
-import { readJson, readText, safeWrite, sha1, writeJson } from './fsx.mjs';
+import { readInstallManifest, withInstallManifest } from './claudesettings.mjs';
+import { readText, safeWrite, sha1 } from './fsx.mjs';
 import { commitPaths } from './vault.mjs';
 
 const BLOCK_RE = /<!-- engram:begin[\s\S]*?<!-- engram:end -->\n?/;
 const CORE_LINE = '@rules/user-guidelines.md';
 const MARK_BEGIN = '<!-- engram:guidelines:begin -->';
 const MARK_END = '<!-- engram:guidelines:end -->';
-
-function manifestPath(homes) { return path.join(homes.local, 'install-manifest.json'); }
 
 /** 把 CLAUDE.md 拆成「Engram 區塊」與「其餘使用者內容」。 */
 function split(text) {
@@ -72,12 +71,13 @@ export function guidelines(ctx) {
         fs.rmSync(rulesPath, { force: true });
         throw new EngramError(E.CONFLICT, '~/.claude/CLAUDE.md 剛好被修改，已取消', '稍後再試').withEn('~/.claude/CLAUDE.md was modified just now, so the operation was canceled', 'Try again in a moment');
       }
-      const manifest = (await readJson(manifestPath(ctx.homes), null)) ?? {};
-      manifest.guidelines = { adoptedAt: new Date().toISOString(), backup, originalSha1: sha1(text), mid: ctx.mid };
-      await writeJson(manifestPath(ctx.homes), manifest);
+      await withInstallManifest(ctx.homes, async (manifest, save) => {
+        manifest.guidelines = { adoptedAt: new Date().toISOString(), backup, originalSha1: sha1(text), mid: ctx.mid };
+        await save();
+      });
       // 使用者在介面按「採用」：搬過去的內容就是使用者自己的準則，記為確認過（1.4.0）
       const { markReviewed } = await import('./review.mjs');
-      const rv = await markReviewed(ctx, [rulesRef, 'core/CORE.md']);
+      const rv = await markReviewed(ctx, [rulesRef, 'core/CORE.md'], { by: 'user' });
       const commit = await commitPaths(ctx.vault, [rulesRef, 'core/CORE.md', ...rv], 'adopt user guidelines', { action: 'edit', refs: [rulesRef], mid: ctx.mid });
       return { ok: true, commit: commit ?? undefined, backup };
     });
@@ -85,8 +85,7 @@ export function guidelines(ctx) {
 
   async function revert() {
     return ctx.locked('guidelines.revert', async () => {
-      const manifest = (await readJson(manifestPath(ctx.homes), null)) ?? {};
-      const g = manifest.guidelines;
+      const g = (await readInstallManifest(ctx.homes)).guidelines;
       if (!g?.backup || !fs.existsSync(g.backup)) throw new EngramError(E.NOT_FOUND, '找不到採用前的備份').withEn('Could not find the backup from before the guidelines were adopted');
       const original = await readText(g.backup);
       // 還原本機 CLAUDE.md：原檔逐位元；若使用者之後又改了 Engram 區塊以外的地方，保留現況並把原內容附在前面
@@ -99,10 +98,12 @@ export function guidelines(ctx) {
       const nextCore = core.replace(new RegExp(`${MARK_BEGIN}\\n[\\s\\S]*?${MARK_END}\\n\\n?`), '');
       if (nextCore !== core) await safeWrite(corePath, nextCore);
       fs.rmSync(rulesPath, { force: true });
-      delete manifest.guidelines;
-      await writeJson(manifestPath(ctx.homes), manifest);
+      await withInstallManifest(ctx.homes, async (manifest, save) => {
+        delete manifest.guidelines;
+        await save();
+      });
       const { markReviewed } = await import('./review.mjs');
-      const rv = await markReviewed(ctx, [rulesRef, 'core/CORE.md']);
+      const rv = await markReviewed(ctx, [rulesRef, 'core/CORE.md'], { by: 'user' });
       const commit = await commitPaths(ctx.vault, [rulesRef, 'core/CORE.md', ...rv], 'revert user guidelines', { action: 'edit', refs: [rulesRef], mid: ctx.mid });
       return { ok: true, commit: commit ?? undefined };
     });

@@ -8,6 +8,7 @@ import { CliError } from '../errors.mjs';
 import { countLines } from '../fsutil.mjs';
 import { scopeLabel } from '../output.mjs';
 import { localPaths } from '../paths.mjs';
+import { confirmSource, inClaudeCode } from '../source.mjs';
 import { assertNoNewRedaction, assertUnchanged, checkMemoryText, heldNote, isMemoryRef, readSafe, redactText, revOf, undoHint } from './safe.mjs';
 
 export const SCOPES = ['global', 'machine', 'project'];
@@ -19,6 +20,8 @@ export async function cmdSearch(ctx) {
   const limit = ctx.opts.limit ? parsePositiveInt(ctx.opts.limit, '--limit', { max: 200 }) : 10;
   const eg = await ctx.engine();
   const hits = await eg.search(q, { limit });
+  // 2.0.0 P6：列出的記憶記在本機的讀取統計（engram search 列出也算「用到」）
+  await eg.usage?.noteSearch?.(hits.map((h) => h.ref));
   const file = (ref) => path.join(eg.paths.vault, ...String(ref).split('/'));
   const lines = hits.length
     ? [`找到 ${hits.length} 筆：`, ...hits.flatMap((h) => [
@@ -79,6 +82,7 @@ export async function readContent(ctx, what) {
   return { text, done: async () => {} };
 }
 
+
 export async function cmdRemember(ctx) {
   const { opts } = ctx;
   if (!SCOPES.includes(opts.scope)) throw new CliError('E_USAGE', '請用 --scope 指定範圍：global、machine 或 project');
@@ -107,8 +111,9 @@ export async function cmdRemember(ctx) {
     description: opts.description.trim(),
     body,
     project: scope.kind === 'project' ? undefined : opts.project,
-    // --reviewed：使用者已經看過並同意這段內容（save 技能在同意後帶）；全域與單機記憶不會出現在「待你確認」
-    ...(opts.reviewed ? { reviewed: true } : {}),
+    // --reviewed：使用者已經看過並同意這段內容（save 技能在同意後帶）；全域與單機記憶不會出現在「待你確認」。
+    // 在 Claude Code 裡執行時記成 claude（第二輪審查 N1）：不進待你確認，但不算使用者本人的確認（不進偏好區塊）
+    ...(opts.reviewed ? { reviewed: confirmSource(ctx) } : {}),
   });
   await content?.done();
   ctx.out.result(res, [`已記住：${res.ref}（${scopeLabel(scope)}）`, await heldNote(eg, res.ref, body)]);
@@ -169,7 +174,7 @@ export async function cmdMemory(ctx) {
     await assertUnchanged(eg, [ref], opts.base);
     const cur = await eg.memories.read(ref);
     assertNoNewRedaction(text, [cur.raw]);
-    const r = await eg.memories.write(ref, { text, ...(opts.reviewed ? { reviewed: true } : {}) });
+    const r = await eg.memories.write(ref, { text, ...(opts.reviewed ? { reviewed: confirmSource(ctx) } : {}) });
     await done();
     // 內容仍疑似含有金鑰時檔案沒有 commit（可能只 commit 了索引），不給 engram undo
     const held = await heldNote(eg, ref, text);
@@ -267,10 +272,8 @@ export async function cmdNotSecret(ctx) {
   }
   if (!!opts.value === !!ref) throw new CliError('E_USAGE', '請用 --value <值>，或 <ref> --line <行號> 指定（擇一）', '例如：engram not-secret global/ci-notes.md --line 8');
   // 這是使用者本人的確認：不能由 Claude 代為執行（auto、bypass 權限模式下 Claude Code 不一定會先詢問）。
-  // 只要變數存在（即使是空字串）就拒絕。這道防線擋的是照著技能做事的 Claude「好心代勞」；刻意繞過的程式本來就能直接寫清單檔，
-  // 不另外檢查終端機：Git Bash 預設的 mintty 視窗裡 Node 也偵測不到終端機，會把使用者本人一起擋掉。
-  const env = ctx.deps.env ?? process.env;
-  if (Object.hasOwn(env, 'CLAUDECODE') || Object.hasOwn(env, 'CLAUDE_CODE_ENTRYPOINT')) {
+  // 只要變數存在（即使是空字串）就拒絕；判斷見 source.mjs 的 inClaudeCode
+  if (inClaudeCode(ctx)) {
     throw new CliError('E_CONFIRM', '「不是金鑰」要由你本人確認，不能在 Claude Code 裡執行', '請在你自己的終端機（不是 Claude Code 的對話或 ! 指令）執行同一個指令，或到管理介面（engram ui）按「這不是金鑰」。');
   }
   const eg = await ctx.engine();

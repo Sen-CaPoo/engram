@@ -1,7 +1,9 @@
 // 常駐程式的心跳檔 local/agent.json：{ pid, port, token, startedAt, beatAt, version, lastSyncAt }。
 // hooks 與 CLI 用它判斷常駐程式是否活著、怎麼連線。這個模組要保持輕量（hook 的冷啟動會載入它）。
-import http from 'node:http';
 import { readJsonSync, writeJsonAtomic } from '../cli/fsutil.mjs';
+
+// node:http 要約 20 毫秒才載入完：每個 hook 都會載入這個模組，但大多數時候不需要送請求，所以用到時才載入（2.0.0 S5）
+let http = null;
 
 export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 90_000;
@@ -33,8 +35,9 @@ export function writeHeartbeat(paths, info) {
  * 對常駐程式發一個 API 請求。逾時或連線失敗回傳 null，不丟例外。
  * @returns {Promise<{ status: number, body: any } | null>}
  */
-export function requestAgent(hb, method, urlPath, body, timeoutMs = 300) {
-  if (!hb?.port || !hb?.token) return Promise.resolve(null);
+export async function requestAgent(hb, method, urlPath, body, timeoutMs = 300) {
+  if (!hb?.port || !hb?.token) return null;
+  http ??= (await import('node:http')).default;
   return new Promise((resolve) => {
     const data = body === undefined ? '' : JSON.stringify(body);
     let settled = false;

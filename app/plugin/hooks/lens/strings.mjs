@@ -85,8 +85,8 @@ export const STRINGS = {
   },
 };
 
-/** "zh-TW, 正體中文"、"zh"、"中文" → zh；其他有設定的值 → en；沒設定 → en */
+/** "zh-TW, 正體中文"、"zh"、"中文"、"Chinese"、"Traditional Chinese" → zh；其他有設定的值 → en；沒設定 → en */
 export function langOf(setting) {
   const s = String(setting ?? '').trim();
-  return /^zh|中文/i.test(s) ? 'zh' : 'en';
+  return /^zh|中文|chinese/i.test(s) ? 'zh' : 'en';
 }

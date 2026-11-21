@@ -1,11 +1,8 @@
 // 記憶搜尋：中英混合分詞 + 欄位加權 BM25，全部在記憶體內完成，不依賴第三方套件。
+// 斷詞放在 plugin/hooks/lens/recall.mjs（2.0.0：情境召回的 mod 也要用同一份），這裡轉匯出。
+import { isCjk, tokenize } from '../../plugin/hooks/lens/recall.mjs';
 
-const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}ー]+/u;
-const RUNS = /([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}ー]+)|([[\p{L}\p{N}]--[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]]+)/gv;
-// camelCase 切點：小寫/數字→大寫、連續大寫→大寫+小寫（HTTPServer → HTTP | Server）
-const CAMEL = /(?<=[\p{Ll}\p{N}])(?=\p{Lu})|(?<=\p{Lu})(?=\p{Lu}\p{Ll})/u;
-
-const segmenter = new Intl.Segmenter('zh-TW', { granularity: 'word' });
+export { tokenize };
 
 const FIELDS = /** @type {const} */ (['name', 'description', 'tags', 'body']);
 const WEIGHTS = { name: 3, description: 2, tags: 2, body: 1 };
@@ -13,44 +10,6 @@ const K1 = 1.2;
 const B = 0.75;
 const EXPANSION_FACTOR = 0.8;
 const MAX_EXPANSIONS = 50;
-
-/** @param {string} t */
-const isCjk = (t) => CJK_RUN.test(t);
-
-/**
- * 把文字切成檢索詞元（保留重複，供詞頻計算）。
- * - 英文與數字：轉小寫；以非字母數字切開（涵蓋 kebab-case、snake_case）；
- *   camelCase 會再切開，並保留整段小寫複合詞（LiteLLM → lite、llm、litellm）。
- * - 中日韓：每個連續區段產生字元雙字組；Intl.Segmenter 切出 3 字以上的詞另外加入；
- *   只有 1 個字的區段直接以單字加入。
- * @param {string} text
- * @returns {string[]}
- */
-export function tokenize(text) {
-  if (!text) return [];
-  const out = [];
-  const src = String(text).normalize('NFKC');
-  for (const m of src.matchAll(RUNS)) {
-    if (m[1]) {
-      const run = m[1];
-      const chars = [...run];
-      if (chars.length === 1) {
-        out.push(run);
-        continue;
-      }
-      for (let i = 0; i < chars.length - 1; i++) out.push(chars[i] + chars[i + 1]);
-      for (const seg of segmenter.segment(run)) {
-        if (seg.isWordLike && [...seg.segment].length >= 3) out.push(seg.segment);
-      }
-    } else {
-      const run = m[2];
-      const parts = run.split(CAMEL);
-      for (const p of parts) out.push(p.toLowerCase());
-      if (parts.length > 1) out.push(run.toLowerCase());
-    }
-  }
-  return out;
-}
 
 /**
  * @typedef {{ name?: string, description?: string, body?: string, tags?: string[] }} SearchDoc

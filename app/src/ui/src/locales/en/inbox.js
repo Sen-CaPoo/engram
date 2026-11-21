@@ -17,7 +17,7 @@ export default {
   'Claude 列出計畫表後停下來，你選擇要執行哪些項目。': 'Claude lists its plan in a table, then stops so you can choose which items to run.',
   '自動處理': 'Handle automatically',
   '/engram:inbox 自動': '/engram:inbox auto',
-  'Claude 列出計畫表後直接處理有把握的項目（升級全域、搬到單機、合併重複、修正格式、精簡、忽略）；疑似金鑰、資料夾改名與綁定、大量刪除、封存、同步衝突與沒有把握的項目一律留給你決定。每一項都附復原指令。': 'Claude lists its plan, then handles the items it is confident about (promote to global, move to machine, merge duplicates, fix formatting, trim, dismiss). Possible secrets, folder renames and bindings, mass deletions, archiving, sync conflicts, and anything it is unsure about are always left for you to decide. Every step comes with an undo command.',
+  'Claude 列出計畫表後直接處理有把握的項目（升級全域、搬到單機、合併重複、修正格式、忽略）；疑似金鑰、資料夾改名與綁定、大量刪除、封存、同步衝突與沒有把握的項目一律留給你決定。每一項都附復原指令。': 'Claude lists its plan, then handles the items it is confident about (promote to global, move to machine, merge duplicates, fix formatting, dismiss). Possible secrets, folder renames and bindings, mass deletions, archiving, sync conflicts, and anything it is unsure about are always left for you to decide. Every step comes with an undo command.',
   '沒有建議': 'No suggestions',
   '沒有需要處理的事': 'Nothing needs attention',
   '另有 {n} 項不急的建議，可以有空再看。': ({ n }) => plural(n, 'There is 1 more non-urgent suggestion. Look at it when you have time.', 'There are {n} more non-urgent suggestions. Look at them when you have time.'),
@@ -25,6 +25,12 @@ export default {
 
   // ── 衝突卡片
   '目前檔案保留這台的版本，對方的版本暫存在衝突區，Claude 不會讀到衝突標記。': 'The current file keeps this computer\'s version. The other computer\'s version is held in the conflict area, so Claude never sees conflict markers.',
+  // 2.0.0：同步自動修復留下的衝突、專案合併
+  '這筆是同步自動修復時留下的：這台的版本疑似含有金鑰，所以沒有同步；這裡保存的是另一台電腦的版本（這台的版本顯示時已遮蔽金鑰，原檔仍在這台電腦）。': 'Left by the automatic sync repair: this computer\'s version may contain a secret, so it was not synced; what is kept here is the other computer\'s version (this computer\'s version is shown with secrets masked, and the original file stays on this computer).',
+  '同步自動修復留下的衝突': 'Conflict left by the automatic sync repair',
+  '這台的版本疑似含有金鑰，所以沒有同步；另一台電腦也改了這個檔案，這裡保存的是它的版本。畫面上這台的版本已遮蔽金鑰，原檔仍在這台電腦；改用對方的版本之前，原檔會先備份。': 'This computer\'s version may contain a secret, so it was not synced; the other computer changed the file too, and its version is kept here. This computer\'s version is shown with secrets masked and the original file stays on this computer; it is backed up before the other version replaces it.',
+  '{label}；這台原本的檔案備份在 {path}': '{label}. This computer\'s original file was backed up to {path}',
+  '把前一個專案的記憶搬進後一個專案，之後兩個專案共用同一份記憶；這台電腦原本綁在前一個專案的資料夾也改接到後一個。不確定是同一個專案就不要合併。合併後可以按「復原」：會還原記憶庫與這台電腦的綁定、記憶連結，其他電腦要各自檢查。': 'Moves the memories of the first project into the second one, so both share one set of memories from then on; this computer\'s folders bound to the first project are reconnected to the second. If you are not sure they are the same project, do not merge them. You can press "Undo" afterwards: it restores the vault and this computer\'s bindings and memory links, and you check your other computers yourself.',
   '比對並決定': 'Compare and decide',
   '交給 Claude 合併': 'Ask Claude to merge',
   '交給 Claude 合併：{name}': 'Ask Claude to merge: {name}',
@@ -130,4 +136,14 @@ export default {
   "Claude 這次的修改會被改回你上次確認的版本；之後仍可從歷史復原。": "Claude's change is replaced with the version you last reviewed. You can still restore it from history later.",
   "封存：{name}": "Archive: {name}",
   "退回確認過的版本：{name}": "Go back to the reviewed version: {name}",
+  // ── 設定檔的衝突（只能選其中一邊）
+  '這是設定檔，只能選其中一邊的值，所以沒有「兩者都保留」、手動合併和交給 Claude 合併。': 'This is a settings file, so you can only pick the value from one side. That is why there is no "Keep both", manual merge or "Ask Claude to merge".',
+  'conflict::這台的版本': "This computer's version",
+  'conflict::另一台的版本': "The other computer's version",
+  'conflict::版本 A': 'Version A',
+  'conflict::版本 B': 'Version B',
+  '{name} 的版本': "{name}'s version",
+  '{who}（{name}）': '{who} ({name})',
+  '另一台電腦': 'The other computer',
+  '這是舊版留下的紀錄，看不出兩邊各是哪一台電腦，所以只能維持目前的值、移除紀錄；沒有「兩者都保留」、手動合併和交給 Claude 合併。': 'This record was left by an older version and does not say which computer each side is, so you can only keep the current value and remove the record; there is no "Keep both", manual merge or "Ask Claude to merge".',
 };

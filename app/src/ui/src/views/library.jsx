@@ -380,6 +380,15 @@ function MemoryInsights({ m, go, params }) {
           : u.reads ? t('近 90 天被讀了 {n} 次，最後一次 {date}{where}', { n: u.reads, date: u.last, where: top.length ? t('（{list}）', { list: top.map(([pid, n]) => t('{name} {n} 次', { name: pname(pid), n })).join(t('、')) }) : '' })
           : <span class="faint">{t('近 90 天沒有被讀過（統計從 {since} 開始）', { since: u.since ?? '—' })}</span>}
       </dd>
+      {u?.tracking && (u.recalled > 0 || u.searched > 0 || u.guarded > 0) && (
+        <>
+          <dt>{t('帶出與命中')}</dt>
+          <dd>
+            <span>{t('近 90 天：情境召回帶出 {r} 次（之後被打開 {o} 次{rate}）、搜尋列出 {s} 次、護欄命中 {g} 次', { r: u.recalled || 0, o: u.recallOpened || 0, rate: u.openRate != null ? t('，{p}%', { p: Math.round(u.openRate * 100) }) : '', s: u.searched || 0, g: u.guarded || 0 })}</span>
+            <span class="faint" style={{ display: 'block', fontSize: 12 }}>{t('「帶出」是情境召回在相關的訊息後面附上這筆記憶；「搜尋列出」是 engram search 的結果有它；「護欄命中」是由這筆記憶變成的護欄規則擋下或提醒的次數。')}</span>
+          </dd>
+        </>
+      )}
       {l && (l.out.length > 0 || l.in.length > 0) && (
         <>
           <dt>{t('連結')}</dt>

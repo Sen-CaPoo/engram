@@ -4,19 +4,23 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const NOW = new Date('2026-10-22T09:41:00+08:00');
-// 版本庫裡只放通用規則；個人化的名稱對照（專案顯示名稱、搬家去向、示意內文）放在
+// 版本庫裡只放通用規則；個人化的名稱對照（專案顯示名稱、搬家去向、示意內文、要特別處理的資料夾）放在
 // 同資料夾的 demo-local.json，該檔不進 git（審查 R-26：展示用的真實資料不得 commit）。
+// demo-local.json 可以有：projectNames、relink、bodies、otherMachinePaths、self.label、desktop（盤點裡 Desktop 開頭路徑的前綴）、
+// pinned（要釘選的記憶名稱）、duplicateFolder（{ pattern, project, label }：和另一個專案重複的舊資料夾，記憶併進 project）
 const here = dirname(fileURLToPath(import.meta.url));
 const LOCAL = (() => { try { return JSON.parse(readFileSync(join(here, 'demo-local.json'), 'utf8')); } catch { return {}; } })();
 const PROJECT_NAMES = LOCAL.projectNames ?? {};
 const RELINK = LOCAL.relink ?? {};
 const BODIES = LOCAL.bodies ?? {};
-const host = os.hostname();
-const SELF = { id: `${host.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 12)}-7k2q`, label: LOCAL.self?.label ?? '這台電腦', hostname: host };
+const DESKTOP = LOCAL.desktop ?? 'C:\\Users\\you\\Desktop';
+const PINNED = new Set(LOCAL.pinned ?? []);
+const DUP = LOCAL.duplicateFolder ?? null;
+// 不用這台電腦的主機名稱（展示檔可能被分享出去）
+const SELF = { id: 'this-pc-7k2q', label: LOCAL.self?.label ?? '這台電腦', hostname: 'THIS-PC' };
 const OTHER = { id: 'nb-3m9x', label: '第二台電腦（範例）', hostname: 'DEMO-NB' };
 const TYPE = { 專案: 'project', 參考: 'reference', 回饋: 'feedback', 使用者: 'user' };
 const B32 = '0123456789abcdefghjkmnpqrstvwxyz';
@@ -77,12 +81,12 @@ export function buildDemoData(rootDir) {
   for (const sec of sections) {
     const base = sec.path.split('\\').pop().replace(/＊.*$/, '').trim();
     const relinked = RELINK[sec.path];
-    const isDupFolder = /UTK_LLM$/.test(sec.path);
+    const isDupFolder = !!DUP && new RegExp(DUP.pattern).test(sec.path);
     const archived = !sec.exists && !relinked && !isDupFolder;
     const realPath = sec.exists ? sec.path : relinked || '';
     const displayBase = (realPath || sec.path).split('\\').pop();
     const name = PROJECT_NAMES[displayBase] || PROJECT_NAMES[base] || displayBase.replace(/＊.*$/, '') || base;
-    const pid = isDupFolder ? pidFor('UTK_LiteLLM') : pidFor(displayBase.replace(/＊.*$/, '') || name);
+    const pid = isDupFolder ? pidFor(DUP.project) : pidFor(displayBase.replace(/＊.*$/, '') || name);
 
     if (!isDupFolder && !projects.has(pid)) {
       const lastActivity = sec.items.reduce((a, it) => (it.updated > a ? it.updated : a), '0');
@@ -99,22 +103,22 @@ export function buildDemoData(rootDir) {
     }
 
     const src = {
-      encoded: sec.encoded, resolvedPath: realPath || sec.path.replace(/^Desktop/, 'C:\\Users\\Sen\\Desktop'),
+      encoded: sec.encoded, resolvedPath: realPath || sec.path.replace(/^Desktop/, DESKTOP),
       how: sec.exists ? 'transcript-cwd' : relinked ? 'origin-session' : 'decoded',
       exists: sec.exists || !!relinked,
-      target: { pid, name: isDupFolder ? 'UTK_LiteLLM 閘道' : name, isNew: !isDupFolder, archived },
+      target: { pid, name: isDupFolder ? DUP.label ?? DUP.project : name, isNew: !isDupFolder, archived },
       items: [],
     };
 
     for (const it of sec.items) {
       const slug = it.file.replace(/\.md$/, '');
       let scope, action = 'copy', reason = '';
-      if (/重複/.test(it.note)) { action = 'skip-same'; reason = 'UTK_LiteLLM 已有同名而且較新的版本'; }
+      if (/重複/.test(it.note)) { action = 'skip-same'; reason = '另一個專案已有同名而且較新的版本'; }
       if (/通用/.test(it.note)) { scope = { kind: 'global' }; reason ||= '適用所有專案'; }
       else if (/本機專屬/.test(it.note)) { scope = { kind: 'machine', mid: SELF.id }; reason ||= '描述的是這台電腦本身'; }
       else scope = { kind: 'project', pid };
       if (seen.has(it.file) && action === 'copy') { action = 'skip-same'; reason = '已有相同檔案'; }
-      if (/主題重疊/.test(it.note) && action === 'copy') { action = 'merge-candidate'; reason = '與其他專案的 officecli 記憶主題重疊，建議導入後合併'; }
+      if (/主題重疊/.test(it.note) && action === 'copy') { action = 'merge-candidate'; reason = '與其他專案的記憶主題重疊，建議導入後合併'; }
 
       const scopeName = scope.kind === 'global' ? 'global' : scope.kind === 'machine' ? 'machine' : 'project';
       src.items.push({ file: it.file, name: slug, type: it.type, action, scope: scopeName, reason, dupOf: action === 'skip-same' ? seen.get(it.file) : undefined });
@@ -133,7 +137,7 @@ export function buildDemoData(rootDir) {
       const size = big ? 46 * 1024 + 310 : 600 + (parseInt(hash(it.file, 2), 32) % 2600);
       memories.push({
         ref, scope, name: slug, description: it.desc, type: it.type, size, updatedAt: iso(it.updated),
-        pinned: slug === 'user-sen-context', tags: [], indexed: true, findings: [],
+        pinned: PINNED.has(slug), tags: [], indexed: true, findings: [],
         body: bodyFor(it), sourceProject: name,
       });
       if (scope.kind === 'project') {

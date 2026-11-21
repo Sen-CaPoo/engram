@@ -2,6 +2,161 @@
 
 版本號遵循[語意化版本](https://semver.org/lang/zh-TW/)。
 
+## 2.0.0（2026-11-21）
+
+從記得到做到：Engram 從 Claude Code 的記憶同步，擴大為記憶與環境管家。升級是免費的，請讓所有電腦都更新到 2.0.0（原因與注意事項見「行為改變」）。
+
+<img src="docs/assets/screenshots/v2-holding.png" alt="保留區：自動駕駛沒有執行的建議，連同原因與證據，可以採用或標成不需要" width="720">
+
+### 記憶活化：讓對的記憶在對的時候出現
+
+- **糾正與偏好永遠在索引裡**：全域與單機索引放不下時，釘選的與 `feedback`、`user` 類記憶先留下，其他類型先省略。
+- **專案索引自動縮短**：專案的 `MEMORY.md` 到載入上限的 80% 時，把每行縮成一句；仍放不下才依重要性省略。
+- **情境召回**（預設開啟）：送出訊息時，從全域、這台電腦的單機與目前專案的記憶，帶出最多 3 筆相關但不在索引裡的，只有 Claude 看得到。在你的電腦上計算，不呼叫模型。
+- **索引分層**（預設並行觀察）：索引可以只列規則類，參考類交給情境召回。預設只累積數字，由你決定何時開啟。
+- **護欄**（預設擋下）：把踩過的指令寫法問題編成規則，在 Claude 送出 Bash 或 PowerShell 指令前比對：把握高的擋下並附正確寫法，其餘事後提醒。內建 6 條；同步來的擋下規則要在這台核可。說明文字的語言依記憶面板、Claude Code 的 `language` 設定、系統語系決定。
+- **記憶畢業**（跟著自動駕駛）：每 7 天最多一次，把常用的全域與單機記憶換成核心準則的一行、護欄提醒、環境設定，或封存一次性的進度。核心準則與護欄只收你本人確認過的記憶，其他的先等你確認；每一項都要審核員同意，可以復原。
+- **成效統計**：記憶詳情的「帶出與命中」，計入被打開、被搜尋列出、被召回帶出與被護欄命中的次數。
+
+### 自動駕駛 2.0：認識你、不遺失、不空轉
+
+- **只遵守你確認過的偏好**：判斷時遵守核心準則與全域的回饋、使用者記憶，但只採用你本人確認過的（管理介面，或你自己開的終端機）與安裝時的起點。在 Claude Code 對話裡做的一律記成「Claude 代為確認」。偏好區塊另有「候選」清單。
+- **保留區**：沒有執行的建議連同內容與證據保存在新的「保留區」頁，可以採用或標成不需要；自動駕駛之後也會再審（最多兩次）。
+- **用量上限與登入到期**：碰到用量上限，整輪停止到重置時間；登入到期，停止並通知你重新登入；Claude 暫時忙碌，稍後自動再試。
+- **退回更謹慎**：只有判斷有問題、審核員也同意才退回，退回前先存進保留區。
+- **對話回顧更省**：每段對話只附最相關的記憶全文；30 天內確認過仍正確的不再重複確認。
+- **每週摘要**：新的「每週摘要」頁：這週學到什麼、畢業的記憶、保留區、護欄與召回、環境健檢、自動駕駛的用量與停止原因。自動駕駛關閉時照樣產生，只是不通知。
+
+### 環境管家：照顧整個 Claude Code 環境
+
+- **環境健檢**（預設開啟）：每天檢查這台電腦的 Claude Code 環境（拖慢操作的 hook、失效的設定路徑、疑似明文金鑰、沒在用的外掛…）。只讀名稱、版本、雜湊與耗時，不讀設定值。
+- **兩台差異**：比較各台電腦的版本、外掛、技能與設定鍵，指出哪裡不一樣、哪邊比較新。
+- **環境設定同步**（預設只報告）：幾台電腦共用一份環境設定檔；同步來的內容要在這台核可才會套用，先備份、可以還原。狀態列指令、名稱像金鑰的變數、會改變執行環境的變數不同步。兩台改了同一項時留較新的，輸的存成衝突紀錄。
+- **核可只能由你做**：環境設定、技能與護欄擋下規則的核可，只能在管理介面或你自己開的終端機做；在 Claude Code 對話裡執行會被拒絕。
+- **沒在用的外掛**：列出近 30 天沒被呼叫的外掛，可以一鍵停用；Engram 不會自動停用。
+- **自動更新**（預設開啟）：一台更新到新版後，其他電腦每天檢查並自己更新；更新前備份、更新後驗證，失敗自動退回並通知你。用 ZIP 安裝的不會自動更新。
+- **對話紀錄保留天數**：自動駕駛開啟、而且還沒設定時，把 `cleanupPeriodDays` 設成 60 天，解除安裝時還原。
+
+### 更安靜、更穩
+
+- 背景存檔只在記憶真的有變動時才動作；對話開頭的訊息改讀預先算好的快取。
+- 同步連續失敗時自我診斷：被扣住（疑似金鑰）的檔案擋住合併時，先備份、暫時移開、合併後放回；非離線的失敗滿 1 小時就通知你。
+- 記憶庫每週自動打包一次。
+- 沒有綁定、90 天沒有對話的專案自動休眠；疑似同一個專案會建議合併（可以還原，自動駕駛不代你決定）。
+- **索引相容模式**：記憶庫裡還有近 7 天內有活動、版本低於 2.0.0 的電腦時，共用的索引暫時照 1.6.0 的方式產生，兩台不會輪流改寫；那幾台更新之後自動切換。`engram status` 會說明。
+
+### 行為改變（升級時要知道）
+
+- **請讓所有電腦都更新到 2.0.0**：新的索引規則（全域索引的「糾正與偏好永遠列出」、專案索引的自動縮短與省略、索引分層）要等全部更新才啟用。只更新一台時不會遺失資料：共用的索引進入相容模式、維持舊的排法，索引分層不能開啟。
+- **從 1.x 升級的第一次要手動**：1.x 沒有自動更新，每一台還在 1.x 的電腦都要自己 `git pull`、`engram update`；更新到 2.0.0 之後，新版才會自動跟上。
+- **混版期間不要手動編輯**記憶庫裡的 `settings.json`、`release.json`，以及 `env/`、`guardrails/`、`holding/` 底下的檔案：舊版不認得它們，也不替它們檢查疑似金鑰。
+- **自動駕駛不再拆分或精簡記憶**：「檔案比較大」「索引容量」「索引被永遠列出的記憶占滿」的卡片不再驅動整理；改寫後內文大幅變短的，一定送審核員。
+- **自動駕駛只遵守你本人確認過的偏好**：在 Claude Code 對話裡執行的寫入（`/engram:save`、`/engram:tidy-apply`、`/engram:inbox` 處理衝突，以及 `remember --reviewed`、`memory write --reviewed`、`holding adopt`、`import apply`）一律記成「Claude 代為確認」，不算你的偏好；同一個指令在你自己開的終端機執行才算。要到偏好區塊按「這是我的偏好」。
+- **「待你確認」**：自動駕駛自己經審核員同意的寫入、對話裡有你原話要求的寫入，直接記為確認，不進「待你確認」；但它們不算你的偏好。
+- **記憶畢業分兩批**：你本人或安裝起點確認過的記憶，可以畢業成核心準則、護欄提醒、環境設定或封存；只被 Claude 或自動駕駛確認過的，只能變成環境設定（每台核可後才套用）或封存，想變成核心準則或護欄的先等你確認。
+- **保留區的採用更嚴**：記憶畢業想寫進核心準則的項目，採用時來源記憶要是你本人確認過的，否則會被拒絕；在 Claude Code 對話裡採用會改核心準則的項目，核心準則照寫但留在「待你確認」。從其他電腦同步來的項目，這台不重新審查。
+- **環境設定檔與護欄規則檔的同步衝突**只有兩個選項：「保留這台的版本」與「改用另一台的版本」（「這台」是你正在操作的那台，第三台改用電腦名稱）；兩台改了同一條護欄規則時，輸的那一條也留在衝突紀錄。
+- **釘選的記憶永遠列在索引。**
+- **要核可一次**：從其他電腦同步來的環境設定、技能與護欄的「擋下」規則，要在每台電腦核可一次才會生效。
+- **失效的專案條目只報告**：`~/.claude.json` 裡指向不存在資料夾的專案條目只提醒，不清理。
+- **自動駕駛的暫停**：某一類處理被你復原兩輪就暫停，只看這台電腦自己記下的復原。
+- **新的預設值**：情境召回開啟、索引分層為「並行觀察」、護欄為「擋下」、環境健檢開啟、環境設定同步為「只報告」、自動更新開啟；自動駕駛維持你原本的設定。
+- **升級後的第一次**：全部電腦都是 2.0.0 時，下一次同步索引依新的規則重建；記憶庫的 git 自動打包關閉，改由每週的背景工作；環境健檢第一次要讀近 30 天的對話紀錄，可能要幾秒。
+
+### 修正
+
+- 用 `engram remember` 寫的記憶因為少一個時間欄位，記憶多時會被擠出全域與單機索引，Claude 讀不到你的糾正；現在糾正與偏好類記憶永遠列出。
+- 審核員沒有放行的建議，以前只能在那一輪的紀錄裡看一眼、不能採用；現在存進保留區。
+- 自動駕駛不再誤退回你想要的寫入，也不再把一筆記憶拆成好幾筆或為了縮短而刪減內文。
+- 碰到 Claude 的用量上限（5 小時或每週）時，以前沒有認出 Claude 實際回的訊息，這一輪會一再呼叫失敗；現在整輪停止，等到重置時間。登入到期也一樣會停止並通知你。
+- 疑似金鑰的檔案被扣住而卡住合併時，同步會一直失敗卻沒人知道；現在會自我診斷，失敗滿 1 小時通知你。
+- 對話結束後的背景存檔，沒有變動也照樣執行；現在只在記憶真的有變動時才動作。
+- 核心準則裡的電腦清單，名稱含特殊字元或太長時改顯示電腦代號；護欄訊息依 Claude Code 的 `language` 設定（含 Chinese、Traditional Chinese）判斷語言。
+
+### 相容性
+
+- 實測 Claude Code 2.1.329、2.1.330 可用，更早的版本未測試。
+- 情境召回與護欄靠外掛的 mod 運作。mod 沒有載入時，情境召回改由指令型的 hook 接手（計分相同）；護欄沒辦法擋下指令，只在對話開頭的訊息列出最多 6 條提醒。
+- 需要 Node.js 22 以上；Windows 11。
+
+<details>
+<summary>English</summary>
+
+**From remembering to doing: Engram grows from syncing Claude Code memory into a memory and environment steward.** The upgrade is free. Please update every computer to 2.0.0 (see "Behavior changes" for why and what to watch for).
+
+**Memory that shows up at the right time**
+
+- **Corrections and preferences always stay in the index:** when the global or machine index can't hold everything, pinned memories and `feedback` and `user` memories are kept and other types are left out first.
+- **The project index shortens itself:** once a project's `MEMORY.md` reaches 80% of the load limit, each line is shortened to one sentence; lines are left out by importance only if it still doesn't fit.
+- **Context recall** (on by default): when you send a message, it brings up at most 3 related memories that aren't in the index, from global memories, this computer's machine memories, and the current project's memories, visible only to Claude. It runs on your computer and doesn't call a model.
+- **Index layers** (observe by default): the index can list only the rule-type memories and leave reference memories to context recall. By default it only collects numbers, and you decide when to turn it on.
+- **Guardrails** (block by default): known command pitfalls become rules checked before Claude sends a Bash or PowerShell command; confident rules block the command and give the right way to write it, and the rest remind afterwards. Six rules are built in, and "block" rules that synced from another computer need your approval on this one. The explanation's language follows the memory pane, then Claude Code's `language` setting, then the system locale.
+- **Memory graduation** (follows autopilot): at most once every 7 days, frequently used global and machine memories become one line in the core rules, a guardrail reminder, an environment setting, or an archive of one-off progress. The core rules and guardrails accept only memories you confirmed yourself; others wait for you. Every item needs the reviewer's agreement and can be undone.
+- **Effectiveness statistics:** **Recalled & matched** in a memory's details counts opens, search listings, recalls, and guardrail matches.
+
+**Autopilot 2.0: it knows you, loses nothing, and doesn't spin**
+
+- **It follows only the preferences you confirmed:** when judging, it follows the core rules plus the global `feedback` and `user` memories, but only what you confirmed yourself (in the dashboard, or in a terminal you opened yourself) and what was there when you installed. Anything done inside a Claude Code conversation is recorded as "confirmed on your behalf by Claude". The preferences block also has a candidates list.
+- **Holding area:** suggestions that weren't carried out are kept with their content and evidence on the new **Holding area** page, where you can apply them or mark them not needed; autopilot also reviews them again later (up to twice).
+- **Usage limit and expired sign-in:** at a usage limit the whole run stops until the reset time; on an expired sign-in it stops and notifies you; when Claude is briefly busy it tries again later by itself.
+- **Sending back is more careful:** content is sent back only when the judgment finds a problem and the reviewer agrees, and the version sent back is saved to the holding area first.
+- **Conversation review costs less:** each conversation gets only the most relevant memories in full, and memories confirmed correct within 30 days aren't proposed for confirmation again.
+- **Weekly digest:** a new **Weekly digest** page: what was learned, what graduated, the holding area, guardrails and recall, the environment check, and autopilot's usage and why a run stopped early. It is produced even when autopilot is off, but without a notification.
+
+**Environment steward: looking after the whole Claude Code environment**
+
+- **Environment check** (on by default): every day it checks this computer's Claude Code environment (hooks that slow things down, settings paths that no longer exist, possible plaintext secrets, unused plugins, and more). It reads only names, versions, hashes, and timings, never setting values.
+- **Differences between computers:** compares each computer's versions, plugins, skills, and setting keys, and shows what differs and which side is newer.
+- **Environment sync** (report only by default): several computers share one environment profile; what syncs in is applied only after you approve it on this computer, after a backup, and can be undone. The status line command, variables named like secrets, and variables that change the runtime environment are not synced. When two computers change the same item, the newer one is kept and the other is saved as a conflict record.
+- **Only you can approve:** approving environment settings, skills, and "block" guardrail rules works only in the dashboard or in a terminal you opened yourself; running it inside a Claude Code conversation is refused.
+- **Unused plugins:** lists plugins not called in the last 30 days, with a one-click disable; Engram never disables them on its own.
+- **Automatic updates** (on by default): after one computer updates, the others check every day and update themselves, with a backup first and a check afterwards, rolling back and notifying you on failure. Computers installed from a ZIP don't update automatically.
+- **Conversation retention:** when autopilot is on and it isn't set yet, `cleanupPeriodDays` is set to 60 days, and restored when you uninstall.
+
+**Quieter and steadier**
+
+- The background save acts only when memories actually changed, and the message at the start of a conversation reads from a precomputed cache.
+- Sync diagnoses itself when it keeps failing: when held-back files (possible secrets) block a merge, it backs them up, moves them aside, merges, and puts them back; a failure that isn't just being offline notifies you after 1 hour.
+- The vault is packed automatically once a week.
+- Projects bound nowhere and idle for 90 days go dormant; projects that look like the same one get a merge suggestion (undoable, and autopilot never decides it for you).
+- **Index compatibility mode:** while the vault has a computer that was active in the last 7 days and runs a version below 2.0.0, the shared indexes are temporarily written the 1.6.0 way so computers don't rewrite each other's; once those computers are updated it switches by itself. `engram status` explains it.
+
+**Behavior changes (what to know when you upgrade)**
+
+- **Update every computer to 2.0.0:** the new index rules (the global index's "corrections and preferences always listed", automatic shortening and omission for project indexes, and index layers) start only once all of them are updated. With only one updated, nothing is lost: the shared indexes go into compatibility mode and stay the old way, and index layers can't be turned on.
+- **The first upgrade from 1.x is manual:** 1.x has no automatic updates, so every computer still on 1.x must be updated by hand once (`git pull`, then `engram update`); once on 2.0.0, later versions catch up on their own.
+- **While versions are mixed, don't edit by hand** `settings.json`, `release.json`, or the files under `env/`, `guardrails/`, and `holding/` in the vault: the older version doesn't recognize them or check them for possible secrets.
+- **Autopilot no longer splits or condenses memories:** the cards for large files, index capacity, and an index full of always-listed memories no longer drive tidy-up; a rewrite that makes the text much shorter always goes to the reviewer.
+- **Autopilot follows only the preferences you confirmed yourself:** writes made inside a Claude Code conversation (`/engram:save`, `/engram:tidy-apply`, handling conflicts with `/engram:inbox`, and `remember --reviewed`, `memory write --reviewed`, `holding adopt`, `import apply`) are always recorded as "confirmed on your behalf by Claude" and don't count as your preferences; the same command counts only when run in a terminal you opened yourself. Select **This is my preference** in the preferences block.
+- **"Waiting for your review":** writes autopilot made with the reviewer's agreement, and writes that match a request you made in your own words in a conversation, are recorded as confirmed and skip it; they don't count as your preferences, though.
+- **Graduation judges two batches:** memories you confirmed yourself or that were there at install can become a core-rules line, a guardrail reminder, an environment setting, or an archive; memories confirmed only by Claude or autopilot can become only an environment setting (approved on each computer) or an archive, and wait for you if they would become a core-rules line or a guardrail.
+- **Applying from the holding area is stricter:** for an item that writes a core-rules line from graduation, the source memory must have been confirmed by you, or it is refused; applying an item that changes the core rules inside a Claude Code conversation writes it but leaves the core rules under "Waiting for your review". Items synced from other computers aren't reviewed again by this one.
+- **Sync conflicts in the environment profile and the guardrail rules file** have just two choices, "keep this computer's version" and "use the other computer's version" ("this computer" is the one you are working on; a third computer sees the two computers' names); when two computers change the same guardrail rule, the losing rule also stays in the conflict record.
+- **Pinned memories are always listed in the index.**
+- **Approve once per computer:** environment settings, skills, and "block" guardrail rules that synced from another computer take effect only after you approve them on each computer.
+- **Stale project entries are only reported:** project entries in `~/.claude.json` that point to missing folders are reported, not cleaned up.
+- **Autopilot pauses:** a kind of change you undo in two runs is paused, counting only undos recorded on this computer.
+- **New defaults:** context recall on, index layers set to observe, guardrails set to block, environment check on, environment sync set to report only, automatic updates on; autopilot keeps whatever you had set.
+- **First run after upgrading:** when every computer is on 2.0.0, the indexes are rebuilt by the new rules at the next sync; the vault's automatic git packing is turned off and replaced by a weekly background job; the first environment check reads the last 30 days of conversation files and may take a few seconds.
+
+**Fixes**
+
+- Memories written with `engram remember` lacked one timestamp field and could be pushed out of the global and machine indexes when you had many, so Claude never read your corrections; corrections and preferences are now always listed.
+- Suggestions the reviewer didn't approve could only be glanced at in that run's record and couldn't be applied; they now go to the holding area.
+- Autopilot no longer sends back writes you wanted, and no longer splits a memory or cuts its text to make it shorter.
+- When Claude's usage limit (5-hour or weekly) was reached, Engram didn't recognize the message Claude actually returns, so the run kept calling and failing; now the whole run stops until the reset time. An expired sign-in likewise stops the run and notifies you.
+- When held-back files with possible secrets blocked a merge, sync could fail again and again without anyone knowing; now it diagnoses itself and notifies you after an hour of failures.
+- The background save after a conversation ran even when nothing had changed; now it acts only when memories actually changed.
+- In the core rules' list of computers, a name with special characters or one that is too long is shown as the computer's ID; guardrail messages now recognize `language` values such as Chinese and Traditional Chinese.
+
+**Compatibility**
+
+- Tested with Claude Code 2.1.329 and 2.1.330; earlier versions are untested.
+- Context recall and guardrails run through the plugin's mod. When the mod isn't loaded, context recall is taken over by a command hook (with the same scoring); guardrails can't block commands and only list up to 6 reminders in the message at the start of a conversation.
+- Requires Node.js 22 or later; Windows 11.
+
+</details>
+
 ## 1.6.0（2026-11-08）
 
 自動駕駛的多台電腦完全平等，預算也更寬裕：品質優先。

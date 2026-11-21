@@ -78,6 +78,6 @@ describe('相容性探測', () => {
   });
 
   test('路徑編碼與 Claude Code 相同', () => {
-    assert.equal(encodePath('C:\\Users\\Sen\\Desktop\\Claude_專案記憶'), 'C--Users-Sen-Desktop-Claude-----');
+    assert.equal(encodePath('C:\\Users\\you\\Desktop\\Demo_測試資料'), 'C--Users-you-Desktop-Demo-----');
   });
 });

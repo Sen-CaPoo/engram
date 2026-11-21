@@ -9,10 +9,14 @@ import { engramMeta, setFields } from './frontmatter.mjs';
 import { exists, modifiedWithin, readJson, readText, safeWrite, sha1, stableJson, writeJson } from './fsx.mjs';
 import { classifyGitError, git, parseStatusZ } from './git.mjs';
 import { quarantine } from './conflicts.mjs';
+import { buildDiagnosis, healBlockedMerge, parseOverwriteBlockers, recoverHeal, SELF_HEAL_AFTER } from './heal.mjs';
+import { mergeHoldingJson } from './holding.mjs';
+import { mergeProfileJson, mergeRulesDetail } from './jsonmerge.mjs';
 import { splitCollision } from './identity.mjs';
-import { computeIndexBudget, normalizeProjectIndex, rebuildScopeIndex } from './normalize.mjs';
+import { computeIndexBudget, indexLayersFor, normalizeProjectIndex, rebuildScopeIndex } from './normalize.mjs';
 import { readsForScope } from './usage.mjs';
-import { loadAllow, scanWithAllow } from './secretallow.mjs';
+import { mergeSharedSettings, SHARED_SETTINGS } from './sharedsettings.mjs';
+import { isSecretScanned, loadAllow, needsSecretScan, scanWithAllow } from './secretallow.mjs';
 import { hasActiveSession, scanEncodedDir } from './transcripts.mjs';
 import {
   allBindingViews, commitPaths, listProjectIds, machineDir, projectMemoryDir, readBindings, readState, touchMachine, updateState,
@@ -22,6 +26,29 @@ export const RECENT_MS = 10_000;
 const MASS_DELETE = { min: 3, ratio: 0.5 };
 const UNMERGED = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
 const STALE_INDEX_LOCK_MS = 10 * 60_000;
+const OVERWRITE_RE = /would be overwritten|untracked working tree files/i;
+const OVERWRITE_MESSAGE = '本機有尚未提交的變更，這一輪暫不合併';
+
+/** 本機有扣住的刪除或正在寫入的檔案，擋住這一輪的合併 */
+function overwriteError(m, diagnosis) {
+  return new EngramError(E.CONFLICT, OVERWRITE_MESSAGE, '處理收件匣中被扣住的刪除或疑似含有金鑰的檔案（H18、H13）；都沒有的話，稍後再同步', { stderr: m.stderr.slice(-500), ...(diagnosis ? { diagnosis } : {}) })
+    .withEn('There are uncommitted local changes, so this round does not merge', 'Handle the held deletions or possible-secret files in the inbox (H18, H13); if there are none, sync again in a moment');
+}
+
+/** 「同一種錯誤」的鍵：錯誤碼加訊息（E_CONFLICT 底下有好幾種不同的原因） */
+const issueKey = (e) => `${e.code}|${e.message}`;
+const OVERWRITE_KEY = `${E.CONFLICT}|${OVERWRITE_MESSAGE}`;
+/** 到上一輪為止，同一種錯誤已經連續失敗幾次（local/state.json 的 syncIssue） */
+const streakOf = (state, key) => (state.syncIssue?.key === key ? state.syncIssue.count ?? 0 : 0);
+
+/** 不是合併造成的失敗（例如推送被拒）連續 3 次：列出這一輪沒被提交的檔案與原因 */
+async function diagnoseUncommitted(ctx) {
+  try {
+    return buildDiagnosis(await planCommit(ctx, { now: Date.now(), allow: await loadAllow(ctx.local) }));
+  } catch {
+    return null; // 診斷是輔助資訊：做不出來就不附
+  }
+}
 
 function isMemoryFile(ref) {
   return /\.md$/i.test(ref) && !/(^|\/)(MEMORY|INDEX)\.md$/i.test(ref);
@@ -110,10 +137,10 @@ async function tidy(ctx, { now = Date.now(), normalize = true } = {}) {
   }
   const projectNames = await ctx.projectNames();
   const budget = await computeIndexBudget(ctx.vault);
-  if ((await rebuildScopeIndex({ kind: 'global', dir: path.join(ctx.vault, 'global'), userHome: ctx.homes.userHome, projectNames, budget: budget.global, reads: await readsForScope(ctx.vault, 'global') })).changed) written.add('global/INDEX.md');
+  const layers = await indexLayersFor(ctx.vault); // 2.0.0 P2：索引分層（所有電腦共用的設定）
+  if ((await rebuildScopeIndex({ kind: 'global', dir: path.join(ctx.vault, 'global'), userHome: ctx.homes.userHome, projectNames, budget: budget.global, reads: await readsForScope(ctx.vault, 'global'), layers })).changed) written.add('global/INDEX.md');
   // 單一寫入者：只重建自己的單機索引
-  if ((await rebuildScopeIndex({ kind: 'machine', dir: machineDir(ctx.vault, ctx.mid), userHome: ctx.homes.userHome, label: ctx.label, projectNames, budget: budget.machine, reads: await readsForScope(ctx.vault, `machines/${ctx.mid}`) })).changed) written.add(`machines/${ctx.mid}/INDEX.md`);
-  if (await touchMachine(ctx.homes, ctx.mid)) written.add(`machines/${ctx.mid}/machine.json`);
+  if ((await rebuildScopeIndex({ kind: 'machine', dir: machineDir(ctx.vault, ctx.mid), userHome: ctx.homes.userHome, label: ctx.label, projectNames, budget: budget.machine, reads: await readsForScope(ctx.vault, `machines/${ctx.mid}`), layers })).changed) written.add(`machines/${ctx.mid}/INDEX.md`);
   return written;
 }
 
@@ -148,11 +175,12 @@ async function planCommit(ctx, { now, engineWritten = new Set(), holdDeletions =
       if (it.from) stage.push(it.from);
       continue;
     }
-    // 密鑰關卡：所有 Markdown，包括衝突隔離區（隔離的本機版本可能正是被擋下的那份，M6）
-    if (/\.md$/i.test(ref)) {
+    // 密鑰關卡：所有 Markdown，包括衝突隔離區（隔離的本機版本可能正是被擋下的那份，M6）；
+    // 另外 env/、holding/、guardrails/ 底下的所有文字檔（環境設定檔、技能檔案、保留區項目、護欄規則：不是記憶，但會同步）
+    if (isSecretScanned(ref)) {
       let text = null;
       try { text = await readText(abs); } catch { recent.push(ref); continue; }
-      const hits = text ? scanWithAllow(text, ref, allow) : [];
+      const hits = text && needsSecretScan(ref, text) ? scanWithAllow(text, ref, allow) : [];
       if (hits.length) { secrets.push({ ref, kinds: [...new Set(hits.map((h) => h.kind))] }); continue; }
     }
     stage.push(ref);
@@ -197,9 +225,50 @@ function mergeProjectJson(ours, theirs) {
 }
 
 /**
+ * release.json（自動更新的發佈資訊，R2）合併：兩台電腦都發佈過時留版本較新的（版本相同留 at 較晚的）；其中一邊讀不懂就留另一邊。
+ * 只會前進、不會退版，所以兩台電腦各自合併都得到同一份，不會留下衝突。回傳贏的那一份的原文；兩邊都讀不懂回傳 null（交給一般的衝突處理）。
+ */
+function mergeReleaseJson(ours, theirs) {
+  const read = (text) => {
+    try {
+      const j = JSON.parse(text);
+      const v = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(j?.version));
+      return v ? { text, v: v.slice(1).map(Number), at: Date.parse(j.at) || 0 } : null;
+    } catch { return null; }
+  };
+  const a = read(ours);
+  const b = read(theirs);
+  if (!a || !b) return (a ?? b)?.text ?? null;
+  for (let i = 0; i < 3; i++) if (a.v[i] !== b.v[i]) return (b.v[i] > a.v[i] ? b : a).text;
+  return (b.at > a.at ? b : a).text;
+}
+
+/**
  * 解決合併器以外的衝突。寫入失敗（檔案被占用）就丟 E_LOCKED，由呼叫端 abort 這次合併（R-32）。
  * @returns {Promise<{ ids: string[], written: string[] }>}
  */
+/**
+ * 合併中另一邊最後改這個檔的電腦（第四輪審查 F-01）：合併基準之後、另一邊（MERGE_HEAD）的非合併 commit 裡最近一個改了 p 的，
+ * 從它的標題 engram(<mid>): … 取出電腦代號。找不到（沒有 MERGE_HEAD、標題不是 Engram 寫的、是這台自己的）時 null：
+ * 紀錄只知道記下紀錄的那台，其他電腦看到時當成第三台、用電腦名稱描述，不猜。
+ */
+async function otherSideMachine(ctx, p) {
+  const base = await git(['merge-base', 'HEAD', 'MERGE_HEAD'], { cwd: ctx.vault, allowFail: true });
+  const range = base.code === 0 && base.stdout.trim() ? `${base.stdout.trim()}..MERGE_HEAD` : 'MERGE_HEAD';
+  // 第五輪審查 N-2：三台以上時，最後改這個檔的那台不一定是改了衝突那個鍵的那台。範圍內改過這個檔的 commit 全部出自同一台才採用，
+  // 否則不猜（留空：其他電腦都當成第三台，用「記下紀錄的那台／另一台電腦」描述）
+  const r = await git(['log', '--no-merges', '--format=%s', range, '--', p], { cwd: ctx.vault, allowFail: true });
+  if (r.code !== 0) return null;
+  const mids = new Set();
+  for (const subject of r.stdout.split('\n').map((s) => s.trim()).filter(Boolean)) {
+    const m = /^engram\(([a-z0-9][a-z0-9-]{0,63})\):/.exec(subject);
+    if (!m) return null; // 有不是 Engram 寫的 commit：看不出是誰改的
+    mids.add(m[1]);
+  }
+  const [only] = mids;
+  return mids.size === 1 && only !== ctx.mid ? only : null;
+}
+
 async function resolveUnmerged(ctx) {
   const r = await git(['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: ctx.vault, allowFail: true });
   const paths = r.stdout.split('\0').filter(Boolean);
@@ -221,8 +290,30 @@ async function resolveUnmerged(ctx) {
     const theirs = stages.has('3') ? await show(3) : null;
     const abs = path.join(ctx.vault, ...p.split('/'));
     if (ours !== null && theirs !== null) {
-      const merged = /(^|\/)project\.json$/.test(p) ? mergeProjectJson(ours, theirs) : null;
-      if (merged !== null) await write(abs, merged);
+      // 2.0.0 WP4a：共用設定 settings.json 兩台同時改時留 updatedAt 較新的；保留區的項目（審查 F8）：已採用或已忽略優先、同為保留中取較新的
+      // 第二輪審查 R4：護欄規則檔以規則 id 聯集；環境設定檔逐鍵合併，兩邊都改而值不同時留較新的、另一邊的值記進衝突隔離區
+      // 第三輪審查 R4：護欄規則檔兩邊都改了同一條規則時，輸的那一條也記進衝突隔離區（之前只留較新的，另一邊悄悄消失）
+      const profile = p === 'env/profile.json' ? mergeProfileJson(ours, theirs, base) : p === 'guardrails/rules.json' ? mergeRulesDetail(ours, theirs, base) : null;
+      const merged = /(^|\/)project\.json$/.test(p) ? mergeProjectJson(ours, theirs) : p === 'release.json' ? mergeReleaseJson(ours, theirs) : p === SHARED_SETTINGS ? mergeSharedSettings(ours, theirs)
+        : /^holding\/hd-[^/]+\.json$/.test(p) ? mergeHoldingJson(ours, theirs)
+        : profile ? profile.text : null;
+      if (merged !== null) {
+        await write(abs, merged);
+        if (profile?.losers.length) {
+          const rules = p === 'guardrails/rules.json';
+          const keys = profile.losers.map((x) => (rules ? x.id : `${x.area === 'setting' ? 'setting:' : ''}${x.key}`)).join('、');
+          // 收件匣的對話框沿用一般的四個選項：說明只有兩個適用（resolveConflict 對另外兩個回報錯誤）。
+          // 第四輪審查 F-01：說明會同步到每台，不寫「這台／對方」（在另一台、第三台看會說反），選項的說法由 listConflicts 依觀點給
+          const zh = rules
+            ? `兩台電腦都改了護欄規則 ${keys}，已留較新的那一條；兩個版本都在這裡，處理時選要用哪一邊的版本（兩者都保留與手動合併不適用）`
+            : `兩台電腦都改了環境設定檔的 ${keys}，已留較新的那一邊的值；兩個版本都在這裡，處理時選要用哪一邊的值（兩者都保留與手動合併不適用）`;
+          const en = rules
+            ? `Both computers changed the guardrail rule ${keys}; the newer one was kept and both versions are here. Choose which side's version to use (keeping both or merging by hand does not apply)`
+            : `Both computers changed ${keys} in the environment profile; the newer value was kept and both versions are here. Choose which side's value to use (keeping both or merging by hand does not apply)`;
+          // 第四輪審查 F-01：記下是哪台記的（ours.md 是它的版本）與另一邊最後改這個檔的那台，處理時依觀點換算
+          ids.push(await quarantine(ctx.vault, { ref: p, kind: 'content', ours, theirs, base, summary: zh, summaryEn: en, recordedOn: ctx.mid, otherMachine: await otherSideMachine(ctx, p) }));
+        }
+      }
       else {
         // 內容衝突但合併器沒處理（例如非 Markdown）：保留本機版本，隔離對方
         await write(abs, ours);
@@ -313,6 +404,7 @@ export async function sync(ctx, { network = true, timeoutMs = 20_000, normalize 
 async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
   const startedAt = new Date().toISOString();
   let prevState = {};
+  let diagnosis = null; // S2：同一種非離線錯誤連續 3 次後的診斷（也含自動修復的結果）
   try {
     prevState = await readState(ctx.local);
     const paused = await readPaused(ctx.local);
@@ -324,6 +416,13 @@ async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
     clearStaleIndexLock(ctx);
     const rec = await finishInterruptedMerge(ctx, env);
     result.conflicts.push(...rec.ids);
+    // 上一輪暫時移開被扣住的檔案時被終止（或放回失敗）：先放回原位，後面的 tidy 與 commit 才不會把它當成刪除。
+    // 這段期間原位的檔案被改過的話，目前的內容已先另存到 local/backup，這裡記在 state.json 的 syncHeal 並回報給常駐程式寫日誌
+    const healed = await recoverHeal(ctx);
+    if (healed.preserved?.length) {
+      result.healRecovered = { files: healed.files, preserved: healed.preserved };
+      await updateState(ctx.local, { syncHeal: { at: new Date().toISOString(), recovered: healed.files, preserved: healed.preserved } });
+    }
 
     const now = Date.now();
     await processPendingSplits(ctx);
@@ -338,6 +437,14 @@ async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
     if (plan.unmerged.length) throw new EngramError(E.CONFLICT, '還有未解決的合併衝突，這一輪不提交', '執行 engram doctor', { unmerged: plan.unmerged }).withEn('There are unresolved merge conflicts, so this round does not commit', 'Run engram doctor');
     result.held = plan.held;
     result.skipped = { recent: plan.recent, secrets: plan.secrets };
+    // 心跳（machine.json 的最後上線、最後同步時間）不單獨成為 commit（S3）：這一輪本來就有其他變更要提交時順帶更新，
+    // 否則超過 24 小時才單獨寫一次。lastSyncAt 用上一次已經成功的同步時間（這一輪的 push 還沒成功）
+    const heartbeatRef = `machines/${ctx.mid}/machine.json`;
+    const heartbeat = await touchMachine(ctx.homes, ctx.mid, {
+      piggyback: plan.stage.some((p) => p !== heartbeatRef),
+      lastSyncAt: prevState.sync?.lastSuccessAt ?? null,
+    });
+    if (heartbeat && !plan.stage.includes(heartbeatRef)) plan.stage.push(heartbeatRef);
     if (plan.stage.length) {
       const c = countChanges(plan.stage, plan.items);
       const commit = await commitPaths(ctx.vault, plan.stage, `autosave +${c.a} ~${c.m} −${c.d}`, { action: 'autosave', mid: ctx.mid, guard: true, allow });
@@ -355,13 +462,11 @@ async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
           const head = (await git(['rev-parse', 'HEAD'], { cwd: ctx.vault })).stdout.trim();
           // 本機沒有自己的 commit、只是落後時快轉：一律 --no-ff 的話，兩台電腦輪流同步會無限互相產生空的合併 commit
           const args = ab.ahead === 0 ? ['merge', '--ff-only', 'refs/remotes/origin/main'] : ['merge', '--no-ff', '--no-edit', '--allow-unrelated-histories', 'refs/remotes/origin/main'];
-          const m = await git(args, { cwd: ctx.vault, env, allowFail: true, timeoutMs: 120_000 });
-          if (m.code !== 0) {
-            if (/would be overwritten|untracked working tree files/i.test(m.stderr + m.stdout)) {
-              // 本機有扣住的刪除或正在寫入的檔案，這一輪先不合併
-              throw new EngramError(E.CONFLICT, '本機有尚未提交的變更，這一輪暫不合併', '處理收件匣中被扣住的刪除或疑似含有金鑰的檔案（H18、H13）；都沒有的話，稍後再同步', { stderr: m.stderr.slice(-500) })
-                .withEn('There are uncommitted local changes, so this round does not merge', 'Handle the held deletions or possible-secret files in the inbox (H18, H13); if there are none, sync again in a moment');
-            }
+          const runMerge = () => git(args, { cwd: ctx.vault, env, allowFail: true, timeoutMs: 120_000 });
+          // merge 沒成功之後的處理：被擋住就丟錯、有衝突就解決並 commit，解不了就 abort
+          const finishMerge = async (m) => {
+            if (m.code === 0) return;
+            if (OVERWRITE_RE.test(m.stderr + m.stdout)) throw overwriteError(m, diagnosis);
             if (!(await hasMergeInProgress(ctx))) throw classifyGitError(m, ['merge']);
             try {
               const { ids, written } = await resolveUnmerged(ctx);
@@ -374,7 +479,15 @@ async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
               await git(['merge', '--abort'], { cwd: ctx.vault, allowFail: true });
               throw err;
             }
+          };
+          let m = await runMerge();
+          // 同一種「被未提交的檔案擋住」連續第 3 次：診斷；擋住的全是被扣住的檔案就自動修復（S2）
+          if (m.code !== 0 && OVERWRITE_RE.test(m.stderr + m.stdout) && streakOf(prevState, OVERWRITE_KEY) + 1 >= SELF_HEAL_AFTER) {
+            const h = await healBlockedMerge(ctx, { blockers: parseOverwriteBlockers(m.stderr + m.stdout), plan, headBefore: head, theirsRef: 'refs/remotes/origin/main', merge: async () => finishMerge(await runMerge()) });
+            diagnosis = h.diagnosis;
+            if (h.merged) m = null;
           }
+          if (m) await finishMerge(m);
           const pulled = await git(['rev-list', '--count', `${head}..HEAD`], { cwd: ctx.vault });
           // 合併時扣掉合併 commit 本身；快轉沒有合併 commit
           result.pulled += Math.max(0, Number(pulled.stdout.trim()) - (ab.ahead === 0 ? 0 : 1));
@@ -414,32 +527,33 @@ async function syncLocked(ctx, result, { network, timeoutMs, normalize }) {
       heldDeletions: plan.held,
       heldFiles: held,
       sync: { ...syncState, lastAttemptAt: startedAt, lastSuccessAt: remote ? new Date().toISOString() : (prevState.sync?.lastSuccessAt ?? null), error: null },
+      // 連續失敗的記錄只有「網路同步成功」才清掉：只做本機存檔成功，不代表同步好了
+      ...(network ? { syncIssue: null } : {}),
+      ...(diagnosis?.healed?.length ? { syncHeal: { at: new Date().toISOString(), files: diagnosis.healed, ...(diagnosis.preserved ? { preserved: diagnosis.preserved } : {}) } } : {}),
     });
-    // 每台電腦最後一次成功同步的時間（給其他電腦的總覽看，寫在自己的 machines/<mid>/）
-    if (remote) await recordLastSync(ctx);
+    if (diagnosis?.healed?.length) result.diagnosis = diagnosis;
     result.state = syncState.state;
     return result;
   } catch (err) {
     const e = err instanceof EngramError ? err : new EngramError(E.GIT, err.message).withEn(err.message);
     const stateName = { [E.OFFLINE]: 'offline', [E.AUTH]: 'auth', [E.PROXY]: 'offline', [E.PUSH_PROTECTED]: 'error', [E.LOCKED]: 'busy' }[e.code] ?? 'error';
+    // 連續失敗的記錄（S2）：同一種錯誤連續出現才累計。別人正在寫入（E_LOCKED）不是同步失敗，不計
+    let issue;
+    if (e.code !== E.LOCKED) {
+      const key = issueKey(e);
+      const prev = prevState.syncIssue?.key === key ? prevState.syncIssue : null;
+      const count = (prev?.count ?? 0) + 1;
+      const offline = stateName === 'offline';
+      if (!offline && count >= SELF_HEAL_AFTER && !diagnosis) diagnosis = await diagnoseUncommitted(ctx);
+      const at = new Date().toISOString();
+      issue = { key, code: e.code, message: e.message, count, since: prev?.since ?? at, at, offline, ...(diagnosis ? { diagnosis } : {}) };
+    }
     await updateState(ctx.local, {
       sync: { ...(prevState.sync ?? {}), state: stateName, lastAttemptAt: startedAt, lastSuccessAt: prevState.sync?.lastSuccessAt ?? null, error: e.toJSON() },
+      ...(issue ? { syncIssue: issue } : {}),
     }).catch(() => {});
-    return { ...result, ok: false, state: stateName, error: e.toJSON() };
+    return { ...result, ok: false, state: stateName, error: e.toJSON(), ...(diagnosis ? { diagnosis } : {}) };
   }
-}
-
-/** 本機最後一次成功同步的時間寫進 local/state.json（不 commit，避免每次同步都多一個 commit）；
- *  machine.json 的 lastSyncAt 跟著 lastSeenAt 的節奏（最多 6 小時一次）更新。 */
-async function recordLastSync(ctx) {
-  const p = path.join(machineDir(ctx.vault, ctx.mid), 'machine.json');
-  const m = await readJson(p, null);
-  if (!m) return;
-  const last = Date.parse(m.lastSyncAt ?? 0) || 0;
-  if (Date.now() - last < 6 * 3600_000) return;
-  m.lastSyncAt = new Date().toISOString();
-  await writeJson(p, m);
-  await commitPaths(ctx.vault, [`machines/${ctx.mid}/machine.json`], 'heartbeat', { action: 'tidy', mid: ctx.mid });
 }
 
 /** 使用者確認「真的要刪」：提交這些刪除。 */

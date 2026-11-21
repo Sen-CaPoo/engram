@@ -1,7 +1,7 @@
 {
   "name": "engram",
-  "version": "1.6.0",
-  "description": "Engram 憶跡：讓 Claude Code 在每一台電腦都記得你。記憶的跨裝置同步、整理與復原",
+  "version": "2.0.0",
+  "description": "Engram 憶跡：Claude Code 的記憶與環境管家。讓 Claude 在每一台電腦都記得你；記憶的跨裝置同步、整理與復原，加上護欄、環境健檢與設定同步",
   "license": "MIT",
   "author": "Sen-CaPoo",
   "homepage": "https://github.com/Sen-CaPoo/engram",

@@ -8,14 +8,18 @@ import { t, N_, LANGS, getLang, setLang, local } from './i18n.js';
 import {
   EngramLogo, IconOverview, IconLibrary, IconInbox, IconProjects, IconDevices, IconCore, IconSchedule, IconImport,
   IconSearch, IconSun, IconMoon, IconMonitor, IconSettings, IconSync, IconGlobe, IconTidy, IconAutopilot,
+  IconHolding, IconEnv, IconDigest,
 } from './icons.jsx';
 import { Overview } from './views/overview.jsx';
 import { Library } from './views/library.jsx';
 import { Inbox } from './views/inbox.jsx';
 import { Tidy } from './views/tidy.jsx';
 import { Autopilot } from './views/autopilot.jsx';
+import { Holding } from './views/holding.jsx';
+import { Digest } from './views/digest.jsx';
 import { Projects } from './views/projects.jsx';
 import { Devices } from './views/devices.jsx';
+import { Env } from './views/env.jsx';
 import { Core } from './views/core.jsx';
 import { Schedule } from './views/schedule.jsx';
 import { Import } from './views/import.jsx';
@@ -29,8 +33,11 @@ const ROUTES = {
   inbox: { title: N_('收件匣'), short: N_('收件匣'), icon: IconInbox, view: Inbox, group: N_('nav::記憶') },
   tidy: { title: N_('記憶整理'), short: N_('整理'), icon: IconTidy, view: Tidy, group: N_('nav::記憶') },
   autopilot: { title: N_('自動駕駛'), short: N_('nav::自動'), icon: IconAutopilot, view: Autopilot, group: N_('nav::記憶') },
+  holding: { title: N_('保留區'), short: N_('nav::保留'), icon: IconHolding, view: Holding, group: N_('nav::記憶') },
+  digest: { title: N_('每週摘要'), short: N_('nav::摘要'), icon: IconDigest, view: Digest, group: N_('nav::記憶') },
   projects: { title: N_('nav::專案'), short: N_('nav::專案'), icon: IconProjects, view: Projects, group: N_('管理') },
   devices: { title: N_('裝置與同步'), short: N_('裝置'), icon: IconDevices, view: Devices, group: N_('管理') },
+  env: { title: N_('環境'), short: N_('nav::環境'), icon: IconEnv, view: Env, group: N_('管理') },
   core: { title: N_('核心準則'), short: N_('準則'), icon: IconCore, view: Core, group: N_('管理') },
   schedule: { title: N_('排程與紀錄'), short: N_('排程'), icon: IconSchedule, view: Schedule, group: N_('系統') },
   import: { title: N_('匯入既有記憶'), short: N_('匯入'), icon: IconImport, view: Import, group: N_('系統') },
@@ -171,6 +178,10 @@ function App() {
     api.conflicts().then((cs) => setCoreConflict(cs.some((c) => /(^|\/)core\/CORE\.md$/.test(c.ref)))).catch(() => {});
   }, [nConf]);
 
+  // 保留區的筆數（導覽列的數字）：狀態報告裡沒有，另外讀；讀不到（舊版引擎）就不顯示
+  const [heldN, setHeldN] = useState(0);
+  useEffect(() => { api.holding({ status: 'held' }).then((list) => setHeldN(list.length)).catch(() => setHeldN(0)); }, [version]);
+
   const projectsById = useMemo(() => Object.fromEntries((projects || []).map((p) => [p.pid, p])), [projects]);
   const ctx = useMemo(() => ({ status, projects, projectsById, version, refresh, toast, go, syncNow, reportError, dirty, lang, changeLang }), [status, projects, projectsById, version, lang]);
   const R = ROUTES[loc.route];
@@ -198,9 +209,9 @@ function App() {
     <AppCtx.Provider value={ctx}>
       <div class="app">
         <aside class="sidebar">
-          <a class="brand" href="#/overview" onClick={navClick('overview')} aria-label={t('Engram 憶跡：Claude Code 記憶同步')}>
+          <a class="brand" href="#/overview" onClick={navClick('overview')} aria-label={t('Engram 憶跡：Claude Code 的記憶與環境管家')}>
             <EngramLogo />
-            <span class="word"><b>{t('Engram 憶跡')}</b><small>{t('Claude Code 記憶同步')}</small></span>
+            <span class="word"><b>{t('Engram 憶跡')}</b><small>{t('記憶與環境管家')}</small></span>
           </a>
           <nav class="nav" aria-label={t('主要導覽')}>
             {Object.entries(ROUTES).map(([key, r]) => {
@@ -213,6 +224,7 @@ function App() {
                   <Icon /><span class="txt">{t(r.title)}</span><span class="short" aria-hidden="true">{t(r.short)}</span>
                   {key === 'inbox' && hot > 0 && <span class={`count ${urgent ? 'hot' : 'warm'}`} aria-label={t('{n} 件需要處理', { n: hot })}>{hot}</span>}
                   {key === 'tidy' && tidyWaiting > 0 && <span class="count warm" aria-label={t('{n} 份整理記錄等你決定', { n: tidyWaiting })}>{tidyWaiting}</span>}
+                  {key === 'holding' && heldN > 0 && <span class="count warm" aria-label={t('保留區有 {n} 項等你決定', { n: heldN })}>{heldN}</span>}
                 </a>,
               ];
             })}

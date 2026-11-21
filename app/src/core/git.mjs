@@ -37,10 +37,11 @@ function killTree(child) {
 
 /**
  * @param {string[]} args
- * @param {{ cwd: string, timeoutMs?: number, env?: object, input?: string, allowFail?: boolean }} opts
- * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ * @param {{ cwd: string, timeoutMs?: number, env?: object, input?: string, allowFail?: boolean, signal?: AbortSignal }} opts
+ *   signal：中止時終止整棵程序樹（常駐程式停止時不要等長時間的 gc）；結果與逾時相同，timedOut 為 true
+ * @returns {Promise<{ code: number, stdout: string, stderr: string, timedOut: boolean }>}
  */
-export function git(args, { cwd, timeoutMs = 30_000, env, input, allowFail = false } = {}) {
+export function git(args, { cwd, timeoutMs = 30_000, env, input, allowFail = false, signal } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(resolveGit(), [...BASE_ARGS, ...args], {
       cwd,
@@ -61,16 +62,22 @@ export function git(args, { cwd, timeoutMs = 30_000, env, input, allowFail = fal
     const out = [];
     const err = [];
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeoutMs);
+    const stop = () => { timedOut = true; killTree(child); };
+    const timer = setTimeout(stop, timeoutMs);
+    if (signal) {
+      if (signal.aborted) stop(); else signal.addEventListener('abort', stop, { once: true });
+    }
     child.stdout.on('data', (d) => out.push(d));
     child.stderr.on('data', (d) => err.push(d));
     child.on('error', (e) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
       reject(new EngramError(E.GIT, '找不到 git 執行檔', '請安裝 Git for Windows（https://git-scm.com）', { cause: e.message }).withEn('Could not find the git executable', 'Install Git for Windows (https://git-scm.com)'));
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      const res = { code: timedOut ? -1 : code ?? -1, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') };
+      signal?.removeEventListener('abort', stop);
+      const res = { code: timedOut ? -1 : code ?? -1, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8'), timedOut };
       if (timedOut) res.stderr += '\n[engram] git 指令逾時';
       if (res.code !== 0 && !allowFail) {
         reject(classifyGitError(res, args));
@@ -83,6 +90,9 @@ export function git(args, { cwd, timeoutMs = 30_000, env, input, allowFail = fal
   });
 }
 
+// 會連到遠端的指令：這些逾時才是「連線逾時」；其他都是只碰本機檔案的指令
+const NETWORK_COMMANDS = new Set(['fetch', 'push', 'pull', 'clone', 'ls-remote']);
+
 /** 把 git 的錯誤訊息分類成 Engram 錯誤碼與正體中文解法。 */
 export function classifyGitError(res, args = []) {
   const s = `${res.stderr}\n${res.stdout}`;
@@ -91,10 +101,21 @@ export function classifyGitError(res, args = []) {
   if (/index\.lock': File exists|Unable to create .*index\.lock/i.test(s)) {
     return new EngramError(E.LOCKED, 'vault 的 git 正被其他程序使用（index.lock）', '稍後會自動重試；殘留過久時 Engram 會自動清除', details).withEn("The vault's git is being used by another process (index.lock)", 'Engram will retry shortly; if the lock file stays too long, Engram removes it automatically');
   }
+  // ref 鎖：同時進行的 git gc（reflog expire、pack-refs）或另一個 git 指令正在更新同一個 ref，過一會兒就沒事，不是同步真的失敗（U3）
+  if (/cannot lock ref|Unable to create '[^']*\.lock': File exists|could not lock (config|ref)/i.test(s)) {
+    return new EngramError(E.LOCKED, 'vault 的 git 正被其他程序使用（ref 鎖定，例如正在打包）', '稍後會自動重試', details).withEn("The vault's git is being used by another process (a ref is locked, for example while packing)", 'Engram will retry shortly');
+  }
+  // 我們自己殺掉的（逾時或中止）或被外力終止：本機指令是磁碟忙碌之類的問題，不是連不上遠端（S2）
+  if (res.timedOut === true || res.code === -1) {
+    if (NETWORK_COMMANDS.has(args.find((a) => !a.startsWith('-')))) {
+      return new EngramError(E.OFFLINE, '連線逾時，暫時無法同步', '網路恢復後會自動重試', details).withEn('The connection timed out, so sync is unavailable for now', 'Engram will retry automatically once the network is back');
+    }
+    return new EngramError(E.GIT_TIMEOUT, '本機 git 指令逾時（不是網路問題，可能是磁碟忙碌或防毒軟體正在掃描）', '稍後會自動重試；一直發生的話執行 engram doctor，並查看日誌', details).withEn('A local git command timed out (not a network problem; the disk may be busy or antivirus may be scanning)', 'Engram will retry automatically. If it keeps happening, run engram doctor and check the logs');
+  }
   if (/GH013|push protection|secret scanning|Push cannot contain secrets/i.test(s)) {
     return new EngramError(E.PUSH_PROTECTED, 'GitHub 推送保護擋下了這次同步：有檔案疑似含有金鑰', '到管理介面的收件匣處理 H13 卡片，移除金鑰後再同步', details).withEn('GitHub push protection blocked this sync: some files appear to contain secrets', 'Open the H13 card in the dashboard inbox, remove the secrets, then sync again');
   }
-  if (/逾時|timed out|Operation timed out|Connection timed out/i.test(s) || res.code === -1) {
+  if (/timed out|Operation timed out|Connection timed out/i.test(s)) {
     return new EngramError(E.OFFLINE, '連線逾時，暫時無法同步', '網路恢復後會自動重試', details).withEn('The connection timed out, so sync is unavailable for now', 'Engram will retry automatically once the network is back');
   }
   if (/proxy|407 Proxy Authentication/i.test(s)) {

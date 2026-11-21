@@ -21,7 +21,18 @@ export default {
 
   // ── 裝置
   '有 {n} 個檔案沒有推送': ({ n }) => plural(n, '1 file was not pushed', '{n} files were not pushed'),
-  '{files} 疑似含有金鑰，只留在這台。': 'Possible secret in {files}. Kept on this computer only.',
+  // 2.0.0：沒有推送的檔案可能不是記憶（環境設定、保留區、護欄規則）
+  '這些檔案疑似含有金鑰，只留在這台電腦，不會同步到其他電腦。': 'These files may contain secrets, so they stay on this computer and are not synced to your other computers.',
+  '記憶': 'Memory',
+  '到收件匣的「疑似含有金鑰」卡片遮蔽後就會恢復同步。': 'Redact it from the "possible secret" card in the inbox and syncing resumes.',
+  '共用環境設定檔或自製技能的檔案，不是記憶。請打開這個檔案拿掉金鑰（改放環境變數或系統的憑證保管），下次同步就會推送。': 'A file of the shared environment profile or a custom skill, not a memory. Open the file and remove the secret (keep it in an environment variable or the system credential store instead); the next sync pushes it.',
+  '保留區的項目，不是記憶。在保留區採用或標成不需要之後，就不需要再同步它。': 'An item in the holding area, not a memory. Once you apply it or mark it not needed in the holding area, it no longer needs to sync.',
+  '前往保留區': 'Go to the holding area',
+  '護欄規則': 'Guardrail rules',
+  '護欄的規則檔，不是記憶。請打開這個檔案拿掉看起來像金鑰的字串，下次同步就會推送。': 'The guardrail rule file, not a memory. Open the file and remove whatever looks like a secret; the next sync pushes it.',
+  '看護欄': 'Open guardrails',
+  '其他檔案': 'Other file',
+  '記憶庫裡的其他檔案，不是記憶。請打開這個檔案拿掉金鑰，下次同步就會推送。': 'Another file in the vault, not a memory. Open the file and remove the secret; the next sync pushes it.',
   '最後同步 {when}': 'Last synced {when}',
   '電腦 ID': 'Computer ID',
   'Engram 版本': 'Engram version',
@@ -59,4 +70,6 @@ export default {
   '復原這個變更？': 'Undo this change?',
   '「{title}」（{device} · {when}）會被撤銷，並產生一筆新的紀錄同步到其他電腦；之後仍可再復原。': 'This reverts "{title}" ({device} · {when}) and creates a new record that syncs to your other computers. You can undo it again later.',
   '已復原這個變更': 'Change undone',
+  '舊版，更新後索引才會切換到新規則': 'Older version: the index switches to the new rules after it is updated',
+  '索引目前是相容模式：這台更新 Engram 之後，共用的索引才會切換到新規則。': 'Index compatibility mode is on: after this computer is updated, the shared index switches to the new rules.',
 };

@@ -9,7 +9,7 @@ import { CliError } from '../cli/errors.mjs';
 import { createLogger, pruneLogs } from '../cli/log.mjs';
 import { appVersion, DEFAULT_PORT, localPaths } from '../cli/paths.mjs';
 import { detectClaudeVersion, runProbe as realRunProbe } from '../cli/probe/index.mjs';
-import { BACKGROUND_ENV } from '../cli/proc.mjs';
+import { BACKGROUND_ENV, spawnDetachedNode } from '../cli/proc.mjs';
 import { createNotifier } from '../scheduler/notify.mjs';
 import { status as realSchedulerStatus } from '../scheduler/task.mjs';
 import { createApi } from './api.mjs';
@@ -23,6 +23,7 @@ import { pruneRecords, tidyDir } from '../tidy/store.mjs';
 
 const DAY = 864e5;
 const LOADED_RETAIN_DAYS = 30;
+const SESSION_CACHE_EVERY_MS = 5 * 60_000;
 
 function listen(server, port) {
   return new Promise((resolve, reject) => {
@@ -100,9 +101,28 @@ export async function startAgent({
   const token = randomBytes(24).toString('base64url');
   const events = createEventHub();
   const settings = createSettings(paths);
+  const agentNotifier = notifier ?? createNotifier({ paths, baseUrl: `http://127.0.0.1:${port}/` });
+  // 自動更新成功之後換成新版（2.0.0 R2）：等更新工作結束，再由 restartAndVerify（install/autoupdate.mjs）停掉舊的常駐程式（放掉連接埠與心跳、
+  // 等執行中的工作做完）、啟動新版，並在時限內確認新版的心跳；起得來才通知「已自動更新」，起不來就退回、啟動舊版、通知。
+  // 這個舊程序在確認完之前不結束：舊程式的程式碼已經載入記憶體，新版壞掉也照樣能退回；不能在更新流程裡直接結束自己（doctor 與通知還沒做完）
+  const restartAgent = (handoff) => {
+    const timer = setTimeout(() => {
+      import('../../install/autoupdate.mjs').then(({ restartAndVerify }) => restartAndVerify({
+        ...handoff,
+        stopAgent: stop,
+        spawnAgent: (bin) => spawnDetachedNode([bin, 'agent']),
+        killProcess: (pid) => process.kill(pid),
+        readHeartbeat: () => readHeartbeat(paths),
+        notify: (n) => agentNotifier.notify(n),
+        exit: (code) => process.exit(code),
+        log: (msg) => log.warn('update', msg),
+      })).catch((err) => log.error('agent', err));
+    }, 3000);
+    timer.unref?.();
+  };
   const jobs = createJobs({
-    eg, paths, events, log, runProbe, detectVersion, settings,
-    notifier: notifier ?? createNotifier({ paths, baseUrl: `http://127.0.0.1:${port}/` }),
+    eg, paths, events, log, runProbe, detectVersion, settings, restartAgent,
+    notifier: agentNotifier,
   });
   const agent = { pid: process.pid, version: appVersion(), startedAt: new Date().toISOString(), port };
   const info = createAgentInfo({ agent, jobs, schedulerStatus });
@@ -139,10 +159,19 @@ export async function startAgent({
   maintenance(paths, log);
   // 1.4.0：回顧用的子代理要讀 local/dream。Claude Code 只在對話開始時套用 additionalDirectories，而且資料夾要已經存在，
   // 所以常駐程式一啟動（登入、engram update 之後）就建立資料夾並加進設定，之後開的對話第一次回顧就讀得到
-  if (typeof eg.dream?.ensureReadable === 'function') eg.dream.ensureReadable().catch((err) => log.warn('dream', err));
+  // 這兩項和啟動時的網路同步同時排隊，寫入鎖被占用（E_LOCKED）時等鎖再做，不直接記成失敗（S2）
+  if (typeof eg.dream?.ensureReadable === 'function') jobs.retryLocked(() => eg.dream.ensureReadable()).catch((err) => log.warn('dream', err));
   // 確認紀錄的起點：升級後常駐程式一啟動就建立（不等每日健康檢查），之後 Claude 寫的內容才會列入「待你確認」
-  if (typeof eg.review?.baseline === 'function') eg.review.baseline().catch((err) => log.warn('review', err));
+  if (typeof eg.review?.baseline === 'function') jobs.retryLocked(() => eg.review.baseline()).catch((err) => log.warn('review', err));
   jobs.start();
+  // 2.0.0 S5：開場 hook 快速路徑用的快取最多用 15 分鐘；同步間隔可能比這長、同步也可能暫停，所以每 5 分鐘另外重寫一次
+  // （存檔與同步之後由 jobs 寫；寫入時先記簽章再讀內容，和同步同時進行也不會留下錯的快取）
+  const writeSessionCache = () => {
+    if (typeof eg.sessionCache?.write === 'function') eg.sessionCache.write().catch((err) => log.warn('session-cache', err));
+  };
+  const sessionCacheTimer = setInterval(writeSessionCache, SESSION_CACHE_EVERY_MS);
+  sessionCacheTimer.unref();
+  writeSessionCache();
   const tidyWatcher = watchTidy(paths.local, events, log);
   log.info('agent', `已啟動：http://127.0.0.1:${agent.port}/（pid ${agent.pid}，Engram ${agent.version}）`);
 
@@ -151,6 +180,7 @@ export async function startAgent({
     stopping ??= (async () => {
       clearInterval(beatTimer);
       clearInterval(dailyTimer);
+      clearInterval(sessionCacheTimer);
       tidyWatcher.close();
       await jobs.stop();
       events.close();

@@ -3,6 +3,7 @@
 // - 風險分級：決定哪些項目要審核員確認（只有 verify 不必）
 // - 類別：由實際的動作推導（不採用 LLM 自己填的標籤），用於回饋與暫停
 // - 單輪上限：以實際動到的記憶數計算
+// - 2.0.0：拆分一律不執行；改寫後內文大幅變短的標上「大幅刪減」，一定送審核員（使用者的決定：不拆分、不為了精簡而刪減記憶）
 import { parseMemoryFile } from '../core/frontmatter.mjs';
 
 const PATTERNS = [
@@ -60,6 +61,12 @@ export function targetScopes(item, scopeOfRef) {
 }
 
 /**
+ * 記憶畢業（2.0.0 WP9）才有的動作：guardrail（加一條護欄提醒規則）、env（環境設定檔加一項）、
+ * graduate（在原記憶的 frontmatter 記下去向；內文不動）。不是記憶整理的動作，不會交給整理計畫流程。
+ */
+export const GRADUATE_OPS = ['guardrail', 'env', 'graduate'];
+
+/**
  * 風險：low 不必審核；medium、high 要審核員同意。
  * - high：封存、合併、核心準則、碰到每次都會載入的範圍（全域、單機）、拆分
  * - medium：其他改寫、在專案範圍內搬移或新增（只改 frontmatter 也算：description 會進每次載入的索引）
@@ -68,6 +75,8 @@ export function targetScopes(item, scopeOfRef) {
 export function riskOf(item, scopeOfRef) {
   const ops = item.ops ?? [];
   if (!ops.length) return 'low';
+  // 2.0.0 WP9：記憶畢業（護欄規則、環境設定、在記憶記下去向）一律送審，不看範圍
+  if (ops.some((o) => GRADUATE_OPS.includes(o.op))) return 'high';
   if (ops.every((o) => o.op === 'verify')) return 'low';
   if (ops.some((o) => o.op === 'remove' || o.op === 'merge' || o.op === 'core')) return 'high';
   if (ops.some((o) => o.op === 'create') && ops.some((o) => o.op === 'write')) return 'high';
@@ -89,6 +98,8 @@ export function categoryOf(item, { dream = false, scopeOfRef = () => null } = {}
   const ops = item.ops ?? [];
   const has = (k) => ops.some((o) => o.op === k);
   if (has('core')) return 'core';
+  if (has('guardrail')) return 'guardrail';
+  if (has('env')) return 'env';
   if (has('merge')) return 'merge';
   if (has('remove')) return 'archive';
   if (has('create') && has('write')) return 'split';
@@ -98,10 +109,78 @@ export function categoryOf(item, { dream = false, scopeOfRef = () => null } = {}
   return dream ? 'dream-update' : 'update';
 }
 
+/** 內文的行（比對「新增的內容是不是來自那一筆」用）：去掉清單符號與多餘空白；Why／How to apply 這類每筆都有的樣板行不算 */
+function bodyLines(text) {
+  return parseMemoryFile(String(text ?? '')).body.replace(/\r\n/g, '\n').split('\n')
+    .map((l) => normalizeText(l).trim().replace(/^([-*+]|\d+[.)])\s+/, '').replace(/\s+/g, ' '))
+    .filter((l) => l && !/^\*\*(Why|How to apply)/i.test(l));
+}
+
+/** 新內容有多少（以字數計）是逐行照抄 sourceLines 的：0～1 */
+function derivedShare(content, sourceLines) {
+  const lines = bodyLines(content);
+  const total = lines.reduce((n, l) => n + l.length, 0);
+  return total ? lines.filter((l) => sourceLines.has(l)).reduce((n, l) => n + l.length, 0) / total : 0;
+}
+
+/**
+ * 拆分（2.0.0：依使用者的偏好不拆分記憶，一律不執行）：從動作判斷（同一項裡新增＋改寫），也看 LLM 自己標的 split。
+ * 不能只看 categoryOf：同一項裡還有封存時，categoryOf 會回 archive。
+ * 審查 F4：新增的同時封存（或合併掉）某一筆既有記憶，而新增的內容主要（一半以上）來自那一筆，也是拆分的寫法
+ * （例如新增兩筆、再封存原檔）。textOf(ref) 給目前的內容；不給時只看動作。
+ */
+export function isSplit(item, textOf = null) {
+  const ops = item.ops ?? [];
+  if (item.action === 'split') return true;
+  const creates = ops.filter((o) => o.op === 'create');
+  if (!creates.length) return false;
+  if (ops.some((o) => o.op === 'write')) return true;
+  if (typeof textOf !== 'function') return false;
+  const gone = ops.flatMap((o) => (o.op === 'remove' ? [o.ref] : o.op === 'merge' ? (o.refs ?? []).filter((r) => r !== (o.into ?? o.refs?.[0])) : []));
+  const source = new Set(gone.flatMap((r) => bodyLines(textOf(r))));
+  return source.size > 0 && creates.some((o) => derivedShare(o.content, source) >= 0.5);
+}
+
+/**
+ * 拆到不同項目的拆分（2.0.0 第二輪審查 R5）：同一批裡，一個項目新增記憶，另一個項目封存、合併掉或大幅刪減某一筆記憶，
+ * 而新增的內容主要（一半以上）來自被拿掉的那些內文。回傳要一起拒絕的項目索引（新增的與拿掉來源的都算）。
+ * 合併時被併掉的記憶，內容通常進了同一項的合併結果，只和「別的項目」的新增比對。
+ */
+export function crossSplits(items, textOf) {
+  const out = new Set();
+  const sources = [];
+  items.forEach((it, i) => {
+    for (const o of it.ops ?? []) {
+      if (o.op === 'remove') sources.push({ i, lines: new Set(bodyLines(textOf(o.ref))) });
+      else if (o.op === 'merge') for (const r of (o.refs ?? []).filter((x) => x !== (o.into ?? o.refs?.[0]))) sources.push({ i, lines: new Set(bodyLines(textOf(r))) });
+      else if (o.op === 'write' && shrunk(textOf(o.ref), o.content)) {
+        const kept = new Set(bodyLines(o.content));
+        sources.push({ i, lines: new Set(bodyLines(textOf(o.ref)).filter((l) => !kept.has(l))) });
+      }
+    }
+  });
+  if (!sources.length) return out;
+  items.forEach((it, i) => {
+    for (const o of (it.ops ?? []).filter((x) => x.op === 'create')) {
+      for (const s of sources) if (s.i !== i && s.lines.size && derivedShare(o.content, s.lines) >= 0.5) { out.add(i); out.add(s.i); }
+    }
+  });
+  return out;
+}
+
+/** 改寫後內文比原本短多少以上算「大幅刪減」（2.0.0：一定送審核員，並提醒審核員逐一確認被拿掉的內容） */
+export const SHRINK_RATIO = 0.3;
+export function shrunk(before, after) {
+  const b0 = parseMemoryFile(String(before ?? '')).body.trim().length;
+  const b1 = parseMemoryFile(String(after ?? '')).body.trim().length;
+  return b0 > 0 && b1 < b0 * (1 - SHRINK_RATIO);
+}
+
 /** 一個項目裡所有動作各自的類別（暫停判斷用：任何一個類別被暫停就整項不做） */
 export function categoriesOf(item, { dream = false } = {}) {
   const out = new Set([categoryOf(item, { dream })]);
-  for (const o of item.ops ?? []) out.add(categoryOf({ ops: [o] }, { dream }));
+  // 記下畢業去向（graduate）只是附帶的一步，不是另一類處理
+  for (const o of item.ops ?? []) if (o.op !== 'graduate') out.add(categoryOf({ ops: [o] }, { dream }));
   return [...out];
 }
 

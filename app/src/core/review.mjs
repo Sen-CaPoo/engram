@@ -50,14 +50,57 @@ export async function reviewScopeRefs(ctx) {
 /** 一筆確認紀錄的檔名：ref 的雜湊＋版本 sha。只新增、不改寫：同一筆記憶每確認一個版本多一個檔，
  * 單獨復原某一次變更時不會和之後同一筆記憶的確認紀錄衝突（1.4.0 審查）。 */
 export const reviewKey = (ref) => createHash('sha1').update(String(ref)).digest('hex').slice(0, 20);
-const fileName = (ref, sha) => `${reviewKey(ref)}-${sha.slice(0, 12)}.json`;
-export const reviewedRel = (mid, ref, sha) => `machines/${mid}/${REVIEWED_DIR}/${fileName(ref, sha)}`;
-const FILE_RE = /^([0-9a-f]{20})-([0-9a-f]{12})\.json$/;
+// 2.0.0：同一個版本先被自動駕駛代為確認、之後才由使用者確認時，另外寫一個 -u 結尾的紀錄（不改寫原本的檔：
+// 原本的檔跟著自動駕駛那次寫入的 commit，單獨復原那次寫入時不能和之後的修改衝突）
+const fileName = (ref, sha, upgrade = false) => `${reviewKey(ref)}-${sha.slice(0, 12)}${upgrade ? '-u' : ''}.json`;
+export const reviewedRel = (mid, ref, sha, upgrade = false) => `machines/${mid}/${REVIEWED_DIR}/${fileName(ref, sha, upgrade)}`;
+const FILE_RE = /^([0-9a-f]{20})-([0-9a-f]{12})(-u)?\.json$/;
 
 /** 每筆記憶，一台電腦只留最近這麼多個確認過的版本（紀錄不會無限增加）。更早的版本之後剛好又出現時，會再問一次 */
 const KEEP_VERSIONS = 20;
 
-/** 一台電腦的確認紀錄：[{ ref, sha, at, file }] */
+/**
+ * 確認的來源（2.0.0）：user（使用者在介面或 CLI 確認、--reviewed 寫入、記憶整理頁核可）、baseline（起點）、
+ * request（自動駕駛在對話紀錄找到使用者的要求，而且寫入的內容與要求相符）、autopilot（其餘自動駕駛的代為確認）。
+ * 舊紀錄（1.4～1.6）沒有來源：寫紀錄的那台電腦開啟自動駕駛之後寫的，當成自動駕駛代為確認（1.5／1.6 的自動駕駛
+ * 「代你確認」也是寫這種紀錄）；更早的當成使用者確認（見 autopilotSince）。
+ * 2.0.0 第二輪審查 R1、N1：claude（Claude 在對話裡帶 --reviewed 寫入，偵測 CLAUDECODE／CLAUDE_CODE_ENTRYPOINT）。
+ * 每一種來源都讓這個版本不必再出現在「待你確認」；但只有 user 與 baseline 是偏好區塊可信的來源（TRUSTED_SOURCES）：
+ * request（對話裡找到使用者的要求，相符與否只是 LLM 的判斷）、autopilot、claude 都不算使用者的規則。
+ */
+export const REVIEW_SOURCES = ['user', 'baseline', 'request', 'autopilot', 'claude'];
+export const TRUSTED_SOURCES = ['user', 'baseline'];
+const isTrusted = (by) => TRUSTED_SOURCES.includes(by);
+
+/** 那台電腦的同步狀態檔（自動駕駛的開關與啟用時間，autopilot/state.mjs 寫入） */
+const autopilotStateRel = (mid) => `machines/${mid}/autopilot.json`;
+/** 記憶庫歷史裡第一次提交那台電腦自動駕駛狀態檔的時間（毫秒）：vault + mid → { at, until }。歷史不會變，找到就一直用；找不到的 1 小時後再看 */
+const firstEnabledCache = new Map();
+const FIRST_ENABLED_RETRY_MS = 3_600_000;
+
+async function firstStateCommit(vaultDir, mid) {
+  const key = `${vaultDir}\0${mid}`;
+  const hit = firstEnabledCache.get(key);
+  if (hit && (hit.at !== null || Date.now() < hit.until)) return hit.at;
+  const r = await git(['log', '--diff-filter=A', '--format=%aI', '--', autopilotStateRel(mid)], { cwd: vaultDir, allowFail: true }).catch(() => null);
+  const times = r?.code === 0 ? r.stdout.split('\n').map((l) => Date.parse(l.trim())).filter(Number.isFinite) : [];
+  const at = times.length ? Math.min(...times) : null;
+  firstEnabledCache.set(key, { at, until: Date.now() + FIRST_ENABLED_RETRY_MS });
+  return at;
+}
+
+/**
+ * 那台電腦從什麼時候開始用自動駕駛（毫秒；沒用過時 null）：狀態檔的 enabledAt 與記憶庫歷史裡第一次提交狀態檔的時間，取較早的。
+ * enabledAt 在關閉時會被清掉、重新開啟時從那時算起（autopilot/state.mjs 的 setEnabledState），所以要看歷史：
+ * 狀態檔是第一次開啟自動駕駛時建立的（之後關掉也不會刪）。
+ */
+async function autopilotSince(vaultDir, mid) {
+  const st = await readJson(path.join(vaultDir, ...autopilotStateRel(mid).split('/')), null).catch(() => null);
+  const times = [Date.parse(st?.enabledAt ?? ''), await firstStateCommit(vaultDir, mid)].filter(Number.isFinite);
+  return times.length ? Math.min(...times) : null;
+}
+
+/** 一台電腦的確認紀錄：[{ ref, sha, at, by, file }] */
 async function machineReviews(vaultDir, mid) {
   const dir = path.join(machineDir(vaultDir, mid), REVIEWED_DIR);
   let names = [];
@@ -67,22 +110,36 @@ async function machineReviews(vaultDir, mid) {
   for (let i = 0; i < names.length; i += 64) {
     const rows = await Promise.all(names.slice(i, i + 64).map(async (n) => {
       const r = await readJson(path.join(dir, n), null).catch(() => null);
-      if (typeof r?.ref !== 'string' || typeof r?.sha !== 'string' || fileName(r.ref, r.sha) !== n) return null; // 損壞或不符：當作沒有（偏安全）
-      return { ref: r.ref, sha: r.sha, at: typeof r.at === 'string' ? r.at : '', file: n };
+      if (typeof r?.ref !== 'string' || typeof r?.sha !== 'string' || fileName(r.ref, r.sha, n.endsWith('-u.json')) !== n) return null; // 損壞或不符：當作沒有（偏安全）
+      return { ref: r.ref, sha: r.sha, at: typeof r.at === 'string' ? r.at : '', by: REVIEW_SOURCES.includes(r.by) ? r.by : null, file: n };
     }));
     for (const r of rows) if (r) out.push(r);
+  }
+  // 沒有來源的舊紀錄：這台開始用自動駕駛之後寫的 → autopilot，更早的（或沒用過自動駕駛）→ user
+  if (out.some((r) => r.by === null)) {
+    const since = await autopilotSince(vaultDir, mid);
+    for (const r of out) if (r.by === null) r.by = since !== null && Date.parse(r.at) > since ? 'autopilot' : 'user';
   }
   return out;
 }
 
-/** 所有電腦確認過的版本：ref → { shas: Set, latest: { sha, at } }（latest 是最近一次確認的版本，退回時用） */
+/**
+ * 所有電腦確認過的版本：ref → { shas: Set, latest: { sha, at }, trusted: Set, trustedLatest: { sha, at }|null, sources: Map(sha → Set(來源)) }。
+ * latest 是最近一次確認的版本（退回時用）；trusted 是至少有一筆由使用者本人或起點確認的版本（TRUSTED_SOURCES；偏好區塊只用這些）。
+ */
 export async function reviewedIndex(vaultDir) {
   const map = new Map();
   for (const mid of await listMachineIds(vaultDir)) {
     for (const r of await machineReviews(vaultDir, mid)) {
-      const e = map.get(r.ref) ?? { shas: new Set(), latest: null };
+      const e = map.get(r.ref) ?? { shas: new Set(), latest: null, trusted: new Set(), trustedLatest: null, sources: new Map() };
       e.shas.add(r.sha);
+      if (!e.sources.has(r.sha)) e.sources.set(r.sha, new Set());
+      e.sources.get(r.sha).add(r.by);
       if (!e.latest || r.at > e.latest.at) e.latest = { sha: r.sha, at: r.at };
+      if (isTrusted(r.by)) {
+        e.trusted.add(r.sha);
+        if (!e.trustedLatest || r.at > e.trustedLatest.at) e.trustedLatest = { sha: r.sha, at: r.at };
+      }
       map.set(r.ref, e);
     }
   }
@@ -96,11 +153,16 @@ export async function reviewedShas(vaultDir) {
 
 /**
  * 把這些 ref 目前的內容記為「這台電腦確認過」。不在範圍內的略過；檔案不存在時不動（紀錄留著）。
+ * by：確認的來源（REVIEW_SOURCES），必填（第四輪審查 F-02：沒帶或不認得的值丟錯誤，不會默默變成 user，
+ * 下一個漏掉來源的呼叫端會在測試裡失敗，而不是把內容記成使用者確認）。同一個版本原本只有不可信的來源（autopilot、request、claude）確認、
+ * 現在由使用者或起點確認時，另外寫一個 -u 的紀錄（不改寫原本的檔；已經有不可信來源的 -u 時改寫那一個）。
  * 呼叫端負責持鎖並把回傳的路徑放進同一個 commit。沒有變更時回傳 []。
  */
-export async function markReviewed(ctx, refs, { at = new Date().toISOString() } = {}) {
+export async function markReviewed(ctx, refs, { at = new Date().toISOString(), by } = {}) {
+  if (!REVIEW_SOURCES.includes(by)) throw new Error(`確認紀錄要有明確的來源（${REVIEW_SOURCES.join('、')}），收到：${String(by).slice(0, 20)}`);
   const want = [...new Set(refs)].filter((r) => inReviewScope(r, ctx.mid));
   if (!want.length) return [];
+  const source = by;
   const dir = path.join(machineDir(ctx.vault, ctx.mid), REVIEWED_DIR);
   const mine = await machineReviews(ctx.vault, ctx.mid);
   const changed = [];
@@ -109,10 +171,12 @@ export async function markReviewed(ctx, refs, { at = new Date().toISOString() } 
     // 封存或搬走的記憶：確認紀錄留著，之後從歷史還原成確認過的版本時不必再問（數量有 KEEP_VERSIONS 上限）
     if (text === null) continue;
     const sha = blobSha(text);
-    if (mine.some((x) => x.ref === ref && x.sha === sha)) continue;
+    const had = mine.filter((x) => x.ref === ref && x.sha === sha);
+    if (had.length && (!isTrusted(source) || had.some((x) => isTrusted(x.by)))) continue;
+    const upgrade = had.length > 0;
     await fsp.mkdir(dir, { recursive: true });
-    await writeJson(path.join(dir, fileName(ref, sha)), { ref, sha, at });
-    changed.push(reviewedRel(ctx.mid, ref, sha));
+    await writeJson(path.join(dir, fileName(ref, sha, upgrade)), { ref, sha, at, by: source });
+    changed.push(reviewedRel(ctx.mid, ref, sha, upgrade));
   }
   return changed;
 }
@@ -139,14 +203,29 @@ export async function pruneReviews(ctx) {
   return removed;
 }
 
+/** 一個版本被確認過的來源裡，延續時用哪一個：使用者 > 起點 > Claude > 對話裡的要求 > 自動駕駛（可信的優先） */
+const CARRY_ORDER = ['user', 'baseline', 'claude', 'request', 'autopilot'];
+
 /**
- * Engram 自己做的改動與機械式的改寫（電腦清單、改名後的路徑、驗證日期、改連結、遮蔽金鑰、釘選）：
+ * Engram 自己做的改動與機械式的改寫（電腦清單、改名後的路徑、驗證日期、改連結、遮蔽金鑰、釘選、記憶畢業的去向）：
  * 改動前的內容確認過，改動後也算確認過；沒確認過的維持待確認。before：ref → 改動前的內容。
+ * 來源延續原本的（第四輪審查 F-02）：起點延續成起點、使用者延續成使用者、claude／request／autopilot 延續成原本的值；
+ * 同一個版本有好幾種來源時依 CARRY_ORDER 取一個。這是「在 Claude Code 裡執行的指令不產生 user」的例外：
+ * 改的只是日期、連結、釘選、路徑、遮蔽這類不改變內容意思的地方，原本是使用者確認的，改完仍是使用者確認的。
  */
 export async function carryReviewed(ctx, before) {
-  const all = await reviewedShas(ctx.vault);
-  const keep = [...before].filter(([ref, text]) => typeof text === 'string' && inReviewScope(ref, ctx.mid) && all.get(ref)?.has(blobSha(text))).map(([ref]) => ref);
-  return markReviewed(ctx, keep);
+  const idx = await reviewedIndex(ctx.vault);
+  const keep = [...before].filter(([ref, text]) => typeof text === 'string' && inReviewScope(ref, ctx.mid) && idx.get(ref)?.shas.has(blobSha(text)));
+  const groups = new Map();
+  for (const [ref, text] of keep) {
+    const had = idx.get(ref).sources.get(blobSha(text)) ?? new Set();
+    const by = CARRY_ORDER.find((s) => had.has(s)) ?? 'autopilot';
+    if (!groups.has(by)) groups.set(by, []);
+    groups.get(by).push(ref);
+  }
+  const out = [];
+  for (const [by, refs] of groups) out.push(...await markReviewed(ctx, refs, { by }));
+  return out;
 }
 
 /**

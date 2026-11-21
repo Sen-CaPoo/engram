@@ -1,6 +1,6 @@
 // 自動駕駛的狀態（1.5.0）。
 // - 每台電腦一份同步的狀態檔 vault/machines/<mid>/autopilot.json：啟用時間、上次執行、復原回饋；
-//   1.6.0 加上範圍整理紀錄（scopes）與審核員的拒絕（reviewRejects）。
+//   1.6.0 加上範圍整理紀錄（scopes）與審核員的拒絕（reviewRejects）；2.0.0 加上撞到用量上限的時間與重置時間（limit）。
 //   每台只寫自己的檔案，兩台同時更新也不會衝突；讀取時彙整所有電腦。
 // - 1.6.0：多台電腦完全平等，沒有主機。每台都整理共用記憶、處理衝突；靠同步的整理紀錄避免重複處理，
 //   靠寫入時比對版本（整理記錄的 base）與同步時的衝突處理避免互相覆蓋。
@@ -11,16 +11,25 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { readJson, writeJsonAtomic } from '../cli/fsutil.mjs';
 import { commitPaths, listMachineIds, machineDir } from '../core/vault.mjs';
+import { redactSecrets } from '../core/secrets.mjs';
 
 const DAY = 86_400_000;
 /** 同一類動作在這段時間內被復原幾次就暫停（只記錄、不執行） */
 export const PAUSE_AFTER_UNDOS = 2;
 export const PAUSE_WINDOW_MS = 60 * DAY;
 const FEEDBACK_MAX = 100;
+/** 回饋紀錄裡的「使用者的糾正」（2.0.0 Q9）另外最多留幾筆：不能擠掉復原紀錄 */
+const CORRECTIONS_MAX = 50;
 const REJECTS_MAX = 200;
 const SCOPE_KEY_RE = /^(global|core|machine:[a-z0-9][a-z0-9-]{0,63}|project:[a-z0-9][a-z0-9-]{0,63})$/;
 const SCOPES_MAX = 500;
-const KNOWN = new Set(['v', 'enabledAt', 'lastRunAt', 'lastRunId', 'feedback', 'scopes', 'reviewRejects']);
+const KNOWN = new Set(['v', 'enabledAt', 'lastRunAt', 'lastRunId', 'feedback', 'scopes', 'reviewRejects', 'limit', 'graduate']);
+/** 記憶畢業（2.0.0 P5）的去向；看過的記憶（ref → 內容的 git blob sha 前 12 碼）與畢業的項目各自最多留幾筆 */
+export const GRADUATE_TO = ['core', 'guardrail', 'env', 'archive'];
+const GRADUATE_SEEN_MAX = 400;
+const GRADUATE_ITEMS_MAX = 100;
+/** 用量上限的重置時間最遠接受到多久之後（週上限最多 7 天；更遠的值當成錯誤，免得一個壞掉的同步檔讓排程永遠不啟動） */
+export const MAX_RESET_MS = 8 * DAY;
 const EXTRA_KEYS_MAX = 20;
 const EXTRA_BYTES_MAX = 16 * 1024;
 const RUNS_KEEP_DAYS = 90;
@@ -55,20 +64,84 @@ function normalizeRejects(list) {
     .slice(-REJECTS_MAX);
 }
 
+/** 撞到用量上限的紀錄（2.0.0）：{ at, resetAt }，兩個都要是看得懂的時間，否則不留 */
+function normalizeLimit(x) {
+  if (!x || typeof x !== 'object') return null;
+  const ok = (v) => typeof v === 'string' && v.length <= 40 && Number.isFinite(Date.parse(v));
+  return ok(x.at) && ok(x.resetAt) ? { at: x.at, resetAt: x.resetAt } : null;
+}
+
+/**
+ * 記憶畢業的紀錄（2.0.0 P5）：{ at（上次執行）, seen: { ref: 判斷時內容的 sha 前 12 碼 }, waiting: { ref: sha 前 12 碼 }, items: [{ ref, title, to, at }] }。
+ * waiting（第三輪審查 B）：判斷成適合寫進核心準則、但目前內容不是使用者或起點確認的（要使用者確認之後才寫）；使用者確認之前不再看。
+ * 格式不對的欄位不留；全部都沒有時 null。
+ */
+function normalizeGraduate(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+  const ok = (v) => typeof v === 'string' && v.length <= 40 && Number.isFinite(Date.parse(v));
+  const shaMap = (m, re) => {
+    const out = {};
+    const raw = m && typeof m === 'object' && !Array.isArray(m) ? Object.entries(m) : [];
+    for (const [ref, sha] of raw.slice(-GRADUATE_SEEN_MAX)) if (ref.length <= 300 && typeof sha === 'string' && re.test(sha)) out[ref] = sha;
+    return out;
+  };
+  const seen = shaMap(x.seen, /^[0-9a-f]{12}$/);
+  // waiting 的值可以帶想要的去向（第四輪審查 F-05：:core 或 :guardrail；第三輪寫的沒有，當成 core）
+  const waiting = shaMap(x.waiting, /^[0-9a-f]{12}(?::(?:core|guardrail))?$/);
+  const items = (Array.isArray(x.items) ? x.items : []).filter((i) => i && typeof i.ref === 'string' && GRADUATE_TO.includes(i.to) && ok(i.at))
+    .map((i) => ({ ref: i.ref.slice(0, 300), title: String(i.title ?? '').slice(0, 120), to: i.to, at: i.at })).slice(-GRADUATE_ITEMS_MAX);
+  const at = ok(x.at) ? x.at : null;
+  return at || items.length || Object.keys(seen).length || Object.keys(waiting).length ? { at, seen, ...(Object.keys(waiting).length ? { waiting } : {}), items } : null;
+}
+
+/** 回饋與暫停的類別（給人看的名稱） */
+export const CATEGORY_LABEL = {
+  update: '改寫', move: '搬移', archive: '封存', merge: '合併', create: '新增', split: '拆分', promote: '升為全域', core: '核心準則',
+  'dream-create': '對話回顧新增', 'dream-update': '對話回顧改寫', vault: '金鑰移到保管區', 'not-secret': '標記不是金鑰', confirm: '代你確認', revert: '退回寫入', rename: '撞名資料夾改名', verify: '確認仍正確',
+  guardrail: '畢業成護欄規則', env: '畢業成環境設定',
+};
+export const categoryLabel = (c) => CATEGORY_LABEL[c] ?? (String(c).startsWith('conflict-') ? '衝突處理' : String(c).startsWith('card-') ? `收件匣 ${String(c).slice(5)}` : c);
+
+/** waiting 的一個值：內容的 sha 前 12 碼，與想要的去向（core 或 guardrail；沒寫的是 core） */
+export const waitingSha = (v) => (typeof v === 'string' ? v.split(':')[0] : null);
+export const waitingTo = (v) => (typeof v === 'string' && v.endsWith(':guardrail') ? 'guardrail' : 'core');
+
+/** 所有電腦的記憶畢業紀錄合起來的 seen 與 waiting（ref → 內容的 sha 前 12 碼；同一筆以後面的電腦為準） */
+export function graduateMarks(states) {
+  const seen = {};
+  const waiting = {};
+  for (const s of states) {
+    Object.assign(seen, s.graduate?.seen ?? {});
+    Object.assign(waiting, s.graduate?.waiting ?? {});
+  }
+  return { seen, waiting };
+}
+
+/** 回饋紀錄的上限：復原（與恢復）留最近 FEEDBACK_MAX 筆，糾正另外留最近 CORRECTIONS_MAX 筆；依時間排序 */
+function trimFeedback(list) {
+  const undo = list.filter((f) => f.kind !== 'correction').slice(-FEEDBACK_MAX);
+  const corr = list.filter((f) => f.kind === 'correction').slice(-CORRECTIONS_MAX);
+  return [...undo, ...corr].sort((a, b) => String(a.at ?? '').localeCompare(String(b.at ?? '')));
+}
+
 function normalize(j) {
   // 不認得的欄位原樣保留（之後的版本新增的欄位，不會在這一版改寫狀態檔時被丟掉）；數量或大小超過上限就整批不留，避免檔案被塞大
   let extra = {};
   if (j && typeof j === 'object' && !Array.isArray(j)) for (const [k, val] of Object.entries(j)) if (!KNOWN.has(k) && val !== undefined) extra[k] = val;
   if (Object.keys(extra).length > EXTRA_KEYS_MAX || JSON.stringify(extra).length > EXTRA_BYTES_MAX) extra = {};
+  const limit = normalizeLimit(j?.limit);
+  const graduate = normalizeGraduate(j?.graduate);
   return {
     ...extra,
     v: 1,
     enabledAt: j?.enabledAt ?? null,
     lastRunAt: j?.lastRunAt ?? null,
     lastRunId: j?.lastRunId ?? null,
-    feedback: Array.isArray(j?.feedback) ? j.feedback.filter((f) => f && typeof f.category === 'string').slice(-FEEDBACK_MAX) : [],
+    feedback: Array.isArray(j?.feedback) ? trimFeedback(j.feedback.filter((f) => f && typeof f.category === 'string')) : [],
     scopes: normalizeScopes(j?.scopes),
     reviewRejects: normalizeRejects(j?.reviewRejects),
+    ...(limit ? { limit } : {}),
+    ...(graduate ? { graduate } : {}),
   };
 }
 
@@ -150,6 +223,47 @@ export async function recordReviewReject(eg, { ref, sha, reason = '', held = nul
   }, 'autopilot review reject');
 }
 
+// ───────── 用量上限（2.0.0）─────────
+
+const limitFile = (local) => path.join(local, 'autopilot', 'limit.json');
+
+/**
+ * 記下撞到用量上限：本機的 local/autopilot/limit.json，以及同步的 machines/<mid>/autopilot.json 的 limit
+ * （同一個 Claude 帳號的上限兩台共用，另一台看到之後也等重置再啟動）。同步的檔案寫入失敗不影響本機的紀錄。
+ */
+export async function recordLimit(eg, { at, resetAt }, log) {
+  const rec = { at: new Date(at).toISOString(), resetAt: new Date(resetAt).toISOString() };
+  await writeJsonAtomic(limitFile(eg.paths.local), rec);
+  await updateMachineState(eg, (s) => { s.limit = rec; return s; }, 'autopilot limit').catch((err) => log?.warn?.('autopilot', `用量上限的紀錄寫入失敗：${err?.message ?? err}`));
+  return rec;
+}
+
+/**
+ * 排程要等到什麼時候（毫秒）：這台的本機紀錄與所有電腦同步的紀錄裡，還沒到的最晚重置時間；沒有時 null。
+ * 已經過了、看不懂、或在 MAX_RESET_MS 之後的值不算。
+ */
+export async function limitUntil(local, vault, now = Date.now()) {
+  const times = [Date.parse((await readJson(limitFile(local), null))?.resetAt ?? '')];
+  for (const s of await allMachineStates(vault)) times.push(Date.parse(s.limit?.resetAt ?? ''));
+  const ok = times.filter((t) => Number.isFinite(t) && t > now && t - now <= MAX_RESET_MS);
+  return ok.length ? Math.max(...ok) : null;
+}
+
+/**
+ * 目前還沒到期的用量上限紀錄（2.0.0，自動駕駛頁顯示「幾點之後自動繼續」）：{ at, resetAt, machine } 或 null。
+ * 和 limitUntil 用同一組紀錄（這台的本機紀錄與所有電腦同步的紀錄），取重置時間最晚的那一筆；machine 是撞到上限的電腦 id。
+ */
+export async function activeLimit(local, vault, selfMid, now = Date.now()) {
+  const rows = [];
+  const own = await readJson(limitFile(local), null);
+  if (own) rows.push({ ...own, machine: selfMid });
+  for (const s of await allMachineStates(vault)) if (s.limit) rows.push({ ...s.limit, machine: s.mid });
+  const ok = rows.map((r) => ({ at: r.at, resetAt: r.resetAt, machine: r.machine, t: Date.parse(r.resetAt ?? '') }))
+    .filter((r) => typeof r.at === 'string' && Number.isFinite(r.t) && r.t > now && r.t - now <= MAX_RESET_MS)
+    .sort((a, b) => b.t - a.t);
+  return ok.length ? { at: ok[0].at, resetAt: ok[0].resetAt, machine: ok[0].machine } : null;
+}
+
 /** 開關改變時更新這台的啟用時間：關閉時清掉；重新開啟時從現在算起 */
 export async function setEnabledState(eg, on, now = Date.now()) {
   const cur = await readMachineState(eg.paths.vault, eg.machine.id);
@@ -157,13 +271,60 @@ export async function setEnabledState(eg, on, now = Date.now()) {
   return updateMachineState(eg, (s) => { s.enabledAt = on ? new Date(now).toISOString() : null; return s; }, on ? 'autopilot on' : 'autopilot off');
 }
 
-/** 使用者復原了自動駕駛的一項：記成回饋（同步，兩台共用），之後的判斷會參考 */
-export async function recordUndoFeedback(eg, { category, ref = null, title = '', reason = '', run = null }, now = Date.now()) {
+/**
+ * 使用者復原了自動駕駛的一項：記成回饋（同步，兩台共用），之後的判斷會參考。
+ * 2.0.0 第二輪審查 R7：同步的紀錄只留類別、記憶的 ref 與標題（標題在本機遮蔽疑似金鑰）；理由常引用使用者在對話裡的話
+ * （對話回顧、待你確認看過使用者要求的退回），只留在這台電腦的執行紀錄（產品決定：不同步對話原文）。reason 參數不再寫入。
+ */
+export async function recordUndoFeedback(eg, { category, ref = null, title = '', run = null }, now = Date.now()) {
   return updateMachineState(eg, (s) => {
-    s.feedback.push({ at: new Date(now).toISOString(), category: String(category).slice(0, 40), ref: ref ? String(ref).slice(0, 200) : null, title: String(title).slice(0, 200), reason: String(reason).slice(0, 300), ...(run ? { run: String(run).slice(0, 40) } : {}) });
-    s.feedback = s.feedback.slice(-FEEDBACK_MAX);
+    s.feedback.push({ at: new Date(now).toISOString(), category: String(category).slice(0, 40), ref: ref ? String(ref).slice(0, 200) : null, title: redactSecrets(String(title)).text.slice(0, 200), reason: '', ...(run ? { run: String(run).slice(0, 40) } : {}) });
+    s.feedback = trimFeedback(s.feedback);
     return s;
   }, `autopilot feedback ${category}`);
+}
+
+// ───────── 使用者的糾正（2.0.0 Q9）─────────
+// 對話回顧從對話抽出使用者糾正 Claude 的話，當成學習訊號（取代沒有人按的「復原」）。
+// 同步的回饋紀錄（kind: 'correction'）只記固定的分類（about，第二輪審查 N2）、日期與引句的雜湊；使用者的原話只留在這台電腦
+// （local/autopilot/corrections.json）：產品決定「不同步對話原文」。整理與回顧的提示詞帶上最近 20 筆的原話。
+// 第三輪審查 N2 殘留：LLM 寫的主題不進提示詞、本機也不留（主題可能被對話裡的文字誘導，原話是驗證過出自使用者的）。
+
+const correctionsFile = (local) => path.join(local, 'autopilot', 'corrections.json');
+const LOCAL_CORRECTIONS_MAX = 100;
+
+/**
+ * 記下糾正（同一則以 key 去重，延後的對話批次重新分析也不會重複）。rows：[{ key, about（同步的固定分類）, date, quote? }]
+ * @returns {Promise<number>} 新記下的筆數
+ */
+export async function recordCorrections(eg, rows, { run = null, now = Date.now() } = {}) {
+  const have = new Set((await readMachineState(eg.paths.vault, eg.machine.id)).feedback.filter((f) => f.kind === 'correction').map((f) => f.key));
+  const fresh = rows.filter((r) => r?.key && !have.has(r.key) && (have.add(r.key), true));
+  // 原話只存本機
+  const local = (await readJson(correctionsFile(eg.paths.local), null)) ?? {};
+  let localChanged = false;
+  for (const r of rows) if (r?.key && r.quote && !local[r.key]) { local[r.key] = { quote: String(r.quote).slice(0, 300), date: r.date ?? null, at: new Date(now).toISOString() }; localChanged = true; }
+  if (localChanged) {
+    const keep = Object.entries(local).sort((a, b) => String(b[1].at).localeCompare(String(a[1].at))).slice(0, LOCAL_CORRECTIONS_MAX);
+    await writeJsonAtomic(correctionsFile(eg.paths.local), Object.fromEntries(keep));
+  }
+  if (!fresh.length) return 0;
+  await updateMachineState(eg, (s) => {
+    for (const r of fresh) s.feedback.push({ at: new Date(now).toISOString(), kind: 'correction', category: 'correction', key: String(r.key).slice(0, 40), date: typeof r.date === 'string' ? r.date.slice(0, 10) : null, ref: null, title: String(r.about ?? '').slice(0, 200), reason: '', ...(run ? { run: String(run).slice(0, 40) } : {}) });
+    s.feedback = trimFeedback(s.feedback);
+    return s;
+  }, 'autopilot corrections');
+  return fresh.length;
+}
+
+/**
+ * 最近的糾正：[{ at, date, quote }]，新的在後。只有這台電腦記下原話的才列（原話在記下時驗證過出自使用者，quoteFromUser）；
+ * 不帶任何主題文字（第三輪審查 N2 殘留：舊版本機紀錄裡的主題、同步紀錄裡的 title 都不用），提示詞的段落標題就是固定的分類。
+ */
+export async function recentCorrections(local, feedback, n = 20) {
+  const quotes = (await readJson(correctionsFile(local), null)) ?? {};
+  return feedback.filter((f) => f.kind === 'correction' && typeof quotes[f.key]?.quote === 'string' && quotes[f.key].quote).slice(-n)
+    .map((f) => ({ at: f.at, date: f.date ?? null, quote: quotes[f.key].quote }));
 }
 
 /** 所有電腦的回饋（新的在後） */
@@ -182,7 +343,8 @@ export function pausedCategories(feedback, now = Date.now()) {
   for (const f of feedback) if (f.resume) resumedAt.set(f.category, Math.max(resumedAt.get(f.category) ?? 0, Date.parse(f.at) || 0));
   const runs = new Map();
   for (const f of feedback) {
-    if (f.resume) continue;
+    // 使用者的糾正（2.0.0 Q9）是學習訊號，不是復原：不會讓任何類別暫停
+    if (f.resume || f.kind === 'correction') continue;
     const t = Date.parse(f.at) || 0;
     if (now - t > PAUSE_WINDOW_MS || t <= (resumedAt.get(f.category) ?? 0)) continue;
     if (!runs.has(f.category)) runs.set(f.category, new Set());
@@ -195,7 +357,7 @@ export function pausedCategories(feedback, now = Date.now()) {
 export async function resumeCategory(eg, category, now = Date.now()) {
   return updateMachineState(eg, (s) => {
     s.feedback.push({ at: new Date(now).toISOString(), category: String(category).slice(0, 40), resume: true, title: '使用者恢復', reason: '' });
-    s.feedback = s.feedback.slice(-FEEDBACK_MAX);
+    s.feedback = trimFeedback(s.feedback);
     return s;
   }, `autopilot resume ${category}`);
 }

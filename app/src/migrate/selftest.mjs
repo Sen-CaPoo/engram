@@ -121,7 +121,7 @@ export async function bindingSelfTest({ engine, sandbox }) {
     await engine.init({ home, claudeHome, userHome, machineLabel: '自我測試電腦' });
     const eg = await engine.open({ home, claudeHome, userHome });
     const plan = await eg.sweepLegacy({ dryRun: true });
-    const res = await eg.sweepLegacy({ dryRun: false, plan, bindSources: true });
+    const res = await eg.sweepLegacy({ dryRun: false, plan, bindSources: true, by: 'user' }); // 自我測試的暫存沙盒
     const method = Object.fromEntries((res.bound ?? []).map((x) => [path.basename(x.path), x.method]));
     check('撞名資料夾以設定檔綁定（甲方）', 'Colliding folder A bound through the settings file', method['甲方專案'] === 'settings', `方式：${method['甲方專案'] ?? '未綁定'}`, `Method: ${method['甲方專案'] ?? 'not bound'}`);
     check('撞名資料夾以設定檔綁定（乙方）', 'Colliding folder B bound through the settings file', method['乙方專案'] === 'settings', `方式：${method['乙方專案'] ?? '未綁定'}`, `Method: ${method['乙方專案'] ?? 'not bound'}`);

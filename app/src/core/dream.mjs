@@ -117,13 +117,17 @@ const clip = (s, n) => {
   return t.length > n ? `${t.slice(0, n)}…（後略 ${t.length - n} 字）` : t;
 };
 
-/** 使用者訊息裡由 Claude Code 自動加的提醒（不是使用者說的話） */
-function cleanUserText(t) {
+/** 使用者訊息裡由 Claude Code 自動加的提醒（不是使用者說的話）。自動駕駛找寫入要求時也用（autopilot/request.mjs） */
+export function cleanUserText(t) {
   return String(t ?? '')
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
     .replace(/<(local-command-stdout|local-command-stderr)>[\s\S]*?<\/\1>/g, '')
     // 1.5.0：背景工作的完成通知由 Claude Code 以使用者角色送出，不是使用者說的話
     .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '')
+    // 2.0.0 第二輪審查 U-a：使用者用 ! 執行的指令與它的輸出（Claude Code 記成使用者訊息）是外部內容，不是使用者說的話；沒有結尾的整段去掉
+    .replace(/<(bash-input|bash-stdout|bash-stderr)>[\s\S]*?(?:<\/\1>|$)/g, '')
+    // U-b：情境召回附加給模型的文字（外掛產生，內容是同步來的記憶名稱與說明）：整段（到空行為止）去掉
+    .replace(/^\[Engram 情境召回\][^\n]*(?:\n(?![ \t]*\n)[^\n]*)*\n*/gm, '')
     .trim();
 }
 
@@ -397,6 +401,8 @@ export async function prepareDream(ctx, { pid, max = DEFAULT_MAX_SESSIONS, exclu
       startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : null,
       endedAt: r.endedAt ? new Date(r.endedAt).toISOString() : null,
       files, chars, wrote: wroteBy.get(String(t.sessionId)) ?? [], ...(r.resumed ? { resumed: true } : {}),
+      // 2.0.0：這場對話讀過的記憶（自動駕駛逐段分析時一定附全文）
+      reads: [...r.reads].sort(),
     });
   }
 
